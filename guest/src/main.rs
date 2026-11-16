@@ -9,14 +9,7 @@ use frame::Frame;
 use pcp_game_guest::{call, exit, log, open, sleep_us, Display};
 use tailorbird_ui::{ordered_keys::{KeyOutcome, OrderedKeyboard}, Model, Ui};
 
-const GROUND: u32 = 0x10283f;
-const PANEL: u32 = 0x18364f;
-const TEXT: u32 = 0xf2f7fc;
-const SOFT: u32 = 0x9fb4c8;
-const TEAL: u32 = 0x41bad7;
-const AMBER: u32 = 0xe3a24b;
-const GOOD: u32 = 0x8fe0c2;
-const BAD: u32 = 0xf08a72;
+use tailorbird_ui::palette::{stop_colors, AMBER, BAD, GOOD, GROUND, PANEL, SOFT, TEAL, TEXT};
 
 fn label(f: &mut Frame<'_>, x: i32, y: i32, value: &str, scale: i32, colour: u32) {
     let mut upper = [0u8; 92];
@@ -74,10 +67,10 @@ fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
     }
 
     let stop_rect = tailorbird_ui::pointer::STOP_RECT;
-    f.rect(stop_rect.x, stop_rect.y, stop_rect.width, stop_rect.height,
-           if ui.controls().stop_enabled { BAD } else { GROUND });
-    label(f, 48, 331, "STOP", 3, TEXT);
-    label(f, 48, 361, ui.task.state.label(), 1, SOFT);
+    let (stop_fill, stop_heading, stop_caption) = stop_colors(ui.controls().stop_enabled);
+    f.rect(stop_rect.x, stop_rect.y, stop_rect.width, stop_rect.height, stop_fill);
+    label(f, 48, 331, "STOP", 3, stop_heading);
+    label(f, 48, 361, ui.task.state.label(), 1, stop_caption);
     label(f, 38, 408, "ALT S STOP TASK", 1, SOFT);
 
     f.rect(316, 94, 624, 352, PANEL);
