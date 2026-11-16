@@ -209,6 +209,20 @@ impl Ui {
     }
     pub fn lines(&self) -> &[Line] { &self.lines[..self.count] }
     fn notice(&mut self, s: &str) { self.notice = Text::display(s); }
+    /// The native 5x7 font has only uppercase, digits, slash, dash, dot,
+    /// plus and blank space. The generic label renderer also folds case.
+    /// Refuse GUI consent when either exact field cannot be shown, rather
+    /// than approving a clipped or visually aliased destination.
+    fn permission_field_visible(s: &str, limit: usize, allow_space: bool) -> bool {
+        !s.is_empty() && s.len() <= limit && s.bytes().all(|b| {
+            matches!(b, b'A'..=b'Z' | b'0'..=b'9' | b'/' | b'-' | b'.' | b'+')
+                || (allow_space && b == b' ')
+        }) && (!allow_space || (!s.starts_with(' ') && !s.ends_with(' ')))
+    }
+    fn permission_details_visible(action: &str, target: &str) -> bool {
+        Self::permission_field_visible(action, 48, true)
+            && Self::permission_field_visible(target, 72, false)
+    }
     fn log(&mut self, seq: u64, kind: &'static str, message: &str) {
         let line = Line { seq, kind, message: Text::display(message) };
         if self.count < LOG_LIMIT {
@@ -363,6 +377,18 @@ impl Ui {
                     || request == 0 || self.permission.is_some()
                     || !self.accept(task_id, seq) {
                     return false;
+                }
+                // A truncated, case-folded or unsupported glyph can make
+                // two different filesystem destinations look identical.
+                // The preview must not offer an Allow intent unless the
+                // whole immutable action and target are literally visible.
+                if !Self::permission_details_visible(action, target) {
+                    self.task.state = TaskState::Unconfirmed;
+                    self.decision_pending = None;
+                    self.decision_choice = None;
+                    self.log(seq, "ANOMALY", "PERMISSION DETAILS NOT DISPLAYABLE");
+                    self.notice("PERMISSION NOT DISPLAYABLE - STOP TASK");
+                    return true;
                 }
                 self.permission = Some(Grant {
                     request, action: Text::display(action), target: Text::display(target),
@@ -599,6 +625,69 @@ mod tests {
         }));
         assert!(u.permission.is_none());
     }
+    #[test]
+    fn visually_aliased_targets_and_actions_cannot_offer_consent() {
+        let invalid: [(&str, &str); 6] = [
+            ("WRITE FILE", "/data/file"),      // font folds lowercase to uppercase
+            ("WRITE FILE", "/DATA/FILE_NAME"), // underscore has no glyph
+            ("WRITE_FILE", "/DATA/FILE"),
+            ("WRITE FILE", "/DATA/FILE NAME"), // blank is ambiguous in a path
+            ("WRITE FILE", "/DATA/FILE\\NAME"), // backslash has no glyph
+            ("WRITE FILE", ""),
+        ];
+        for (action, target) in invalid {
+            let mut u = Ui::new();
+            running(&mut u);
+            assert!(u.observe(BackendEvent::PermissionNeeded {
+                task_id: 7, seq: 2, request: 17, action, target,
+            }));
+            assert_eq!(u.task.state, TaskState::Unconfirmed);
+            assert!(u.permission.is_none());
+            assert!(!u.controls().decision_enabled);
+            assert!(u.intent(Action::Approve).is_none());
+            assert!(u.intent(Action::Deny).is_none());
+            assert!(u.controls().stop_enabled);
+            assert_eq!(u.lines().last().unwrap().kind, "ANOMALY");
+        }
+    }
+
+    #[test]
+    fn permission_metadata_overflow_and_controls_are_refused() {
+        let invalid: [(&str, &str); 4] = [
+            ("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "/DATA/FILE"),
+            ("WRITE FILE", "/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"),
+            ("WRITE FILE", "/DATA/FILE\nHIDDEN"),
+            ("WRITE FILE", "/DATA/FILE🦜"),
+        ];
+        for (action, target) in invalid {
+            let mut u = Ui::new();
+            running(&mut u);
+            assert!(u.observe(BackendEvent::PermissionNeeded {
+                task_id: 7, seq: 2, request: 17, action, target,
+            }));
+            assert_eq!(u.task.state, TaskState::Unconfirmed);
+            assert!(!u.controls().decision_enabled);
+            assert!(u.permission.is_none());
+        }
+    }
+
+    #[test]
+    fn exactly_renderable_72_byte_target_remains_decidable() {
+        let mut u = Ui::new();
+        running(&mut u);
+        let target = "/CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
+        assert_eq!(target.len(), 72);
+        assert!(u.observe(BackendEvent::PermissionNeeded {
+            task_id: 7, seq: 2, request: 17,
+            action: "WRITE FILE", target,
+        }));
+        assert_eq!(u.task.state, TaskState::Running);
+        assert_eq!(u.permission.unwrap().target.as_str(), target);
+        assert_eq!(u.intent(Action::Approve), Some(Intent::Decide {
+            task_id: 7, request: 17, allow: true,
+        }));
+    }
+
     #[test]
     fn post_stop_permission_proposal_is_not_displayed_or_approved() {
         let mut u = Ui::new();
