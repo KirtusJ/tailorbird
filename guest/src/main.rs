@@ -95,7 +95,7 @@ fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
             f.task_output(y, event.kind, event.message.as_str(), event.preview_lossy, AMBER, TEXT);
         }
     }
-    if let Some(grant) = ui.permission {
+    if let Some(grant) = ui.permission.filter(|_| ui.controls().permission_visible) {
         // Permission review is a full-height 588px-wide inspector. The
         // canonical action occupies 48 native 10x20 cells; target occupies
         // at most 72 cells across two lines. Neither can be silently clipped
