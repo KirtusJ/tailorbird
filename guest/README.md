@@ -101,6 +101,19 @@ decision and effect readback in its own durable record. An automatic denial
 without UI approval, or a service denial despite a local Allow, remains a
 valid refused/denied outcome. The UI does not override PT's effect policy.
 
+**Persistent operating-mode readback:** `SetMode` is a user request,
+not confirmation. Tailorbird now compares `ModeCommitted(mode)` to the
+actual outstanding GUI choice. A mismatched response displays
+`MODE NOT APPLIED - SERVICE REPLIED DIFFERENTLY`, while a matching one
+displays `MODE CONFIRMED BY SERVICE`. A mode update with no outstanding
+GUI request is shown as `SERVICE MODE UPDATE - NO UI REQUEST`. Likewise,
+a `Service{saved_mode}` snapshot after a pending change distinguishes
+`MODE MATCHES SERVICE STATUS` from `MODE NOT APPLIED - SERVICE STATUS`.
+All such reports still require an authenticated PT service adapter and
+durable storage before the selector can claim persistence across reboot.
+Three new reducer tests cover those distinctions. This is not an OS
+configuration save, nor evidence that a model task actually used the mode.
+
 **Completed-task ID replay hardening:** a service event that attempts to
 start the **immediately preceding task ID** again is rejected, even with a
 larger sequence number. A matching terminal state and displayed final event
@@ -147,7 +160,7 @@ location for the ongoing/single-request setting before any adapter is linked.
 
 ## Test coverage and open defects
 
-The Rust unit suite now includes **23 authored cases**: offline refusal, text bounds,
+The Rust unit suite now includes **26 authored cases**: offline refusal, text bounds,
 one-shot permission choice and contradictory-input rejection, stop-acknowledgment
 permission refusal and prompt retraction, reconnect reconciliation only
 after task-matched terminal readback, immediate task-ID replay refusal,
@@ -156,7 +169,7 @@ post-reconnect stop acknowledgment without terminal overclaim,
 conservative Stop
 intents while the recovered status remains unknown, task stop/disconnection,
 and injection-like
-model output, deferred mode readback, stop request versus termination,
+model output, matching/mismatched/unsolicited mode readback, stop request versus termination,
 wrong-task and out-of-order events, explicit grant decisions, stop/permission
 race, lost-service unconfirmed status, post-terminal rejection and bounded
 log order. These tests were **authored, not executed** in this absorption
