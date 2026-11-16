@@ -1730,6 +1730,53 @@ mod tests {
         );
     }
 
+
+    #[test]
+    fn late_grant_stop_order_warning_survives_terminal_and_status_refresh() {
+        // A later STOPPED event says the worker stopped, not whether an
+        // earlier reported grant took effect before or after Stop.
+        let mut u = Ui::new();
+        running(&mut u);
+        assert!(u.observe(BackendEvent::PermissionNeeded {
+            task_id: 7, seq: 2, request: 91, action: "WRITE", target: "/home/a.txt",
+        }));
+        assert!(u.intent(Action::Approve).is_some());
+        assert!(u.intent(Action::Stop).is_some());
+        assert!(u.observe(BackendEvent::StopAccepted { task_id: 7, seq: 3 }));
+        assert!(u.observe(BackendEvent::PermissionResolved {
+            task_id: 7, seq: 4, request: 91, allowed: true,
+        }));
+        assert_eq!(u.task.state, TaskState::Unconfirmed);
+        assert!(u.observe(BackendEvent::Stopped { task_id: 7, seq: 5 }));
+        assert_eq!(u.task.state, TaskState::Stopped);
+        assert!(u.notice.as_str().contains("EFFECT UNKNOWN"),
+            "terminal status must not erase the earlier uncertain grant");
+        assert!(u.observe(BackendEvent::Service {
+            connected: true, model: Model::Ready, saved_mode: Mode::Single,
+        }));
+        assert!(u.notice.as_str().contains("EFFECT UNKNOWN"),
+            "service-status refresh is not an effect journal attestation");
+    }
+
+    #[test]
+    fn unexplained_grant_warning_survives_later_task_start() {
+        // A brand-new task has no authority to settle a prior anomalous
+        // effect. There is no trusted reconciliation event in this UI ABI.
+        let mut u = Ui::new();
+        running(&mut u);
+        assert!(u.observe(BackendEvent::PermissionNeeded {
+            task_id: 7, seq: 2, request: 92, action: "WRITE", target: "/home/a.txt",
+        }));
+        assert!(u.observe(BackendEvent::PermissionResolved {
+            task_id: 7, seq: 3, request: 92, allowed: true,
+        }));
+        assert!(u.observe(BackendEvent::Stopped { task_id: 7, seq: 4 }));
+        assert!(u.observe(BackendEvent::Started { task_id: 8, seq: 1 }));
+        assert_eq!(u.task.state, TaskState::Running);
+        assert!(u.notice.as_str().contains("EFFECT UNKNOWN"),
+            "fresh work does not prove an earlier unapproved effect harmless");
+    }
+
 }
 
 #[cfg(test)]
