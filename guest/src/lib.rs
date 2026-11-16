@@ -1,5 +1,8 @@
 #![no_std]
 
+#[cfg(test)]
+extern crate std;
+
 // Tailorbird presentation state and *intents*, not an authorization or execution engine.
 // An adapter owned by the service must authenticate and apply every effect.
 pub const INPUT_LIMIT: usize = 120;
