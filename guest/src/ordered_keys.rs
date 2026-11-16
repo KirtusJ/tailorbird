@@ -372,6 +372,44 @@ mod tests {
     }
 
     #[test]
+    fn shifted_alt_permission_requires_unmodified_fresh_press() {
+        // Left/right Shift+Alt+A/D is NOT the documented exact Alt+A/D.
+        // Releasing Shift while the choice key remains held must not turn
+        // typematic repeat into an affirmative permission decision.
+        for (shift, key, allow) in [
+            (42usize, 30usize, true),
+            (54usize, 30usize, true),
+            (42usize, 32usize, false),
+            (54usize, 32usize, false),
+        ] {
+            let mut keys = OrderedKeyboard::new();
+            let mut ui = Ui::new();
+            assert!(ui.observe(BackendEvent::Service {
+                connected: true, model: Model::Ready, saved_mode: Mode::Single,
+            }));
+            assert!(ui.observe(BackendEvent::Started { task_id: 7, seq: 1 }));
+            assert!(ui.observe(BackendEvent::PermissionNeeded {
+                task_id: 7, seq: 2, request: 11,
+                action: "WRITE", target: "/home/a.txt",
+            }));
+            keys.event(shift, true, &mut ui);
+            keys.event(56, true, &mut ui); // Alt
+            assert_eq!(keys.event(key, true, &mut ui), KeyOutcome::Unchanged,
+                       "Shift+Alt must not create a permission intent");
+            assert_eq!(ui.decision_pending, None);
+            assert_eq!(ui.decision_choice, None);
+            keys.event(shift, false, &mut ui);
+            assert_eq!(keys.event(key, true, &mut ui), KeyOutcome::Unchanged,
+                       "release of Shift is not a fresh consent keypress");
+            assert_eq!(ui.decision_pending, None);
+            keys.event(key, false, &mut ui);
+            assert_eq!(keys.event(key, true, &mut ui), KeyOutcome::Redraw);
+            assert_eq!(ui.decision_pending, Some(11));
+            assert_eq!(ui.decision_choice, Some(allow));
+        }
+    }
+
+    #[test]
     fn ordered_alt_actions_and_exit_do_not_type_text() {
         let mut keys = OrderedKeyboard::new();
         let mut ui = Ui::new();
