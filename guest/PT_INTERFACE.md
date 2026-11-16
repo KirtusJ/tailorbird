@@ -39,6 +39,28 @@ and conflict behavior are PT's service work. TaskGate belongs outside the
 untrusted model process. The GUI will need an authenticated transport that
 does not yet exist in the pinned guest/kernel.
 
+## Service-reported grant contradicting UI consent
+
+A `PermissionNeeded` event means the UI is awaiting a human decision for
+a specific immutable proposal. The reducer now tracks the first GUI
+`Decide{request,allow}` intent. If the trusted service later reports
+`PermissionResolved(allowed=true)` despite an explicit GUI Deny or without
+any UI Allow for that request, Tailorbird does **not** render it as ordinary
+user authorization: it records an `ANOMALY`, marks the task status
+`Unconfirmed` and prevents further UI grants/tool event consumption while
+offering an exact-task Stop intent. This is a comparison of two *reported*
+pieces of evidence, not proof that the service wrote bytes.
+
+PT must bind service decision/outcome to verified actor identity, task, request,
+immutable edit destination and expected source hash. A durable service log
+must retain the discrepancy and the actual before/after effect even if the
+GUI cannot display the full event history. If an automatic policy granted
+something without asking for consent, it must not be encoded as a
+`PermissionNeeded` request requiring human Allow; use an explicit,
+separately reviewed policy/report type. An automatic refusal is compatible
+with UI security and does not require a prior GUI Deny. UI-only state
+checks never substitute for TaskGate enforcement or filesystem readback.
+
 ## Edits must remain explicitly scoped
 
 For Edit::Create, the service needs an authorized destination and clear
