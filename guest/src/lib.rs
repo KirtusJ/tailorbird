@@ -296,7 +296,13 @@ impl Ui {
                 true
             }
             BackendEvent::Started { task_id, seq }
-                if self.connected && task_id != 0 && seq > 0 && !self.task.state.is_active() =>
+                if self.connected && task_id != 0 && seq > 0
+                    // An immediate replay of the just-finished task ID must
+                    // not erase its terminal state or displayed readback.
+                    // PT's trusted service remains responsible for global
+                    // task-ID uniqueness and authenticated event delivery.
+                    && task_id != self.task.id
+                    && !self.task.state.is_active() =>
             {
                 self.task = Task { id: task_id, seq, state: TaskState::Running };
                 self.permission = None;
@@ -644,6 +650,46 @@ mod tests {
         }));
         assert_eq!(u.task.state, TaskState::Failed);
         assert!(!u.controls().stop_enabled);
+    }
+
+    #[test]
+    fn completed_task_cannot_restart_with_the_same_id() {
+        let mut u = Ui::new();
+        running(&mut u);
+        assert!(u.observe(BackendEvent::Completed { task_id: 7, seq: 2 }));
+        assert_eq!(u.task.state, TaskState::Completed);
+        let prior_lines = *u.lines().last().unwrap();
+        assert!(!u.observe(BackendEvent::Started { task_id: 7, seq: 1 }));
+        assert!(!u.observe(BackendEvent::Started { task_id: 7, seq: 99 }));
+        assert_eq!(u.task.id, 7);
+        assert_eq!(u.task.seq, 2);
+        assert_eq!(u.task.state, TaskState::Completed);
+        assert_eq!(u.lines().last(), Some(&prior_lines));
+        assert!(u.observe(BackendEvent::Started { task_id: 8, seq: 1 }));
+        assert_eq!(u.task.state, TaskState::Running);
+        assert_eq!(u.task.id, 8);
+    }
+
+    #[test]
+    fn stopped_and_failed_tasks_cannot_restart_with_the_same_id() {
+        for state in [TaskState::Stopped, TaskState::Failed] {
+            let mut u = Ui::new();
+            running(&mut u);
+            let done = match state {
+                TaskState::Stopped => u.observe(BackendEvent::Stopped { task_id: 7, seq: 2 }),
+                TaskState::Failed => u.observe(BackendEvent::Failed {
+                    task_id: 7, seq: 2, reason: "service reported failure",
+                }),
+                _ => unreachable!(),
+            };
+            assert!(done);
+            assert_eq!(u.task.state, state);
+            assert!(!u.observe(BackendEvent::Started { task_id: 7, seq: 1 }));
+            assert!(!u.observe(BackendEvent::Started { task_id: 7, seq: 3 }));
+            assert_eq!(u.task.state, state);
+            assert!(u.observe(BackendEvent::Started { task_id: 8, seq: 1 }));
+            assert_eq!(u.task.id, 8);
+        }
     }
 
     #[test]
