@@ -166,6 +166,51 @@ mod tests {
     }
 
     #[test]
+    fn typematic_letter_held_before_alt_cannot_become_permission_decision() {
+        // A held printable key may auto-repeat after Alt is pressed. This is
+        // not a fresh explicit Alt+A/Alt+D permission choice.
+        for (key, allow) in [(30, true), (32, false)] {
+            let mut keys = OrderedKeyboard::new();
+            let mut ui = Ui::new();
+            assert!(ui.observe(BackendEvent::Service {
+                connected: true, model: Model::Ready, saved_mode: Mode::Single,
+            }));
+            assert!(ui.observe(BackendEvent::Started { task_id: 7, seq: 1 }));
+            assert!(ui.observe(BackendEvent::PermissionNeeded {
+                task_id: 7, seq: 2, request: 11,
+                action: "WRITE", target: "/home/a.txt",
+            }));
+            assert_eq!(keys.event(key, true, &mut ui), KeyOutcome::Redraw);
+            assert_eq!(keys.event(56, true, &mut ui), KeyOutcome::Unchanged);
+            assert_eq!(keys.event(key, true, &mut ui), KeyOutcome::Unchanged);
+            assert_eq!(ui.decision_pending, None);
+            assert_eq!(ui.decision_choice, None);
+            keys.event(key, false, &mut ui);
+            assert_eq!(keys.event(key, true, &mut ui), KeyOutcome::Redraw);
+            assert_eq!(ui.decision_pending, Some(11));
+            assert_eq!(ui.decision_choice, Some(allow));
+        }
+    }
+
+    #[test]
+    fn held_alt_stop_typematic_must_not_reissue_intent() {
+        let mut keys = OrderedKeyboard::new();
+        let mut ui = Ui::new();
+        assert!(ui.observe(BackendEvent::Service {
+            connected: true, model: Model::Ready, saved_mode: Mode::Single,
+        }));
+        assert!(ui.observe(BackendEvent::Started { task_id: 7, seq: 1 }));
+        assert_eq!(keys.event(56, true, &mut ui), KeyOutcome::Unchanged);
+        assert_eq!(keys.event(31, true, &mut ui), KeyOutcome::Redraw);
+        assert_eq!(ui.notice.as_str(), "STOP INTENT ONLY - AWAIT SERVICE");
+        assert_eq!(keys.event(31, true, &mut ui), KeyOutcome::Unchanged);
+        // A separate physical release/press may intentionally retry Stop,
+        // but neither event is proof of service cancellation.
+        keys.event(31, false, &mut ui);
+        assert_eq!(keys.event(31, true, &mut ui), KeyOutcome::Redraw);
+    }
+
+    #[test]
     fn ordered_alt_actions_and_exit_do_not_type_text() {
         let mut keys = OrderedKeyboard::new();
         let mut ui = Ui::new();
