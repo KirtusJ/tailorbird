@@ -283,7 +283,7 @@ mod tests {
         // exact sRGB colors passed to the pixel renderer.
         fn luminance(color: u32) -> f64 {
             let channel = |shift| {
-                let v = ((color >> shift) & 255) as f64 / 255.0;
+                let v = ((color >> shift) & 255u32) as f64 / 255.0;
                 if v <= 0.04045 { v / 12.92 }
                 else { ((v + 0.055) / 1.055).powf(2.4) }
             };
