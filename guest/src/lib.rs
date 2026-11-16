@@ -680,6 +680,28 @@ mod tests {
     }
 
     #[test]
+    fn literal_loss_marker_cannot_impersonate_gui_detected_truncation_or_normalization() {
+        // Text emitted by a model/tool is untrusted data. The service may
+        // literally print the same bytes as our own lossy-output preview.
+        // Those two origins must not collapse to an identical Line record:
+        // the renderer needs out-of-band, UI-computed loss provenance.
+        let mut changed = Ui::new();
+        running(&mut changed);
+        assert!(changed.observe(BackendEvent::Output {
+            task_id: 7, seq: 2, text: "go\u{00e9}",
+        }));
+        let mut literal = Ui::new();
+        running(&mut literal);
+        assert!(literal.observe(BackendEvent::Output {
+            task_id: 7, seq: 2, text: "[LOSSY] go??",
+        }));
+        assert_eq!(changed.lines().last().unwrap().message.as_str(),
+                   literal.lines().last().unwrap().message.as_str());
+        assert_ne!(changed.lines().last().unwrap(), literal.lines().last().unwrap(),
+            "the preview marker is spoofable without a separate UI-computed loss bit");
+    }
+
+    #[test]
     fn exact_84_byte_service_line_stays_exact_without_loss_marker() {
         let mut u = Ui::new();
         running(&mut u);
