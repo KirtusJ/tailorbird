@@ -104,6 +104,43 @@ Unicode paths. Do not generalize the new request-editor guarantee to
 output, full-source editing, immutable-grant disclosure, mouse input
 or the distinct integrated desktop renderer reported by PT.
 
+## Ordered keyboard events: preserve the text actually typed
+
+Director PT independently reproduced an adverse QMP event batch at
+[PCP-OS #132 comment 6907744157](https://github.com/KirtusJ/pcp-os/issues/132#issuecomment-6907744157):
+the intended `z,x,z,Shift+a,a` became `azx` in the public guest, even
+though the 10x20 font could render the intended source exactly. The shared
+`pcp_game_guest::Display::poll()` converts the kernel's ordered keyboard
+records to `pressed[128]`/final `held[128]` bitmaps. That loses repeated
+keys, their arrival order, and Shift changes between presses. No UI code
+can reconstruct the original sequence from only those two bitmaps.
+
+The Tailorbird native guest now consumes the **existing** `/dev/kbd`
+two-byte FIFO records in order using its own nonblocking read capability.
+The A-owned `ordered_keys.rs` reduces key-down/up events sequentially,
+including Shift/Alt state at the instant of each event. It does not
+change the kernel, shared guest library, physical controller driver or
+security grants. A second guest keyboard fd is used because the
+`Display` helper's fd is private. The app does not invoke
+`Display::poll()`, which would drain the stream before this reducer
+could inspect it.
+
+Five additional host tests cover PT's exact `zxzAa` counterexample,
+numeric-key ordering, held Shift and repeat events, duplicate Enter
+while admission remains pending, and shortcuts. The QEMU smoke script
+also injects PT's same-batch QMP event stream and compares the **actual
+emulator scanout** with spaced typing of the same text and against
+the previous wrong `azx` sequence. The prior QEMU smoke checked only
+separately paced keys and could not detect this defect.
+
+This is a source- and emulator-scoped keyboard improvement, not proof
+of locale-independent input, Unicode, international keyboard layouts,
+IME, clipboard or physical keyboard hardware compatibility. The
+kernel's 256-entry FIFO may still drop events under overload; the
+application does not yet receive an authenticated per-process dropped-
+event notification. PT must resolve that boundary for consequential
+live input and approve any new native device input contract.
+
 ## Pending submission admission and stable retry identity
 
 A source-first adversarial review by Director PT at [PCP-OS issue #132 comment
@@ -282,7 +319,7 @@ location for the ongoing/single-request setting before any adapter is linked.
 
 ## Test coverage and open defects
 
-The Rust reducer originally had **29 passing cases at commit 18710a6d**, and the exact-input renderer added **8 cases**, and the pending-submission race adds **4 cases** (41 total): offline refusal, text bounds,
+The Rust reducer originally had **29 passing cases at commit 18710a6d**, and the exact-input renderer added **8 cases**, the pending-submission race **4**, and ordered keyboard handling **5** (46 total): offline refusal, text bounds,
 one-shot permission choice and contradictory-input rejection, stop-acknowledgment
 permission refusal and prompt retraction, reconnect reconciliation only
 after task-matched terminal readback, immediate task-ID replay refusal,
@@ -296,7 +333,7 @@ wrong-task and out-of-order events, explicit grant decisions, stop/permission
 race, lost-service unconfirmed status, post-terminal rejection and bounded
 log order. The original 29 reducer cases passed on exact-commit
 GitHub Actions run 43802969930 in debug and release with a static
-native ELF build. The new editor/keyboard and submission-admission cases are authored and
+native ELF build. The new editor/keyboard, ordered-input and submission-admission cases are authored and
 **not yet confirmed by the executor at this revision**. No kernel/QEMU
 boot, service integration, human usability or effective permission
 enforcement is established by passing host tests.
