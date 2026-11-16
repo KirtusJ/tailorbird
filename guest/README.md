@@ -77,8 +77,16 @@ one service-side decision, including replay/late-message rejection.
 possible before the service supplies its first event receipt. The trusted
 adapter needs idempotency keys, reliable correlation/reconciliation and
 cancellation fences; GUI state alone cannot safely solve transport retries.
-On reconnect an active task remains UNCONFIRMED pending PT's authoritative
-resync design. No claim of recovery or termination is made.
+On reconnect an active task remains UNCONFIRMED. A task-scoped Stop
+**intent** becomes available again to seek cancellation, but it is not a
+claim of actual termination. The reducer accepts a matching, strictly newer
+`Stopped`, `Completed`, or `Failed` event only after reconnection to
+settle the unknown task; it still rejects new output, tools and grants for
+that uncertain task. This prevents a GUI-only deadlock while keeping service
+origin authentication, durable replay, worker termination verification and
+the full reconnect/resync design under PT's control. A forged or prematurely
+reported terminal message must be refused by the trusted adapter. No live
+recovery or termination is claimed.
 
 BackendEvent carries monotonically increasing per-task sequence numbers.
 Stale, wrong-task and post-terminal events are refused by the UI reducer.
@@ -97,7 +105,11 @@ location for the ongoing/single-request setting before any adapter is linked.
 
 ## Test coverage and open defects
 
-The Rust unit suite now includes 14 authored cases: offline refusal, text bounds, one-shot permission choice and contradictory-input rejection, task stop/disconnection, and injection-like
+The Rust unit suite now includes **16 authored cases**: offline refusal, text bounds,
+one-shot permission choice and contradictory-input rejection, reconnect
+reconciliation only after task-matched terminal readback, conservative Stop
+intents while the recovered status remains unknown, task stop/disconnection,
+and injection-like
 model output, deferred mode readback, stop request versus termination,
 wrong-task and out-of-order events, explicit grant decisions, stop/permission
 race, lost-service unconfirmed status, post-terminal rejection and bounded
