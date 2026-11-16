@@ -82,7 +82,14 @@ fn paint(display: &mut Display, ui: &Ui) {
         label(&mut f, 342, 393, "PERMISSION REQUIRED", 1, AMBER);
         label(&mut f, 342, 410, grant.action.as_str(), 1, TEXT);
         label(&mut f, 527, 410, grant.target.as_str(), 1, TEXT);
-        label(&mut f, 760, 410, "ALT A / ALT D", 1, SOFT);
+        let decision_label = if ui.controls().decision_enabled {
+            "ALT A / ALT D"
+        } else if ui.decision_pending.is_some() {
+            "DECISION SENT"
+        } else {
+            "INPUT LOCKED"
+        };
+        label(&mut f, 760, 410, decision_label, 1, SOFT);
     }
 
     f.rect(20, 458, 920, 48, PANEL);
