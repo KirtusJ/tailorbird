@@ -210,7 +210,9 @@ mod tests {
             }
             assert_eq!(u.input.as_str(), prompt);
             match u.intent(Action::Submit) {
-                Some(Intent::Submit { prompt: delivered, mode: Mode::Single }) => {
+                Some(Intent::Submit {
+                    idempotency_key: 1, prompt: delivered, mode: Mode::Single,
+                }) => {
                     assert_eq!(delivered.as_str(), prompt);
                 }
                 _ => panic!("expected exact UI request intent"),
