@@ -129,12 +129,15 @@ impl Line {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Action { Submit, ToggleMode, Stop, Approve, Deny }
+pub enum Action { Submit, RetrySubmit, ToggleMode, Stop, Approve, Deny }
 
 /// Proposed requests for PT's service. UI return values alone cause no effect.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Intent {
-    Submit { prompt: Text<INPUT_LIMIT>, mode: Mode },
+    /// An idempotency key is unique only for this live GUI instance.
+    /// PT's service MUST scope it to a trusted actor/session epoch and
+    /// persist deduplication. This is never a standalone grant.
+    Submit { idempotency_key: u64, prompt: Text<INPUT_LIMIT>, mode: Mode },
     SetMode(Mode),
     Stop { task_id: u64 },
     Decide { task_id: u64, request: u64, allow: bool },
@@ -146,6 +149,12 @@ pub enum BackendEvent<'a> {
     Service { connected: bool, model: Model, saved_mode: Mode },
     ModeCommitted(Mode),
     Started { task_id: u64, seq: u64 },
+    /// The trusted service readback that binds a pending UI submission to
+    /// one admitted task. Uncorrelated Started cannot clear a pending key.
+    SubmissionStarted { idempotency_key: u64, task_id: u64, seq: u64 },
+    /// The trusted service has explicitly refused admission of this key.
+    /// A timeout or disconnect is never a refusal.
+    SubmissionRejected { idempotency_key: u64 },
     Output { task_id: u64, seq: u64, text: &'a str },
     ToolResult { task_id: u64, seq: u64, text: &'a str },
     PermissionNeeded { task_id: u64, seq: u64, request: u64, action: &'a str, target: &'a str },
@@ -168,8 +177,19 @@ pub struct Controls {
     pub decision_enabled: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PendingSubmit {
+    pub idempotency_key: u64,
+    pub prompt: Text<INPUT_LIMIT>,
+    pub mode: Mode,
+}
+
 pub struct Ui {
     pub input: Text<INPUT_LIMIT>,
+    /// A Submit intent has been emitted but no matching admission/refusal
+    /// readback has arrived. Preserve it across service loss/reconnect.
+    pub pending_submit: Option<PendingSubmit>,
+    next_submit_key: u64,
     pub mode: Mode,
     pub mode_pending: Option<Mode>,
     pub model: Model,
@@ -190,7 +210,8 @@ pub struct Ui {
 impl Ui {
     pub const fn new() -> Self {
         Self {
-            input: Text::new(), mode: Mode::Single, mode_pending: None,
+            input: Text::new(), pending_submit: None, next_submit_key: 1,
+            mode: Mode::Single, mode_pending: None,
             model: Model::Unknown, connected: false,
             task: Task { id: 0, seq: 0, state: TaskState::Idle },
             permission: None, decision_pending: None, decision_choice: None,
@@ -208,6 +229,7 @@ impl Ui {
                 TaskState::Running | TaskState::Unconfirmed),
             submit_enabled: self.connected && self.model == Model::Ready
                 && !self.input.is_empty() && !self.task.state.is_active()
+                && self.pending_submit.is_none() && self.next_submit_key != 0
                 && exact_ascii::can_show_editor_input(self.input.as_str()),
             permission_visible: self.permission.is_some(),
             decision_enabled: self.connected && self.task.state == TaskState::Running
@@ -271,13 +293,48 @@ impl Ui {
         self.task.seq = seq;
         true
     }
+    fn start_task(&mut self, task_id: u64, seq: u64) {
+        self.task = Task { id: task_id, seq, state: TaskState::Running };
+        self.pending_submit = None;
+        self.permission = None;
+        self.decision_pending = None;
+        self.decision_choice = None;
+        self.count = 0;
+        self.input.clear();
+        self.log(seq, "START", "TASK START REPORTED");
+        self.notice("RUNNING - SERVICE REPORTED");
+    }
+
     pub fn intent(&mut self, action: Action) -> Option<Intent> {
         match action {
             Action::Submit if self.controls().submit_enabled => {
-                self.notice("REQUEST INTENT ONLY - AWAIT SERVICE");
-                Some(Intent::Submit { prompt: self.input, mode: self.mode })
+                // Never reuse the counter value after wrap. A fresh UI starts
+                // at 1; the trusted service must also provide its own epoch.
+                let key = self.next_submit_key;
+                self.next_submit_key = key.checked_add(1).unwrap_or(0);
+                let pending = PendingSubmit {
+                    idempotency_key: key, prompt: self.input, mode: self.mode,
+                };
+                self.pending_submit = Some(pending);
+                self.notice("SUBMIT INTENT SENT - AWAIT MATCHING SERVICE RECEIPT");
+                Some(Intent::Submit {
+                    idempotency_key: key, prompt: pending.prompt, mode: pending.mode,
+                })
             }
-            Action::ToggleMode if self.connected && self.mode_pending.is_none() => {
+            Action::RetrySubmit if self.connected && self.model == Model::Ready
+                && self.pending_submit.is_some() =>
+            {
+                // Explicit retry resends the SAME immutable proposal+key, not
+                // a new one. No automatic retry after timeout/disconnect.
+                let p = self.pending_submit.unwrap();
+                self.notice("RETRY SAME KEY - SERVICE MUST DEDUP");
+                Some(Intent::Submit {
+                    idempotency_key: p.idempotency_key,
+                    prompt: p.prompt, mode: p.mode,
+                })
+            }
+            Action::ToggleMode if self.connected && self.mode_pending.is_none()
+                && self.pending_submit.is_none() => {
                 let next = self.mode.other();
                 self.mode_pending = Some(next);
                 self.notice("MODE CHANGE NOT YET CONFIRMED");
@@ -299,7 +356,11 @@ impl Ui {
                     allow: action == Action::Approve,
                 })
             }
+            Action::Submit if self.pending_submit.is_some() => {
+                self.notice("SUBMIT PENDING - NO NEW REQUEST"); None
+            }
             Action::Submit => { self.notice("NO MODEL SERVICE - OS STILL USABLE"); None }
+            Action::RetrySubmit => { self.notice("NO CONNECTED RETRYABLE SUBMISSION"); None }
             Action::ToggleMode => { self.notice("MODE CHANGE UNAVAILABLE"); None }
             Action::Stop => { self.notice("NO STOPPABLE TASK - USE OS STOP KEY"); None }
             Action::Approve | Action::Deny if self.decision_pending.is_some() => {
@@ -326,7 +387,13 @@ impl Ui {
                     self.permission = None;
                     self.decision_pending = None;
                     self.decision_choice = None;
-                    self.notice("SERVICE LOST - NO STOP CONFIRMATION");
+                    self.notice(if self.pending_submit.is_some() {
+                        "SERVICE LOST - SUBMISSION UNCONFIRMED"
+                    } else {
+                        "SERVICE LOST - NO STOP CONFIRMATION"
+                    });
+                } else if self.pending_submit.is_some() {
+                    self.notice("SUBMISSION UNCONFIRMED - RECONCILE KEY");
                 } else if requested_mode.is_some() && requested_mode != Some(saved_mode) {
                     self.notice("MODE NOT APPLIED - SERVICE STATUS");
                 } else if requested_mode.is_some() {
@@ -349,6 +416,7 @@ impl Ui {
             }
             BackendEvent::Started { task_id, seq }
                 if self.connected && task_id != 0 && seq > 0
+                    && self.pending_submit.is_none()
                     // An immediate replay of the just-finished task ID must
                     // not erase its terminal state or displayed readback.
                     // PT's trusted service remains responsible for global
@@ -356,14 +424,24 @@ impl Ui {
                     && task_id != self.task.id
                     && !self.task.state.is_active() =>
             {
-                self.task = Task { id: task_id, seq, state: TaskState::Running };
-                self.permission = None;
-                self.decision_pending = None;
-                self.decision_choice = None;
-                self.count = 0;
-                self.input.clear();
-                self.log(seq, "START", "TASK START REPORTED");
-                self.notice("RUNNING - SERVICE REPORTED");
+                self.start_task(task_id, seq);
+                true
+            }
+            BackendEvent::SubmissionStarted { idempotency_key, task_id, seq }
+                if self.connected && task_id != 0 && seq > 0
+                    && task_id != self.task.id && !self.task.state.is_active()
+                    && self.pending_submit.map(|p| p.idempotency_key)
+                        == Some(idempotency_key) =>
+            {
+                self.start_task(task_id, seq);
+                true
+            }
+            BackendEvent::SubmissionRejected { idempotency_key }
+                if self.connected && self.pending_submit.map(|p| p.idempotency_key)
+                    == Some(idempotency_key) =>
+            {
+                self.pending_submit = None;
+                self.notice("SERVICE REPORTS SUBMISSION REFUSED");
                 true
             }
             BackendEvent::Output { task_id, seq, text } => {
@@ -529,10 +607,139 @@ mod tests {
         assert!(!u.controls().submit_enabled);
         assert!(u.input.push_ascii(b'x'));
         assert_eq!(u.intent(Action::Submit), Some(Intent::Submit {
-            prompt: Text::display("x"), mode: Mode::Single,
+            idempotency_key: 1, prompt: Text::display("x"), mode: Mode::Single,
         }));
         assert_eq!(u.task.state, TaskState::Idle);
+        assert_eq!(u.pending_submit.unwrap().idempotency_key, 1);
+        assert_eq!(u.intent(Action::Submit), None);
     }
+    #[test]
+    fn double_enter_emits_one_key_until_matching_task_start() {
+        let mut u = Ui::new();
+        connected(&mut u);
+        assert!(u.input.push_ascii(b'x'));
+        let first = u.intent(Action::Submit).unwrap();
+        assert_eq!(first, Intent::Submit {
+            idempotency_key: 1, prompt: Text::display("x"), mode: Mode::Single,
+        });
+        assert!(!u.controls().submit_enabled);
+        assert_eq!(u.intent(Action::Submit), None);
+        assert_eq!(u.intent(Action::Submit), None);
+        assert_eq!(u.intent(Action::ToggleMode), None);
+        // A generic Start or a foreign or stale keyed Start cannot consume
+        // the uncertain submitted request.
+        assert!(!u.observe(BackendEvent::Started { task_id: 7, seq: 1 }));
+        assert!(!u.observe(BackendEvent::SubmissionStarted {
+            idempotency_key: 2, task_id: 7, seq: 1,
+        }));
+        assert!(!u.observe(BackendEvent::SubmissionStarted {
+            idempotency_key: 1, task_id: 7, seq: 0,
+        }));
+        assert_eq!(u.pending_submit.unwrap().idempotency_key, 1);
+        assert!(u.observe(BackendEvent::SubmissionStarted {
+            idempotency_key: 1, task_id: 7, seq: 1,
+        }));
+        assert!(u.pending_submit.is_none());
+        assert_eq!(u.task.state, TaskState::Running);
+        assert!(!u.observe(BackendEvent::SubmissionStarted {
+            idempotency_key: 1, task_id: 8, seq: 1,
+        }));
+        assert!(u.observe(BackendEvent::Completed { task_id: 7, seq: 2 }));
+        assert!(u.input.push_ascii(b'y'));
+        assert_eq!(u.intent(Action::Submit), Some(Intent::Submit {
+            idempotency_key: 2, prompt: Text::display("y"), mode: Mode::Single,
+        }));
+    }
+
+    #[test]
+    fn disconnect_and_reconnect_do_not_reset_pending_admission() {
+        let mut u = Ui::new();
+        connected(&mut u);
+        for byte in b"read /home/a.txt" {
+            assert!(u.input.push_ascii(*byte));
+        }
+        let first = u.intent(Action::Submit).unwrap();
+        assert_eq!(u.pending_submit.unwrap().idempotency_key, 1);
+        assert!(u.observe(BackendEvent::Service {
+            connected: false, model: Model::Unavailable, saved_mode: Mode::Single,
+        }));
+        assert_eq!(u.pending_submit.unwrap().idempotency_key, 1);
+        assert_eq!(u.intent(Action::Submit), None);
+        assert_eq!(u.intent(Action::RetrySubmit), None);
+        assert!(u.observe(BackendEvent::Service {
+            connected: true, model: Model::Ready, saved_mode: Mode::Single,
+        }));
+        assert!(!u.controls().submit_enabled);
+        assert_eq!(u.intent(Action::Submit), None);
+        // Explicit retry is not a fresh submission and does not use an
+        // edited live input value; PT's service must deduplicate the key.
+        assert!(u.input.push_ascii(b'X')); // adversarial UI-state mutation
+        assert_eq!(u.intent(Action::RetrySubmit), Some(first));
+        assert_eq!(u.intent(Action::RetrySubmit), Some(first));
+        assert_eq!(u.pending_submit.unwrap().idempotency_key, 1);
+        assert!(!u.observe(BackendEvent::SubmissionRejected {
+            idempotency_key: 2,
+        }));
+        assert!(u.observe(BackendEvent::SubmissionRejected {
+            idempotency_key: 1,
+        }));
+        assert!(u.pending_submit.is_none());
+        assert_eq!(u.intent(Action::Submit), Some(Intent::Submit {
+            idempotency_key: 2,
+            prompt: Text::display("read /home/a.txtX"),
+            mode: Mode::Single,
+        }));
+    }
+
+    #[test]
+    fn delayed_or_mismatched_admission_never_silently_clears_pending() {
+        let mut u = Ui::new();
+        connected(&mut u);
+        assert!(u.input.push_ascii(b'A'));
+        let first = u.intent(Action::Submit).unwrap();
+        assert!(!u.observe(BackendEvent::SubmissionRejected {
+            idempotency_key: 0,
+        }));
+        assert!(!u.observe(BackendEvent::SubmissionStarted {
+            idempotency_key: 0, task_id: 7, seq: 2,
+        }));
+        assert!(!u.observe(BackendEvent::SubmissionStarted {
+            idempotency_key: 1, task_id: 0, seq: 2,
+        }));
+        assert!(u.pending_submit.is_some());
+        assert_eq!(u.intent(Action::RetrySubmit), Some(first));
+        assert!(u.observe(BackendEvent::SubmissionStarted {
+            idempotency_key: 1, task_id: 7, seq: 2,
+        }));
+        assert!(!u.observe(BackendEvent::SubmissionRejected {
+            idempotency_key: 1,
+        }));
+        assert!(!u.observe(BackendEvent::SubmissionStarted {
+            idempotency_key: 1, task_id: 7, seq: 3,
+        }));
+        assert_eq!(u.task.state, TaskState::Running);
+    }
+
+    #[test]
+    fn exhausted_local_submission_counter_fails_closed() {
+        let mut u = Ui::new();
+        connected(&mut u);
+        assert!(u.input.push_ascii(b'A'));
+        u.next_submit_key = u64::MAX;
+        // Avoid issuing a key that would cause subsequent wrap to zero.
+        // It has no trusted process epoch, so the host still must scope it.
+        assert_eq!(u.intent(Action::Submit), Some(Intent::Submit {
+            idempotency_key: u64::MAX,
+            prompt: Text::display("A"), mode: Mode::Single,
+        }));
+        assert!(u.observe(BackendEvent::SubmissionRejected {
+            idempotency_key: u64::MAX,
+        }));
+        assert_eq!(u.next_submit_key, 0);
+        assert_eq!(u.intent(Action::Submit), None);
+        assert_eq!(u.intent(Action::RetrySubmit), None);
+    }
+
     #[test]
     fn mode_requires_service_readback_before_commit() {
         let mut u = Ui::new();
