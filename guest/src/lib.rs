@@ -271,7 +271,11 @@ impl Ui {
                 && !self.input.is_empty() && !self.task.state.is_active()
                 && self.pending_submit.is_none() && self.next_submit_key != 0
                 && exact_ascii::can_show_editor_input(self.input.as_str()),
-            permission_visible: self.permission.is_some(),
+            // Keep late decision correlation after StopAccepted without
+            // retaining an actionable consent prompt on screen.
+            permission_visible: self.permission.is_some()
+                && self.task.state == TaskState::Running
+                && self.stop_intent_task != Some(self.task.id),
             decision_enabled: self.connected && self.task.state == TaskState::Running
                 && self.stop_intent_task != Some(self.task.id)
                 && self.permission.is_some() && self.decision_pending.is_none(),
@@ -568,7 +572,8 @@ impl Ui {
                 // pressed Stop. Keep it visibly uncertain until PT's trusted
                 // effect/stop journal supplies an ordered, authenticated
                 // readback. This UI does not cancel or authorize the effect.
-                let stop_race = allowed && self.stop_intent_task == Some(self.task.id);
+                let stop_race = allowed && (self.stop_intent_task == Some(self.task.id)
+                    || self.task.state == TaskState::StopRequested);
                 self.permission = None;
                 self.decision_pending = None;
                 self.decision_choice = None;
@@ -596,12 +601,13 @@ impl Ui {
             BackendEvent::StopAccepted { task_id, seq } => {
                 if !self.accept_stop_ack(task_id, seq) { return false; }
                 self.task.state = TaskState::StopRequested;
-                // An earlier pending UI grant is no longer actionable after
-                // Stop acknowledgment. Its service-side outcome, including
-                // any effect already dispatched, remains unknown until readback.
-                self.permission = None;
-                self.decision_pending = None;
-                self.decision_choice = None;
+                // Stop acknowledgment hides the consent prompt and disables
+                // decisions via TaskState::StopRequested, but preserves the
+                // exact outstanding request/choice *for correlation only*.
+                // Otherwise a later positive PermissionResolved would vanish
+                // with no visible effect-order warning. Clear on terminal
+                // readback, disconnect or matching PermissionResolved.
+                // This is not durable service-side effect/Stop enforcement.
                 self.notice("STOP ACCEPTED - NO NEW GRANTS; END UNCONFIRMED");
                 self.log(seq, "STOP", "REQUEST ACCEPTED BY SERVICE");
                 true
@@ -1109,7 +1115,7 @@ mod tests {
     }
 
     #[test]
-    fn stop_ack_retracts_existing_prompt_and_late_grant_ack_is_rejected() {
+    fn stop_ack_retracts_consent_ui_but_correlates_late_grant() {
         let mut u = Ui::new();
         running(&mut u);
         assert!(u.observe(BackendEvent::PermissionNeeded {
@@ -1122,17 +1128,23 @@ mod tests {
         assert!(u.controls().permission_visible);
         assert_eq!(u.decision_pending, Some(17));
         assert!(u.observe(BackendEvent::StopAccepted { task_id: 7, seq: 3 }));
-        assert!(u.permission.is_none());
-        assert!(u.decision_pending.is_none());
+        // The old metadata is still held for correlation, never as an
+        // actionable choice. No prompt or new consent survives StopAck.
+        assert_eq!(u.permission.unwrap().request, 17);
+        assert_eq!(u.decision_pending, Some(17));
         assert!(!u.controls().permission_visible);
+        assert!(!u.controls().decision_enabled);
         assert_eq!(u.intent(Action::Approve), None);
         assert_eq!(u.intent(Action::Deny), None);
-        // A delayed successful service decision must not re-open or imply
-        // that the UI granted permission after Stop was acknowledged.
-        assert!(!u.observe(BackendEvent::PermissionResolved {
+        // A delayed positive service report is visible as an anomaly; it
+        // does not re-open the decision or establish an actual effect.
+        assert!(u.observe(BackendEvent::PermissionResolved {
             task_id: 7, seq: 4, request: 17, allowed: true,
         }));
-        assert_eq!(u.task.seq, 3);
+        assert_eq!(u.task.seq, 4);
+        assert_eq!(u.task.state, TaskState::Unconfirmed);
+        assert_eq!(u.lines().last().unwrap().kind, "ANOMALY");
+        assert!(u.notice.as_str().contains("EFFECT UNKNOWN"));
         assert!(!u.observe(BackendEvent::PermissionNeeded {
             task_id: 7, seq: 4, request: 18,
             action: "CREATE", target: "/APPS/NEW",
