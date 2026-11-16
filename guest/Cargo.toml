@@ -6,12 +6,6 @@ rust-version = "1.91"
 publish = false
 description = "Native PCP OS Tailorbird UI prototype; no model or tool backend"
 
-[features]
-default = []
-# CI-only probe that reports raw key codes and input lengths to serial.
-# Never ship or enable with real user inputs: key-code traces are sensitive.
-qemu-key-diagnostic = []
-
 [lib]
 name = "tailorbird_ui"
 path = "src/lib.rs"
