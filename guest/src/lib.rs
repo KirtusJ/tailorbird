@@ -1864,6 +1864,46 @@ mod tests {
         }
     }
 
+
+    #[test]
+    fn lost_service_must_keep_unresolved_allow_effect_unknown() {
+        // The GUI sent Allow, but transport vanished before a correlated
+        // PermissionResolved receipt. A later terminal task status is not
+        // proof that the proposed effect did or did not occur.
+        let mut u = Ui::new();
+        running(&mut u);
+        assert!(u.observe(BackendEvent::PermissionNeeded {
+            task_id: 7, seq: 2, request: 97,
+            action: "WRITE", target: "/home/pending.txt",
+        }));
+        assert_eq!(u.intent(Action::Approve), Some(Intent::Decide {
+            task_id: 7, request: 97, allow: true,
+        }));
+        assert!(u.observe(BackendEvent::Service {
+            connected: false, model: Model::Unavailable,
+            saved_mode: Mode::Single,
+        }));
+        assert!(u.permission.is_none() && u.decision_pending.is_none());
+        assert!(!u.controls().decision_enabled);
+        assert!(u.effect_uncertain,
+            "service loss must not erase an unacknowledged Allow/effect");
+        assert!(u.notice.as_str().starts_with("EFFECT UNKNOWN"));
+
+        assert!(u.observe(BackendEvent::Service {
+            connected: true, model: Model::Ready,
+            saved_mode: Mode::Single,
+        }));
+        assert!(!u.controls().decision_enabled);
+        assert!(u.observe(BackendEvent::Failed {
+            task_id: 7, seq: 3, reason: "WORKER EXITED",
+        }));
+        assert!(u.notice.as_str().starts_with("EFFECT UNKNOWN"),
+            "task failure is not authoritative effect reconciliation");
+        assert!(u.observe(BackendEvent::Started { task_id: 8, seq: 1 }));
+        assert!(u.notice.as_str().starts_with("EFFECT UNKNOWN"),
+            "new task cannot settle earlier unknown effect");
+    }
+
 }
 
 #[cfg(test)]
