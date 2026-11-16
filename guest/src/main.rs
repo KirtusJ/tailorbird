@@ -111,7 +111,7 @@ fn paint(display: &mut Display, ui: &Ui) {
         f.rect(140, 460, 780, 42, GROUND);
         label(&mut f, 146, 470, "INPUT NOT DISPLAYABLE", 1, BAD);
     }
-    label(&mut f, 22, 513, "ENTER SUBMIT   ALT M MODE   ALT S STOP   ESC EXIT", 1, SOFT);
+    label(&mut f, 22, 513, "ENTER SUBMIT   ALT R RETRY   ALT M MODE   ALT S STOP   ESC EXIT", 1, SOFT);
     label(&mut f, 535, 513, ui.notice.as_str(), 1, AMBER);
     display.show(pixels);
 }
@@ -133,16 +133,23 @@ pub extern "C" fn tailorbird_main() -> ! {
         let alt = display.held[56];
         if alt {
             if display.pressed[50] { let _ = ui.intent(Action::ToggleMode); dirty = true; }
+            if display.pressed[19] { let _ = ui.intent(Action::RetrySubmit); dirty = true; }
             if display.pressed[31] { let _ = ui.intent(Action::Stop); dirty = true; }
             if display.pressed[30] { let _ = ui.intent(Action::Approve); dirty = true; }
             if display.pressed[32] { let _ = ui.intent(Action::Deny); dirty = true; }
         } else {
             if display.pressed[28] { let _ = ui.intent(Action::Submit); dirty = true; }
-            if display.pressed[14] { dirty |= ui.input.pop(); }
-            let shift = display.held[42] || display.held[54];
-            for code in 0..128 {
-                if display.pressed[code] {
-                    if let Some(b) = tailorbird_ui::exact_ascii::key_from_set1(code, shift) { dirty |= ui.input.push_ascii(b); }
+            // Freeze the visible original request while the service's task
+            // admission remains unknown. Retry always resends that snapshot.
+            if ui.pending_submit.is_none() {
+                if display.pressed[14] { dirty |= ui.input.pop(); }
+                let shift = display.held[42] || display.held[54];
+                for code in 0..128 {
+                    if display.pressed[code] {
+                        if let Some(b) = tailorbird_ui::exact_ascii::key_from_set1(code, shift) {
+                            dirty |= ui.input.push_ascii(b);
+                        }
+                    }
                 }
             }
         }
