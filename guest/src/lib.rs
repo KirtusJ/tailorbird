@@ -318,7 +318,12 @@ impl Ui {
                 true
             }
             BackendEvent::PermissionNeeded { task_id, seq, request, action, target } => {
-                if request == 0 || self.permission.is_some() || !self.accept(task_id, seq) {
+                // A task whose Stop was acknowledged is no longer permitted to
+                // present fresh effect requests. The service must independently
+                // enforce the stop fence; this is only UI state hygiene.
+                if self.task.state != TaskState::Running
+                    || request == 0 || self.permission.is_some()
+                    || !self.accept(task_id, seq) {
                     return false;
                 }
                 self.permission = Some(Grant {
@@ -341,7 +346,12 @@ impl Ui {
             BackendEvent::StopAccepted { task_id, seq } => {
                 if !self.accept(task_id, seq) { return false; }
                 self.task.state = TaskState::StopRequested;
-                self.notice("STOP REQUEST ACCEPTED - END UNCONFIRMED");
+                // An earlier pending UI grant is no longer actionable after
+                // Stop acknowledgment. Its service-side outcome, including
+                // any effect already dispatched, remains unknown until readback.
+                self.permission = None;
+                self.decision_pending = None;
+                self.notice("STOP ACCEPTED - NO NEW GRANTS; END UNCONFIRMED");
                 self.log(seq, "STOP", "REQUEST ACCEPTED BY SERVICE");
                 true
             }
@@ -485,6 +495,65 @@ mod tests {
         }));
         assert!(u.permission.is_none());
     }
+    #[test]
+    fn post_stop_permission_proposal_is_not_displayed_or_approved() {
+        let mut u = Ui::new();
+        running(&mut u);
+        assert!(u.observe(BackendEvent::StopAccepted { task_id: 7, seq: 2 }));
+        assert_eq!(u.task.state, TaskState::StopRequested);
+        assert_eq!(u.task.seq, 2);
+        assert!(!u.controls().decision_enabled);
+        assert!(!u.controls().permission_visible);
+
+        // This newer service-supplied proposal is not a reason to reopen a
+        // permission prompt after the service acknowledged a stop request.
+        assert!(!u.observe(BackendEvent::PermissionNeeded {
+            task_id: 7, seq: 3, request: 46, action: "WRITE", target: "/apps/bird.txt",
+        }));
+        assert_eq!(u.task.seq, 2); // rejected proposal consumes no event seq
+        assert!(u.permission.is_none());
+        assert_eq!(u.notice.as_str(), "STOP ACCEPTED - NO NEW GRANTS; END UNCONFIRMED");
+        assert_eq!(u.intent(Action::Approve), None);
+        assert_eq!(u.intent(Action::Deny), None);
+        assert_eq!(u.task.state, TaskState::StopRequested);
+        assert!(u.observe(BackendEvent::Stopped { task_id: 7, seq: 4 }));
+        assert_eq!(u.task.state, TaskState::Stopped);
+        assert!(!u.controls().permission_visible);
+    }
+
+    #[test]
+    fn stop_ack_retracts_existing_prompt_and_late_grant_ack_is_rejected() {
+        let mut u = Ui::new();
+        running(&mut u);
+        assert!(u.observe(BackendEvent::PermissionNeeded {
+            task_id: 7, seq: 2, request: 17,
+            action: "REPLACE", target: "/apps/old",
+        }));
+        assert_eq!(u.intent(Action::Approve), Some(Intent::Decide {
+            task_id: 7, request: 17, allow: true,
+        }));
+        assert!(u.controls().permission_visible);
+        assert_eq!(u.decision_pending, Some(17));
+        assert!(u.observe(BackendEvent::StopAccepted { task_id: 7, seq: 3 }));
+        assert!(u.permission.is_none());
+        assert!(u.decision_pending.is_none());
+        assert!(!u.controls().permission_visible);
+        assert_eq!(u.intent(Action::Approve), None);
+        assert_eq!(u.intent(Action::Deny), None);
+        // A delayed successful service decision must not re-open or imply
+        // that the UI granted permission after Stop was acknowledged.
+        assert!(!u.observe(BackendEvent::PermissionResolved {
+            task_id: 7, seq: 4, request: 17, allowed: true,
+        }));
+        assert_eq!(u.task.seq, 3);
+        assert!(!u.observe(BackendEvent::PermissionNeeded {
+            task_id: 7, seq: 4, request: 18,
+            action: "CREATE", target: "/apps/new",
+        }));
+        assert!(u.observe(BackendEvent::Stopped { task_id: 7, seq: 5 }));
+        assert!(u.permission.is_none() && u.decision_pending.is_none());
+    }
+
     #[test]
     fn no_approval_after_stop_request() {
         let mut u = Ui::new();
