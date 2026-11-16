@@ -27,6 +27,45 @@ pub enum DrawError {
     InsufficientEditor,
 }
 
+/// Decode US-PC Set-1 printable keys without case folding.
+///
+/// These are the keycodes delivered by PCP OS' existing PS/2 guest ABI.
+/// A later configurable keyboard layout/IME must replace this static map.
+pub fn key_from_set1(code: usize, shift: bool) -> Option<u8> {
+    let letter = match code {
+        16 => Some(b'q'), 17 => Some(b'w'), 18 => Some(b'e'), 19 => Some(b'r'), 20 => Some(b't'),
+        21 => Some(b'y'), 22 => Some(b'u'), 23 => Some(b'i'), 24 => Some(b'o'), 25 => Some(b'p'),
+        30 => Some(b'a'), 31 => Some(b's'), 32 => Some(b'd'), 33 => Some(b'f'), 34 => Some(b'g'),
+        35 => Some(b'h'), 36 => Some(b'j'), 37 => Some(b'k'), 38 => Some(b'l'),
+        44 => Some(b'z'), 45 => Some(b'x'), 46 => Some(b'c'), 47 => Some(b'v'), 48 => Some(b'b'),
+        49 => Some(b'n'), 50 => Some(b'm'),
+        _ => None,
+    };
+    if let Some(lower) = letter {
+        return Some(if shift { lower.to_ascii_uppercase() } else { lower });
+    }
+    if (2..=11).contains(&code) {
+        let index = code - 2;
+        return Some(if shift { b"!@#$%^&*()"[index] } else { b"1234567890"[index] });
+    }
+    let (plain, modified) = match code {
+        12 => (b'-', b'_'),
+        13 => (b'=', b'+'),
+        26 => (b'[', b'{'),
+        27 => (b']', b'}'),
+        39 => (b';', b':'),
+        40 => (b'\'', b'"'),
+        41 => (96u8, b'~'),
+        43 => (b'\\', b'|'),
+        51 => (b',', b'<'),
+        52 => (b'.', b'>'),
+        53 => (b'/', b'?'),
+        57 => (b' ', b' '),
+        _ => return None,
+    };
+    Some(if shift { modified } else { plain })
+}
+
 pub fn exact_printable_ascii(s: &str) -> bool {
     s.bytes().all(|b| (0x20..=0x7e).contains(&b))
 }
@@ -173,6 +212,39 @@ mod tests {
         for s in cases {
             assert!(cell_has_ink(&raster(s), 0), "missing punctuation {}", s);
         }
+    }
+
+    #[test]
+    fn us_set1_keyboard_can_type_all_printable_ascii() {
+        let mut available = [false; 95];
+        for code in 0..128 {
+            for shift in [false, true] {
+                if let Some(byte) = key_from_set1(code, shift) {
+                    assert!((32..=126).contains(&byte));
+                    available[(byte - 32) as usize] = true;
+                }
+            }
+        }
+        for (index, found) in available.iter().enumerate() {
+            assert!(*found, "printable key not typeable: {}", index + 32);
+        }
+    }
+
+    #[test]
+    fn us_set1_preserves_case_and_shifted_path_punctuation() {
+        assert_eq!(key_from_set1(30, false), Some(b'a'));
+        assert_eq!(key_from_set1(30, true), Some(b'A'));
+        assert_eq!(key_from_set1(12, false), Some(b'-'));
+        assert_eq!(key_from_set1(12, true), Some(b'_'));
+        assert_eq!(key_from_set1(13, true), Some(b'+'));
+        assert_eq!(key_from_set1(26, true), Some(b'{'));
+        assert_eq!(key_from_set1(43, false), Some(b'\\'));
+        assert_eq!(key_from_set1(53, true), Some(b'?'));
+        assert_eq!(key_from_set1(41, false), Some(96));
+        assert_eq!(key_from_set1(41, true), Some(b'~'));
+        assert_eq!(key_from_set1(1, false), None);
+        assert_eq!(key_from_set1(28, false), None);
+        assert_eq!(key_from_set1(56, false), None);
     }
 
     #[test]
