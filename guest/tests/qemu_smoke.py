@@ -144,6 +144,25 @@ def run(kernel, guest, timeout, machine):
             lower = crop(pixels_a, dims[0], editor)
             assert lower != base, "Typing lowercase a did not change request pixels"
 
+            # The native keyboard parser must not mistake unsupported Ctrl
+            # shortcuts for literal editor bytes, deletion or Submit. Use
+            # real QMP-modifier events on both emulated machine types and
+            # compare the complete framebuffer, not merely a host reducer.
+            # The guest is offline, so no backend effect is exercised here.
+            for label, chord in [
+                ("ctrl_letter", ("ctrl", "b")),
+                ("ctrl_backspace", ("ctrl", "backspace")),
+                ("ctrl_enter", ("ctrl", "ret")),
+            ]:
+                m.key(*chord)
+                dims_ctrl, ctrl_pixels, ctrl_hash = m.screenshot(label)
+                assert dims_ctrl == dims
+                assert ctrl_pixels == pixels_a, (
+                    f"Unsupported {chord} changed the native screen, "
+                    "prompt or submission state"
+                )
+                print("CTRL_CHORD_INERT", label, ctrl_hash, flush=True)
+
             # Deliberately invisible trailing space: the text glyphs alone
             # cannot distinguish "a" from "a ", but the displayed exact
             # byte count must. It sits to the left of the editor raster.
