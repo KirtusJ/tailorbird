@@ -33,6 +33,20 @@ fn label(f: &mut Frame<'_>, x: i32, y: i32, value: &str, scale: i32, colour: u32
     f.text(x, y, s, scale, colour);
 }
 
+
+// Full 64-bit decimal IDs: a service request must not be presented under a
+// truncated 32-bit task/request number. The 5x7 labels can show 0..9 literally.
+fn decimal_u64<'a>(mut value: u64, buf: &'a mut [u8; 20]) -> &'a str {
+    let mut i = buf.len();
+    loop {
+        i -= 1;
+        buf[i] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 { break; }
+    }
+    core::str::from_utf8(&buf[i..]).unwrap_or("")
+}
+
 fn paint(display: &mut Display, ui: &Ui) {
     let pixels = unsafe { &mut *(&raw mut PIXELS) };
     pixels.fill(GROUND);
@@ -69,7 +83,11 @@ fn paint(display: &mut Display, ui: &Ui) {
     label(&mut f, 335, 116, "TASK OUTPUT", 2, TEAL);
     label(&mut f, 337, 150, ui.task.state.label(), 1, SOFT);
     f.rect(333, 173, 588, 2, GROUND);
-    if ui.lines().is_empty() {
+    if ui.permission.is_some() {
+        // Consent details occupy a focused exact-text inspector instead of
+        // fighting task-output rows for the same pixels. Stop and mode stay
+        // visible in the separate x=20..300 sidebar.
+    } else if ui.lines().is_empty() {
         label(&mut f, 339, 205, "NO TASK EVENTS RECEIVED", 2, SOFT);
         label(&mut f, 339, 246, "MANUAL OS USE REMAINS AVAILABLE", 1, GOOD);
         label(&mut f, 339, 270, "ESC RETURNS TO THE PCP OS LAUNCHER", 1, SOFT);
@@ -81,24 +99,43 @@ fn paint(display: &mut Display, ui: &Ui) {
         }
     }
     if let Some(grant) = ui.permission {
-        f.rect(335, 385, 585, 52, GROUND);
-        // Put the exact action and target on separate rows. The underlying
-        // 5x7 font advances 6 px/character at scale 1. 48 action bytes
-        // from x=390 end at 678; 72 target bytes end at x=822, both
-        // within the x=335..920 permission panel with no overlap.
-        label(&mut f, 342, 392, "PERMISSION REQUIRED", 1, AMBER);
-        label(&mut f, 342, 406, "ACTION", 1, TEAL);
-        label(&mut f, 390, 406, grant.action.as_str(), 1, TEXT);
-        label(&mut f, 342, 420, "TARGET", 1, TEAL);
-        label(&mut f, 390, 420, grant.target.as_str(), 1, TEXT);
-        let decision_label = if ui.controls().decision_enabled {
-            "ALT A / ALT D"
-        } else if ui.decision_pending.is_some() {
-            "DECISION SENT"
+        // Permission review is a full-height 588px-wide inspector. The
+        // canonical action occupies 48 native 10x20 cells; target occupies
+        // at most 72 cells across two lines. Neither can be silently clipped
+        // by Frame::text's uppercase-only 5x7 alphabet. Three native length
+        // digits preserve the distinction between trailing-space paths.
+        f.rect(333, 182, 588, 254, GROUND);
+        label(&mut f, 340, 188, "PERMISSION REQUIRED", 2, AMBER);
+        label(&mut f, 340, 209, "GUI REVIEW ONLY - NO EFFECT GRANTED", 1, SOFT);
+        label(&mut f, 340, 218, "ACTION", 1, TEAL);
+        label(&mut f, 845, 218, "A LEN", 1, TEAL);
+        label(&mut f, 340, 265, "TARGET", 1, TEAL);
+        label(&mut f, 845, 265, "T LEN", 1, TEAL);
+        if tailorbird_ui::exact_ascii::draw_permission(
+            &mut *f.px, W, H, W, grant.action.as_str(), grant.target.as_str(), TEXT,
+        ).is_err() {
+            // Not a license to approve a field that cannot be displayed.
+            f.rect(333, 182, 588, 254, GROUND);
+            label(&mut f, 340, 227, "PERMISSION NOT DISPLAYABLE", 2, BAD);
+            label(&mut f, 340, 264, "STOP TASK - SERVICE MUST REFUSE", 1, BAD);
         } else {
-            "INPUT LOCKED"
-        };
-        label(&mut f, 760, 392, decision_label, 1, SOFT);
+            let decision_label = if ui.controls().decision_enabled {
+                "ALT A ALLOW - ALT D DENY"
+            } else if ui.decision_pending.is_some() {
+                "DECISION SENT - AWAIT SERVICE"
+            } else {
+                "INPUT LOCKED - NO DECISION"
+            };
+            label(&mut f, 340, 338, decision_label, 2, AMBER);
+            label(&mut f, 340, 372, "SOURCE DIGEST AND EFFECT BINDING ARE SERVICE DUTIES", 1, SOFT);
+            label(&mut f, 340, 392, "NO WRITE OR AUTHORIZATION BY THIS UI", 1, SOFT);
+            label(&mut f, 340, 414, "TASK", 1, TEAL);
+            let mut task_digits = [0u8; 20];
+            label(&mut f, 380, 414, decimal_u64(ui.task.id, &mut task_digits), 1, TEXT);
+            label(&mut f, 530, 414, "REQUEST", 1, TEAL);
+            let mut req_digits = [0u8; 20];
+            label(&mut f, 590, 414, decimal_u64(grant.request, &mut req_digits), 1, TEXT);
+        }
     }
 
     f.rect(20, 458, 920, 48, PANEL);
