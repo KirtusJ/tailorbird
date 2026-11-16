@@ -376,6 +376,19 @@ impl Ui {
         self.task.seq = seq;
         true
     }
+    /// A terminal task-state report does not resolve an outstanding
+    /// permission result. Preserve the *uncertainty* in this in-process UI
+    /// before discarding non-actionable request metadata. No grant or effect
+    /// is inferred; PT owns durable ordered permission/effect readback.
+    fn retire_permission_at_terminal(&mut self, seq: u64) {
+        if self.permission.take().is_some() {
+            self.effect_uncertain = true;
+            self.log(seq, "ANOMALY", "TERMINAL WITHOUT PERMISSION OUTCOME");
+        }
+        self.decision_pending = None;
+        self.decision_choice = None;
+    }
+
     fn start_task(&mut self, task_id: u64, seq: u64) {
         self.task = Task { id: task_id, seq, state: TaskState::Running };
         self.pending_submit = None;
@@ -647,30 +660,24 @@ impl Ui {
             BackendEvent::Stopped { task_id, seq } => {
                 if !self.accept_terminal(task_id, seq) { return false; }
                 self.task.state = TaskState::Stopped;
-                self.permission = None;
-                self.decision_pending = None;
-                self.decision_choice = None;
                 self.log(seq, "STOPPED", "SERVICE REPORTED TERMINATION");
+                self.retire_permission_at_terminal(seq);
                 self.notice("SERVICE REPORTS STOPPED");
                 true
             }
             BackendEvent::Completed { task_id, seq } => {
                 if !self.accept_terminal(task_id, seq) { return false; }
                 self.task.state = TaskState::Completed;
-                self.permission = None;
-                self.decision_pending = None;
-                self.decision_choice = None;
                 self.log(seq, "DONE", "SERVICE REPORTED COMPLETION");
+                self.retire_permission_at_terminal(seq);
                 self.notice("SERVICE REPORTS COMPLETE");
                 true
             }
             BackendEvent::Failed { task_id, seq, reason } => {
                 if !self.accept_terminal(task_id, seq) { return false; }
                 self.task.state = TaskState::Failed;
-                self.permission = None;
-                self.decision_pending = None;
-                self.decision_choice = None;
                 self.log(seq, "FAILED", reason);
+                self.retire_permission_at_terminal(seq);
                 self.notice("SERVICE REPORTS FAILURE");
                 true
             }
