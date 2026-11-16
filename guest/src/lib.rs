@@ -296,7 +296,7 @@ impl Ui {
         if self.effect_uncertain && !s.contains("EFFECT UNKNOWN") {
             let mut msg = Text::<84>::new();
             let mut count = 0usize;
-            for b in b"EFFECT UNKNOWN | ".iter().copied().chain(s.bytes()) {
+            for b in b"EFFECT UNKNOWN - ".iter().copied().chain(s.bytes()) {
                 if count == 70 { break; }
                 if msg.push_ascii(b) { count += 1; }
             }
