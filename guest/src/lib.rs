@@ -1656,6 +1656,35 @@ mod tests {
         assert!(u.observe(BackendEvent::Stopped { task_id: 7, seq: 4 }));
         assert_eq!(u.task.state, TaskState::Stopped);
     }
+
+    #[test]
+    fn stopped_permission_metadata_must_not_be_repainted_as_live_consent() {
+        // Source-level renderer binding guard. After StopAck, the old grant
+        // remains in memory strictly to correlate a late service receipt.
+        // The native painter MUST branch on permission_visible, not merely
+        // permission.is_some(), or it masks Stop/readback event rows behind
+        // a stale "PERMISSION REQUIRED" inspector.
+        let mut u = Ui::new();
+        running(&mut u);
+        assert!(u.observe(BackendEvent::PermissionNeeded {
+            task_id: 7, seq: 2, request: 88,
+            action: "WRITE", target: "/home/stopped.txt",
+        }));
+        assert!(u.controls().permission_visible);
+        assert!(u.observe(BackendEvent::StopAccepted { task_id: 7, seq: 3 }));
+        assert!(u.permission.is_some(), "retain request only for late correlation");
+        assert!(!u.controls().permission_visible);
+        assert!(!u.controls().decision_enabled);
+        assert_eq!(u.lines().last().unwrap().kind, "STOP");
+        // The actual guest paint_frame consumes this gate. This test checks
+        // source wiring, NOT pixels from an injected QEMU service event.
+        let renderer = include_str!("main.rs");
+        assert!(
+            renderer.contains("if ui.controls().permission_visible {"),
+            "native renderer still paints stale permission inspector after StopAck"
+        );
+    }
+
 }
 
 #[cfg(test)]
