@@ -1683,6 +1683,12 @@ mod tests {
             renderer.contains("if ui.controls().permission_visible {"),
             "native renderer still paints stale permission inspector after StopAck"
         );
+        // Also fence the actual inspector drawing branch. It must not
+        // overlay the resumed event rows merely because metadata was retained.
+        assert!(
+            renderer.contains("if let Some(grant) = ui.permission.filter(|_| ui.controls().permission_visible) {"),
+            "native inspector draw branch ignores the permission visibility fence"
+        );
     }
 
 }
