@@ -59,6 +59,14 @@ impl OrderedKeyboard {
             return KeyOutcome::Unchanged;
         }
         if self.held[56] {
+            // A permission choice is defined as the exact Alt+A / Alt+D
+            // chord. Shift changes the chord; never interpret Shift+Alt+A
+            // or Shift+Alt+D as human consent. The held-key state above
+            // still requires a genuine release/fresh Down after Shift lifts.
+            // Stop and non-consent actions retain their existing mappings.
+            if (self.held[42] || self.held[54]) && (code == 30 || code == 32) {
+                return KeyOutcome::Unchanged;
+            }
             let action = match code {
                 50 => Some(Action::ToggleMode),
                 19 => Some(Action::RetrySubmit),
