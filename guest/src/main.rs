@@ -123,21 +123,6 @@ fn paint(display: &mut Display, ui: &Ui) {
 // directly. No kernel, firmware, shared guest or device ABI change is made.
 // This is still a US-PC scancode map, not a general IME/layout service.
 
-// This exact-key trace is for the public synthetic CI fixture ONLY.
-// Scan-code logs can expose typed input; no production build enables it.
-#[cfg(feature = "qemu-key-diagnostic")]
-fn trace_key_receipt(code: usize, down: bool, input_len: usize) {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    let mut line = *b"KBD 00 U LEN=000\n";
-    line[4] = HEX[(code >> 4) & 15];
-    line[5] = HEX[code & 15];
-    line[7] = if down { b'D' } else { b'U' };
-    line[13] = b'0' + (input_len / 100) as u8;
-    line[14] = b'0' + ((input_len / 10) % 10) as u8;
-    line[15] = b'0' + (input_len % 10) as u8;
-    log(&line);
-}
-
 pcp_game_guest::entry!(tailorbird_main);
 #[no_mangle]
 pub extern "C" fn tailorbird_main() -> ! {
@@ -160,8 +145,6 @@ pub extern "C" fn tailorbird_main() -> ! {
             let code = (event[0] & 127) as usize;
             let down = event[1] & 1 == 0;
             let outcome = ordered.event(code, down, &mut ui);
-            #[cfg(feature = "qemu-key-diagnostic")]
-            trace_key_receipt(code, down, ui.input.as_str().len());
             match outcome {
                 KeyOutcome::Exit => exit(0),
                 KeyOutcome::Redraw => dirty = true,
