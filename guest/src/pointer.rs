@@ -48,8 +48,8 @@ pub struct PointerEvent {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Capture {
-    Mode { original: Mode },
-    Stop { task_id: u64, original_state: TaskState },
+    Mode { original: Mode, service_epoch: u64 },
+    Stop { task_id: u64, original_state: TaskState, service_epoch: u64 },
 }
 
 impl Capture {
@@ -57,6 +57,12 @@ impl Capture {
         match self {
             Self::Mode { .. } => MODE_RECT,
             Self::Stop { .. } => STOP_RECT,
+        }
+    }
+    fn service_epoch(self) -> u64 {
+        match self {
+            Self::Mode { service_epoch, .. } |
+            Self::Stop { service_epoch, .. } => service_epoch,
         }
     }
 }
@@ -84,17 +90,20 @@ impl PointerUi {
             }
             PointerPhase::Down if e.button == PointerButton::Primary => {
                 // Duplicate Down may be auto-repeat; never retarget a gesture.
-                if self.captured.is_none() {
+                if self.captured.is_none() && ui.service_epoch != u64::MAX {
                     self.captured = if MODE_RECT.contains(e.x, e.y)
                         && ui.connected && ui.mode_pending.is_none()
                         && ui.pending_submit.is_none()
                     {
-                        Some(Capture::Mode { original: ui.mode })
+                        Some(Capture::Mode {
+                            original: ui.mode, service_epoch: ui.service_epoch,
+                        })
                     } else if STOP_RECT.contains(e.x, e.y)
                         && ui.controls().stop_enabled
                     {
                         Some(Capture::Stop {
                             task_id: ui.task.id, original_state: ui.task.state,
+                            service_epoch: ui.service_epoch,
                         })
                     } else {
                         None
@@ -115,16 +124,22 @@ impl PointerUi {
             PointerPhase::Up => {
                 if e.button != PointerButton::Primary { self.cancel(); return None; }
                 let capture = self.captured.take()?;
-                if !capture.rect().contains(e.x, e.y) { return None; }
+                if !capture.rect().contains(e.x, e.y)
+                    || capture.service_epoch() != ui.service_epoch {
+                    // A disconnect/reconnect or service-status refresh can
+                    // occur without an input device's focus-loss Cancel.
+                    // Never resume a gesture across those state boundaries.
+                    return None;
+                }
                 match capture {
-                    Capture::Mode { original }
+                    Capture::Mode { original, .. }
                         if ui.connected && ui.mode_pending.is_none()
                             && ui.pending_submit.is_none()
                             && ui.mode == original =>
                     {
                         ui.intent(Action::ToggleMode)
                     }
-                    Capture::Stop { task_id, original_state }
+                    Capture::Stop { task_id, original_state, .. }
                         if ui.connected && ui.task.id == task_id
                             && ui.task.state == original_state
                             && ui.controls().stop_enabled =>
@@ -268,6 +283,84 @@ mod tests {
         assert_eq!(pointer.input(event(50, 234, PointerPhase::Cancel), &mut ui), None);
         assert_eq!(pointer.input(event(50, 234, PointerPhase::Up), &mut ui), None);
         assert_eq!(ui.mode_pending, None);
+    }
+
+    #[test]
+    fn mode_press_across_disconnect_and_reconnect_is_rejected() {
+        let mut ui = connected();
+        let mut pointer = PointerUi::new();
+        assert_eq!(ui.service_epoch, 1);
+        assert_eq!(pointer.input(event(50, 234, PointerPhase::Down), &mut ui), None);
+        assert!(ui.observe(BackendEvent::Service {
+            connected: false, model: Model::Unknown, saved_mode: Mode::Single,
+        }));
+        assert!(ui.observe(BackendEvent::Service {
+            connected: true, model: Model::Ready, saved_mode: Mode::Single,
+        }));
+        assert_eq!(ui.service_epoch, 3);
+        // Same apparent mode and service connectivity at Up must not
+        // resurrect the stale Down event as a new user request.
+        assert_eq!(pointer.input(event(50, 234, PointerPhase::Up), &mut ui), None);
+        assert_eq!(ui.mode_pending, None);
+        assert_eq!(ui.mode, Mode::Single);
+        assert_eq!(pointer.input(event(50, 234, PointerPhase::Down), &mut ui), None);
+        assert_eq!(pointer.input(event(50, 234, PointerPhase::Up), &mut ui),
+                   Some(Intent::SetMode(Mode::Ongoing)));
+    }
+
+    #[test]
+    fn repeated_service_snapshot_invalidates_mode_press_even_if_unchanged() {
+        let mut ui = connected();
+        let mut pointer = PointerUi::new();
+        assert_eq!(pointer.input(event(50, 234, PointerPhase::Down), &mut ui), None);
+        assert!(ui.observe(BackendEvent::Service {
+            connected: true, model: Model::Ready, saved_mode: Mode::Single,
+        }));
+        assert_eq!(pointer.input(event(50, 234, PointerPhase::Up), &mut ui), None);
+        assert_eq!(ui.mode_pending, None);
+        assert_eq!(ui.mode, Mode::Single);
+    }
+
+    #[test]
+    fn stop_gesture_from_reconnected_unknown_task_must_use_fresh_down() {
+        let mut ui = connected();
+        let mut pointer = PointerUi::new();
+        assert!(ui.observe(BackendEvent::Started { task_id: 7, seq: 1 }));
+        assert_eq!(pointer.input(event(60, 340, PointerPhase::Down), &mut ui), None);
+        assert!(ui.observe(BackendEvent::Service {
+            connected: false, model: Model::Unknown, saved_mode: Mode::Single,
+        }));
+        assert_eq!(ui.task.state, TaskState::Unconfirmed);
+        assert!(ui.observe(BackendEvent::Service {
+            connected: true, model: Model::Ready, saved_mode: Mode::Single,
+        }));
+        assert!(ui.controls().stop_enabled);
+        assert_eq!(pointer.input(event(60, 340, PointerPhase::Up), &mut ui), None);
+        assert_eq!(ui.task.state, TaskState::Unconfirmed);
+        assert_eq!(pointer.input(event(60, 340, PointerPhase::Down), &mut ui), None);
+        assert_eq!(pointer.input(event(60, 340, PointerPhase::Up), &mut ui),
+                   Some(Intent::Stop { task_id: 7 }));
+        assert_eq!(ui.task.state, TaskState::Unconfirmed); // intent, not stop
+    }
+
+    #[test]
+    fn exhausted_service_epoch_disables_pointer_capture_without_wrap() {
+        let mut ui = connected();
+        ui.service_epoch = u64::MAX - 1;
+        let mut pointer = PointerUi::new();
+        assert_eq!(pointer.input(event(50, 234, PointerPhase::Down), &mut ui), None);
+        assert!(ui.observe(BackendEvent::Service {
+            connected: true, model: Model::Ready, saved_mode: Mode::Single,
+        }));
+        assert_eq!(ui.service_epoch, u64::MAX);
+        assert_eq!(pointer.input(event(50, 234, PointerPhase::Up), &mut ui), None);
+        assert_eq!(pointer.input(event(50, 234, PointerPhase::Down), &mut ui), None);
+        assert_eq!(pointer.input(event(50, 234, PointerPhase::Up), &mut ui), None);
+        assert_eq!(ui.mode_pending, None);
+        assert!(ui.observe(BackendEvent::Service {
+            connected: true, model: Model::Ready, saved_mode: Mode::Single,
+        }));
+        assert_eq!(ui.service_epoch, u64::MAX); // no wrap to an old epoch
     }
 
     #[test]
