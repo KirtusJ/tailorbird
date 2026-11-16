@@ -11,6 +11,9 @@ pub const INPUT_LIMIT: usize = 120;
 pub mod exact_ascii;
 /// Retain ordered keyboard event identity instead of pressed bitmap only.
 pub mod ordered_keys;
+/// Future OS-delivered pointer events can drive bounded GUI controls only;
+/// the pinned kernel has no /dev/mouse or equivalent input source.
+pub mod pointer;
 pub const LOG_LIMIT: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
