@@ -118,8 +118,15 @@ impl<'a> Frame<'a> {
 
     /// The event message is printable ASCII already retained by the reducer.
     /// Starting at 422 leaves room in the panel for all 84 six-unit cells.
-    pub fn task_output(&mut self, y: i32, kind: &str, message: &str, kind_color: u32, text_color: u32) {
+    /// The separate (!) glyph at x=404 is *derived* from reducer metadata,
+    /// not from service-supplied content (which starts only at x=422).
+    /// A literal "[LOSSY]" from a model must not counterfeit this flag.
+    pub fn task_output(&mut self, y: i32, kind: &str, message: &str,
+                       preview_lossy: bool, kind_color: u32, text_color: u32) {
         self.text(336, y, kind, 1, kind_color);
+        if preview_lossy {
+            self.glyph(404, y.max(0) as usize, 6, 10, b'!', kind_color);
+        }
         self.text(422, y, message, 1, text_color);
     }
 
@@ -180,7 +187,7 @@ mod tests {
         let render = |message: &str| {
             let mut pixels = vec![0; 960 * 540];
             let mut f = Frame::new(&mut pixels, 960, 540, 960, 0);
-            f.task_output(190, "OUTPUT", message, 0xff00, 0xffffff);
+            f.task_output(190, "OUTPUT", message, false, 0xff00, 0xffffff);
             pixels
         };
         let a = render(&lower);
@@ -197,6 +204,35 @@ mod tests {
             case_difference |= a[offset+920..offset+926] != b[offset+920..offset+926];
         }
         assert!(case_difference);
+    }
+
+    #[test]
+    fn loss_indicator_is_separate_from_model_or_tool_text() {
+        // Even if a service returns the literal "[LOSSY] go??" text,
+        // only the UI-computed loss bit can cause the dedicated status cell
+        // to be lit. No model bytes can write into x=404 through this API.
+        let render = |lossy: bool| {
+            let mut pixels = vec![0; 960 * 540];
+            let mut f = Frame::new(&mut pixels, 960, 540, 960, 0);
+            f.task_output(190, "OUTPUT", "[LOSSY] go??", lossy, 0xffffff, 0xffffff);
+            pixels
+        };
+        let exact = render(false);
+        let altered = render(true);
+        assert_ne!(exact, altered);
+        let mut ink = false;
+        for y in 190..200 {
+            for x in 404..410 {
+                assert_eq!(exact[y * 960 + x], 0, "source text escaped its allocated lane");
+                ink |= altered[y * 960 + x] != 0;
+            }
+        }
+        assert!(ink, "UI provenance indicator did not paint");
+        // The service text area must be byte-for-byte visually identical.
+        for y in 190..200 {
+            assert_eq!(&exact[y * 960 + 422..y * 960 + 926],
+                       &altered[y * 960 + 422..y * 960 + 926]);
+        }
     }
 
     #[test]
