@@ -220,6 +220,50 @@ mod tests {
     }
 
     #[test]
+    fn enter_typematic_cannot_resubmit_after_matching_service_rejection() {
+        let mut keys = OrderedKeyboard::new();
+        let mut ui = Ui::new();
+        assert!(ui.observe(BackendEvent::Service {
+            connected: true, model: Model::Ready, saved_mode: Mode::Single,
+        }));
+        stroke(&mut keys, &mut ui, 30); // a
+        // First physical Enter submits one immutable key/prompt snapshot.
+        assert_eq!(keys.event(28, true, &mut ui), KeyOutcome::Redraw);
+        assert_eq!(ui.pending_submit.unwrap().idempotency_key, 1);
+        // Service rejects before the physical Enter key is released.
+        assert!(ui.observe(BackendEvent::SubmissionRejected { idempotency_key: 1 }));
+        assert!(ui.pending_submit.is_none());
+        assert_eq!(ui.input.as_str(), "a");
+        // Auto-repeat of the SAME held Enter must not manufacture key 2.
+        assert_eq!(keys.event(28, true, &mut ui), KeyOutcome::Unchanged);
+        assert!(ui.pending_submit.is_none(),
+                "a held Enter must not create a new admission key after refusal");
+        keys.event(28, false, &mut ui);
+        // Intentional release and fresh press is allowed.
+        assert_eq!(keys.event(28, true, &mut ui), KeyOutcome::Redraw);
+        assert_eq!(ui.pending_submit.unwrap().idempotency_key, 2);
+    }
+
+    #[test]
+    fn held_enter_before_service_connects_cannot_submit_on_repeat() {
+        let mut keys = OrderedKeyboard::new();
+        let mut ui = Ui::new();
+        stroke(&mut keys, &mut ui, 30); // a while offline
+        // Enter was pressed when no model service could accept it.
+        assert_eq!(keys.event(28, true, &mut ui), KeyOutcome::Redraw);
+        assert!(ui.pending_submit.is_none());
+        assert!(ui.observe(BackendEvent::Service {
+            connected: true, model: Model::Ready, saved_mode: Mode::Single,
+        }));
+        // A service-status transition must not turn typematic into fresh consent.
+        assert_eq!(keys.event(28, true, &mut ui), KeyOutcome::Unchanged);
+        assert!(ui.pending_submit.is_none());
+        keys.event(28, false, &mut ui);
+        assert_eq!(keys.event(28, true, &mut ui), KeyOutcome::Redraw);
+        assert_eq!(ui.pending_submit.unwrap().idempotency_key, 1);
+    }
+
+    #[test]
     fn ordered_alt_actions_and_exit_do_not_type_text() {
         let mut keys = OrderedKeyboard::new();
         let mut ui = Ui::new();
