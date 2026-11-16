@@ -100,7 +100,17 @@ fn paint(display: &mut Display, ui: &Ui) {
 
     f.rect(20, 458, 920, 48, PANEL);
     label(&mut f, 32, 469, "REQUEST", 1, TEAL);
-    label(&mut f, 140, 469, ui.input.as_str(), 1, TEXT);
+    // The text submitted to the service is the *exact* text painted here,
+    // not the uppercased 5x7 label. Two lines at 78 cells expose all 120
+    // stored bytes, including case-sensitive paths and source punctuation.
+    // A drawing failure is visible, and the reducer independently refuses
+    // submission when the editor cannot represent the request.
+    if tailorbird_ui::exact_ascii::draw_request(
+        &mut *f.px, W, H, W, ui.input.as_str(), TEXT,
+    ).is_err() {
+        f.rect(140, 460, 780, 42, GROUND);
+        label(&mut f, 146, 470, "INPUT NOT DISPLAYABLE", 1, BAD);
+    }
     label(&mut f, 22, 513, "ENTER SUBMIT   ALT M MODE   ALT S STOP   ESC EXIT", 1, SOFT);
     label(&mut f, 535, 513, ui.notice.as_str(), 1, AMBER);
     display.show(pixels);
