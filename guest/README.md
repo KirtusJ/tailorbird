@@ -181,8 +181,12 @@ that can *later* receive OS-authenticated pointer coordinates and
 button-down/up events. Its Mode and Stop rectangles are reused by
 the native renderer, so the test targets and pixels agree. A primary
 press and release must occur inside the same still-enabled control;
-leaving the region, unplug/focus-loss cancel, a foreign task or
-change of mode/connection disables a stale click. Unconnected and
+leaving the region, an explicit unplug/focus-loss Cancel event,
+a foreign task, or a changed mode disables a stale click. An offline
+state at Release also refuses the action. **The future trusted adapter
+must send Cancel on every disconnect/reconnect, focus change and display
+transition**; this pure module cannot detect an unseen connection
+transition if no input event is delivered during it. Unconnected and
 pending-Submit states never issue a new action from a click. Secondary,
 middle or cross-button gestures cannot activate an action.
 
