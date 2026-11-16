@@ -166,6 +166,43 @@ cursor, per-whitespace markers, multi-line editor, Unicode, arbitrary
 accessibility tooling and PT's service-accepted exact request bytes
 remain separate qualification requirements.
 
+## Future mouse/pointer UI adapter (not a mouse driver)
+
+The principal's [explicit daily-driver hardware directive](https://github.com/KirtusJ/pcp-os/issues/132#issuecomment-6908486443)
+requires a **keyboard, mouse/peripherals, disks, encrypted drives, Wi-Fi
+and wired Ethernet**. On the public master source pin
+`67e57f924ce0e2c86f9250c567796b745ed633c8`, the kernel has a
+PS/2 keyboard FIFO and framebuffer, **but no user-mode pointer device**
+or general USB/HID interface. Do not confuse a static hit-test with an
+implemented mouse, pointer driver or physically tested peripheral.
+
+Session A now includes `src/pointer.rs`, a pure `no_std` UI adapter
+that can *later* receive OS-authenticated pointer coordinates and
+button-down/up events. Its Mode and Stop rectangles are reused by
+the native renderer, so the test targets and pixels agree. A primary
+press and release must occur inside the same still-enabled control;
+leaving the region, unplug/focus-loss cancel, a foreign task or
+change of mode/connection disables a stale click. Unconnected and
+pending-Submit states never issue a new action from a click. Secondary,
+middle or cross-button gestures cannot activate an action.
+
+**Critically, no pointer gesture can Approve/Deny an effect or Submit
+a prompt** in this version. Such actions require an exact immutable
+proposal, confirmed actor and PT's trusted service, not a pointer click
+surface. The normal guest does **not** call this module: it cannot
+receive mouse events until PT and the firmware/input lane provide a
+capability-gated pointer device and real adapter with bounded ranges,
+timestamps/order, device identity and loss/unplug recovery. No
+native pointer cursor, hover, dragging, wheel, USB HID, touch or
+wireless mouse is claimed.
+
+Eight new adversarial host cases validate the conservative adapter's
+geometry, double-click, disabled control, wrong task, out-of-bounds,
+event cancellation and denial of privileged-click behavior. This is
+pre-integration source/testing work; it does not qualify a daily-driver
+mouse. A future actual pointer device must be tested in software QEMU
+and on physical hardware, with and without Qwen, before release.
+
 ## Pending submission admission and stable retry identity
 
 A source-first adversarial review by Director PT at [PCP-OS issue #132 comment
@@ -344,7 +381,7 @@ location for the ongoing/single-request setting before any adapter is linked.
 
 ## Test coverage and open defects
 
-The Rust reducer originally had **29 passing cases at commit 18710a6d**, and the exact-input renderer added **8 cases**, the pending-submission race **4**, and ordered keyboard handling **5** (46 total): offline refusal, text bounds,
+The Rust reducer originally had **29 passing cases at commit 18710a6d**, and the exact-input renderer added **8 cases**, the pending-submission race **4**, and ordered keyboard handling **5** (46 previously tested plus 8 new pointer cases = 54 authored): offline refusal, text bounds,
 one-shot permission choice and contradictory-input rejection, stop-acknowledgment
 permission refusal and prompt retraction, reconnect reconciliation only
 after task-matched terminal readback, immediate task-ID replay refusal,
@@ -356,8 +393,10 @@ and injection-like
 model output, exact and unrenderable permission metadata including target overflow and glyph aliases, matching/mismatched/unsolicited mode readback, stop request versus termination,
 wrong-task and out-of-order events, explicit grant decisions, stop/permission
 race, lost-service unconfirmed status, post-terminal rejection and bounded
-log order. The 46 source tests **passed in debug and release**
+log order. The prior 46 source tests **passed in debug and release**
 in [run 43811187850](https://github.com/KirtusJ/pcp-os/actions/runs/43811187850),
+before the eight pointer cases were added. Those eight are authored but
+**must be executed at the exact new source head** for any pass claim.
 which compiled the high-address native guest. Its separate QEMU job
 actually booted the *public legacy kernel* with the normal, model-free
 Tailorbird guest and passed both **PC and Q35** raster/input/exit smoke
