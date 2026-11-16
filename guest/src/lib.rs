@@ -1142,6 +1142,69 @@ mod tests {
     }
 
     #[test]
+    fn grant_received_after_stop_ack_is_visible_as_order_unknown_not_discarded() {
+        // The service can acknowledge Stop before sending its older permission
+        // outcome. A stale-looking positive readback is not proof of a safe
+        // stop/effect ordering, and must not disappear without a warning.
+        let mut u = Ui::new();
+        running(&mut u);
+        assert!(u.observe(BackendEvent::PermissionNeeded {
+            task_id: 7, seq: 2, request: 49, action: "WRITE", target: "/home/item.txt",
+        }));
+        assert_eq!(u.intent(Action::Approve),
+                   Some(Intent::Decide { task_id: 7, request: 49, allow: true }));
+        assert_eq!(u.intent(Action::Stop), Some(Intent::Stop { task_id: 7 }));
+        assert!(u.observe(BackendEvent::StopAccepted { task_id: 7, seq: 3 }));
+        assert!(!u.controls().decision_enabled);
+        assert!(!u.controls().permission_visible);
+        assert!(u.observe(BackendEvent::PermissionResolved {
+            task_id: 7, seq: 4, request: 49, allowed: true,
+        }), "a correlated late positive receipt must not vanish");
+        assert_eq!(u.task.state, TaskState::Unconfirmed);
+        assert_eq!(u.lines().last().unwrap().kind, "ANOMALY");
+        assert!(u.notice.as_str().contains("EFFECT UNKNOWN"));
+        assert!(u.intent(Action::Approve).is_none());
+        assert!(u.observe(BackendEvent::Stopped { task_id: 7, seq: 5 }));
+    }
+
+    #[test]
+    fn unsolicited_stop_ack_with_late_grant_is_also_uncertain() {
+        // Even without a local Stop shortcut, an externally reported StopAck
+        // precedes the later grant report in this presentation sequence.
+        let mut u = Ui::new();
+        running(&mut u);
+        assert!(u.observe(BackendEvent::PermissionNeeded {
+            task_id: 7, seq: 2, request: 50, action: "WRITE", target: "/home/item.txt",
+        }));
+        assert_eq!(u.intent(Action::Approve),
+                   Some(Intent::Decide { task_id: 7, request: 50, allow: true }));
+        assert!(u.observe(BackendEvent::StopAccepted { task_id: 7, seq: 3 }));
+        assert!(u.observe(BackendEvent::PermissionResolved {
+            task_id: 7, seq: 4, request: 50, allowed: true,
+        }), "a stop-acknowledged grant must not be labeled ordinary consent");
+        assert_eq!(u.task.state, TaskState::Unconfirmed);
+        assert_eq!(u.lines().last().unwrap().kind, "ANOMALY");
+        assert!(u.notice.as_str().contains("EFFECT UNKNOWN"));
+    }
+
+    #[test]
+    fn denial_after_stop_ack_remains_denial_not_an_invented_effect() {
+        let mut u = Ui::new();
+        running(&mut u);
+        assert!(u.observe(BackendEvent::PermissionNeeded {
+            task_id: 7, seq: 2, request: 51, action: "WRITE", target: "/home/item.txt",
+        }));
+        assert_eq!(u.intent(Action::Stop), Some(Intent::Stop { task_id: 7 }));
+        assert!(u.observe(BackendEvent::StopAccepted { task_id: 7, seq: 3 }));
+        assert!(u.observe(BackendEvent::PermissionResolved {
+            task_id: 7, seq: 4, request: 51, allowed: false,
+        }));
+        assert_eq!(u.task.state, TaskState::StopRequested);
+        assert_eq!(u.lines().last().unwrap().kind, "DECISION");
+        assert_eq!(u.lines().last().unwrap().message.as_str(), "SERVICE REPORTED DENIAL");
+    }
+
+    #[test]
     fn late_successful_permission_readback_after_stop_intent_is_not_ordinary_consent() {
         // A user can choose Allow and then press Stop before the service
         // replies. A positive outcome in that interval is not evidence
