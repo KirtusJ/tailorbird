@@ -134,6 +134,93 @@ pub fn draw_request(
     Ok(())
 }
 
+
+// Exact permission inspection shares the known case-sensitive 10x20 font,
+// but never alters the immutable reducer-owned action/target payloads.
+// 54 columns fit between x=340 and x=880, so a 72-byte destination occupies
+// at most two rows. Three decimal length digits at x=888..918 make even
+// invisible leading/trailing ASCII spaces distinguishable.
+pub const PERMISSION_X: usize = 340;
+pub const PERMISSION_ACTION_Y: usize = 230;
+pub const PERMISSION_TARGET_Y: usize = 280;
+pub const PERMISSION_COLS: usize = 54;
+pub const PERMISSION_LENGTH_X: usize = 888;
+pub const PERMISSION_ACTION_LIMIT: usize = 48;
+pub const PERMISSION_TARGET_LIMIT: usize = 72;
+
+pub fn can_show_permission(action: &str, target: &str) -> bool {
+    !action.is_empty() && action.len() <= PERMISSION_ACTION_LIMIT
+        && !target.is_empty() && target.len() <= PERMISSION_TARGET_LIMIT
+        && exact_printable_ascii(action) && exact_printable_ascii(target)
+}
+
+fn paint_glyph(pixels: &mut [u32], pitch: usize, byte: u8, x: usize, y: usize, colour: u32) {
+    let glyph = &kernel_font::GLYPHS[(byte - kernel_font::FIRST) as usize];
+    for row in 0..CELL_HEIGHT {
+        for col in 0..CELL_WIDTH {
+            let coverage = glyph[row * CELL_WIDTH + col] as u32;
+            if coverage != 0 {
+                let idx = (y + row) * pitch + x + col;
+                pixels[idx] = blend(pixels[idx], colour, coverage);
+            }
+        }
+    }
+}
+
+fn paint_decimal_length(
+    pixels: &mut [u32], pitch: usize, len: usize, y: usize, colour: u32,
+) {
+    // Admitted fields cannot exceed 72 bytes. Always draw three positions,
+    // including leading zeroes. Their source-font digits are unambiguous.
+    for (i, digit) in [len / 100, (len / 10) % 10, len % 10].iter().enumerate() {
+        paint_glyph(pixels, pitch, b'0' + *digit as u8,
+                    PERMISSION_LENGTH_X + i * CELL_WIDTH, y, colour);
+    }
+}
+
+/// Pixel-exact, case-preserving inspection of service-supplied effect text.
+///
+/// This is presentation, NOT a security credential or trusted effect grant.
+/// PT's service must separately bind actor, task, immutable source digest,
+/// full destination, explicit human decision and actual effect receipt.
+/// Preflight rejects invalid bytes/surfaces BEFORE mutating any pixels.
+pub fn draw_permission(
+    pixels: &mut [u32], width: usize, height: usize, pitch: usize,
+    action: &str, target: &str, colour: u32,
+) -> Result<(), DrawError> {
+    if !can_show_permission(action, target) {
+        return Err(DrawError::UnrenderableInput);
+    }
+    let required = height.checked_mul(pitch).ok_or(DrawError::InsufficientSurface)?;
+    if pitch < width || pixels.len() < required {
+        return Err(DrawError::InsufficientSurface);
+    }
+    let text_right = PERMISSION_X
+        .checked_add(PERMISSION_COLS * CELL_WIDTH)
+        .ok_or(DrawError::InsufficientEditor)?;
+    let length_right = PERMISSION_LENGTH_X
+        .checked_add(3 * CELL_WIDTH)
+        .ok_or(DrawError::InsufficientEditor)?;
+    let bottom = PERMISSION_TARGET_Y
+        .checked_add(2 * CELL_HEIGHT)
+        .ok_or(DrawError::InsufficientEditor)?;
+    if width < text_right.max(length_right) || height < bottom {
+        return Err(DrawError::InsufficientEditor);
+    }
+    for (i, byte) in action.bytes().enumerate() {
+        paint_glyph(pixels, pitch, byte, PERMISSION_X + i * CELL_WIDTH,
+                    PERMISSION_ACTION_Y, colour);
+    }
+    paint_decimal_length(pixels, pitch, action.len(), PERMISSION_ACTION_Y, colour);
+    for (i, byte) in target.bytes().enumerate() {
+        let x = PERMISSION_X + (i % PERMISSION_COLS) * CELL_WIDTH;
+        let y = PERMISSION_TARGET_Y + (i / PERMISSION_COLS) * CELL_HEIGHT;
+        paint_glyph(pixels, pitch, byte, x, y, colour);
+    }
+    paint_decimal_length(pixels, pitch, target.len(), PERMISSION_TARGET_Y, colour);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,6 +245,83 @@ mod tests {
         (0..CELL_HEIGHT).any(|dy| {
             (0..CELL_WIDTH).any(|dx| pixels[(y + dy) * W + x + dx] != BACK)
         })
+    }
+
+
+    fn permission_raster(action: &str, target: &str) -> vec::Vec<u32> {
+        let mut pixels = vec![BACK; W * H];
+        draw_permission(&mut pixels, W, H, W, action, target, FORE).unwrap();
+        pixels
+    }
+
+    fn permission_cell_has_ink(pixels: &[u32], i: usize, target: bool) -> bool {
+        let x = PERMISSION_X + (i % PERMISSION_COLS) * CELL_WIDTH;
+        let y = if target {
+            PERMISSION_TARGET_Y + (i / PERMISSION_COLS) * CELL_HEIGHT
+        } else { PERMISSION_ACTION_Y };
+        (0..CELL_HEIGHT).any(|dy| {
+            (0..CELL_WIDTH).any(|dx| pixels[(y + dy) * W + x + dx] != BACK)
+        })
+    }
+
+    #[test]
+    fn permission_pixels_preserve_case_and_filesystem_punctuation() {
+        let lower = permission_raster("WRITE src", "/home/a_b:{c}.rs");
+        let upper = permission_raster("WRITE src", "/home/A_b:{c}.rs");
+        let other = permission_raster("WRITE src", "/home/a-b:{c}.rs");
+        assert_ne!(lower, upper);
+        assert_ne!(lower, other);
+        assert!(permission_cell_has_ink(&lower, 8, true));
+        assert!(can_show_permission("WRITE file", r"C:\Users\Sam\my_file.txt"));
+    }
+
+    #[test]
+    fn permission_48_and_72_byte_extremes_display_last_cell_and_count() {
+        let action = "a".repeat(47) + "Z";
+        let target = String::from("/") + &"z".repeat(70) + "Q";
+        assert_eq!(action.len(), 48);
+        assert_eq!(target.len(), 72);
+        let pixels = permission_raster(&action, &target);
+        assert!(permission_cell_has_ink(&pixels, 47, false));
+        assert!(permission_cell_has_ink(&pixels, 71, true));
+        assert!(can_show_permission(&action, &target));
+        assert_eq!(PERMISSION_LENGTH_X + 3 * CELL_WIDTH, 918);
+        assert!(PERMISSION_TARGET_Y + 2 * CELL_HEIGHT <= 385);
+    }
+
+    #[test]
+    fn permission_length_digits_distinguish_invisible_trailing_space() {
+        let a = permission_raster("WRITE", "/home/a");
+        let b = permission_raster("WRITE", "/home/a ");
+        assert_ne!(a, b, "native length digits must visibly identify spaces");
+        assert!(can_show_permission("WRITE", "/home/a "));
+        assert_ne!(permission_raster("WRITE", " a"), permission_raster("WRITE", "a "));
+    }
+
+    #[test]
+    fn invalid_permission_never_writes_pixels_or_emits_substitution() {
+        let long_action = "W".repeat(49);
+        let cases = [
+            ("WRITE", "/a\nb"),
+            ("WRITE", "/home/é"),
+            ("", "/home/a"),
+            ("WRITE", ""),
+            (long_action.as_str(), "/home/a"),
+        ];
+        for (action, target) in cases {
+            let mut px = vec![BACK; W * H];
+            assert_eq!(draw_permission(&mut px, W, H, W, action, target, FORE),
+                       Err(DrawError::UnrenderableInput));
+            assert!(px.iter().all(|c| *c == BACK));
+        }
+        let mut px = vec![BACK; 20];
+        assert_eq!(draw_permission(&mut px, W, H, W, "WRITE", "/home/a", FORE),
+                   Err(DrawError::InsufficientSurface));
+        assert!(px.iter().all(|c| *c == BACK));
+        let mut px = vec![BACK; 917 * H];
+        assert_eq!(draw_permission(&mut px, 917, H, 917, "WRITE", "/home/a", FORE),
+                   Err(DrawError::InsufficientEditor));
+        assert!(px.iter().all(|c| *c == BACK));
     }
 
     #[test]
