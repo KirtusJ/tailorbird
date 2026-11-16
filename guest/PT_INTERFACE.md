@@ -52,6 +52,13 @@ A new edit, changed hash or changed target requires reauthorization.
 ## Stop, mode and offline invariants
 
 - Keep Stop and the ongoing/single-request control visible at all times.
+- After trusted `StopAccepted`, the UI rejects new permission proposals
+  and retracts any earlier visible grant request. It permits no
+  `Intent::Decide` while `StopRequested`. A late service grant receipt
+  does not establish a new UI permission. If an edit was authorized or
+  executed *before* the service enforced its stop fence, only PT's trusted
+  tool readback can establish the time, bytes and effect; the GUI cannot
+  roll back or erase that event.
 - After a service reconnects with an unresolved task, the GUI offers an
   exact task-scoped Stop **intent** without enabling tool or permission
   output. The task remains UNCONFIRMED until a newer matching Stopped,
