@@ -190,7 +190,11 @@ impl Ui {
     pub fn controls(&self) -> Controls {
         Controls {
             mode_visible: true, stop_visible: true,
-            stop_enabled: self.connected && self.task.state == TaskState::Running,
+            // When a service reconnects, an unresolved task may still be running.
+            // Keep the task-scoped stop *intent* available; the service must
+            // perform the actual cancellation and return terminal evidence.
+            stop_enabled: self.connected && matches!(self.task.state,
+                TaskState::Running | TaskState::Unconfirmed),
             submit_enabled: self.connected && self.model == Model::Ready
                 && !self.input.is_empty() && !self.task.state.is_active(),
             permission_visible: self.permission.is_some(),
@@ -213,6 +217,18 @@ impl Ui {
     fn accept(&mut self, id: u64, seq: u64) -> bool {
         if !self.connected || id == 0 || id != self.task.id || seq <= self.task.seq
             || !matches!(self.task.state, TaskState::Running | TaskState::StopRequested) {
+            return false;
+        }
+        self.task.seq = seq;
+        true
+    }
+    /// A lost connection does not terminate a task. Once reconnected, only a
+    /// newer terminal event for the *same* task can settle an UNCONFIRMED
+    /// state. Ordinary output/permission events must not re-open execution.
+    /// Trust in event origin and final readback remains PT's service duty.
+    fn accept_terminal(&mut self, id: u64, seq: u64) -> bool {
+        if !self.connected || id == 0 || id != self.task.id || seq <= self.task.seq
+            || !self.task.state.is_active() {
             return false;
         }
         self.task.seq = seq;
@@ -330,7 +346,7 @@ impl Ui {
                 true
             }
             BackendEvent::Stopped { task_id, seq } => {
-                if !self.accept(task_id, seq) { return false; }
+                if !self.accept_terminal(task_id, seq) { return false; }
                 self.task.state = TaskState::Stopped;
                 self.permission = None;
                 self.decision_pending = None;
@@ -339,7 +355,7 @@ impl Ui {
                 true
             }
             BackendEvent::Completed { task_id, seq } => {
-                if !self.accept(task_id, seq) { return false; }
+                if !self.accept_terminal(task_id, seq) { return false; }
                 self.task.state = TaskState::Completed;
                 self.permission = None;
                 self.decision_pending = None;
@@ -348,7 +364,7 @@ impl Ui {
                 true
             }
             BackendEvent::Failed { task_id, seq, reason } => {
-                if !self.accept(task_id, seq) { return false; }
+                if !self.accept_terminal(task_id, seq) { return false; }
                 self.task.state = TaskState::Failed;
                 self.permission = None;
                 self.decision_pending = None;
@@ -490,6 +506,77 @@ mod tests {
         assert!(!u.controls().stop_enabled);
         assert!(!u.observe(BackendEvent::Stopped { task_id: 7, seq: 2 }));
     }
+    #[test]
+    fn reconnect_cannot_accept_unverified_progress_but_can_settle_terminal_state() {
+        let mut u = Ui::new();
+        running(&mut u);
+        assert!(u.observe(BackendEvent::Output {
+            task_id: 7, seq: 2, text: "before loss",
+        }));
+        assert!(u.observe(BackendEvent::Service {
+            connected: false, model: Model::Unknown, saved_mode: Mode::Single,
+        }));
+        assert_eq!(u.task.state, TaskState::Unconfirmed);
+        assert!(!u.observe(BackendEvent::Stopped { task_id: 7, seq: 3 }));
+
+        assert!(u.observe(BackendEvent::Service {
+            connected: true, model: Model::Ready, saved_mode: Mode::Single,
+        }));
+        assert_eq!(u.task.state, TaskState::Unconfirmed);
+        assert!(!u.controls().submit_enabled);
+        assert!(!u.controls().decision_enabled);
+        assert!(u.controls().stop_visible);
+        assert!(u.controls().stop_enabled);
+        assert_eq!(u.intent(Action::Stop), Some(Intent::Stop { task_id: 7 }));
+        assert_eq!(u.task.state, TaskState::Unconfirmed);
+
+        assert!(!u.observe(BackendEvent::Output {
+            task_id: 7, seq: 3, text: "do not resume output",
+        }));
+        assert!(!u.observe(BackendEvent::PermissionNeeded {
+            task_id: 7, seq: 3, request: 99,
+            action: "DELETE", target: "/apps",
+        }));
+        assert!(!u.observe(BackendEvent::Started { task_id: 8, seq: 1 }));
+        assert!(!u.observe(BackendEvent::Stopped { task_id: 8, seq: 3 }));
+        assert!(!u.observe(BackendEvent::Stopped { task_id: 7, seq: 2 }));
+        assert!(u.observe(BackendEvent::Stopped { task_id: 7, seq: 3 }));
+        assert_eq!(u.task.state, TaskState::Stopped);
+        assert_eq!(u.task.seq, 3);
+        assert!(!u.controls().stop_enabled);
+        assert!(!u.observe(BackendEvent::Completed { task_id: 7, seq: 4 }));
+        assert!(u.observe(BackendEvent::Started { task_id: 8, seq: 1 }));
+        assert_eq!(u.task.state, TaskState::Running);
+    }
+
+    #[test]
+    fn reconnect_terminal_reconciliation_accepts_failure_not_new_grants() {
+        let mut u = Ui::new();
+        running(&mut u);
+        assert!(u.observe(BackendEvent::PermissionNeeded {
+            task_id: 7, seq: 2, request: 10,
+            action: "REPLACE", target: "/apps/example",
+        }));
+        assert!(u.intent(Action::Approve).is_some());
+        assert!(u.observe(BackendEvent::Service {
+            connected: false, model: Model::Unavailable, saved_mode: Mode::Single,
+        }));
+        assert!(u.observe(BackendEvent::Service {
+            connected: true, model: Model::Ready, saved_mode: Mode::Single,
+        }));
+        assert_eq!(u.task.state, TaskState::Unconfirmed);
+        assert!(u.permission.is_none() && u.decision_pending.is_none());
+        assert_eq!(u.intent(Action::Approve), None);
+        assert!(!u.observe(BackendEvent::PermissionResolved {
+            task_id: 7, seq: 3, request: 10, allowed: true,
+        }));
+        assert!(u.observe(BackendEvent::Failed {
+            task_id: 7, seq: 3, reason: "service readback: failed",
+        }));
+        assert_eq!(u.task.state, TaskState::Failed);
+        assert!(!u.controls().stop_enabled);
+    }
+
     #[test]
     fn later_output_and_terminal_events_cannot_rewrite_result() {
         let mut u = Ui::new();
