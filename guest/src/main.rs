@@ -116,25 +116,9 @@ fn paint(display: &mut Display, ui: &Ui) {
     display.show(pixels);
 }
 
-// PC set-1 codes as exposed by the existing PCP OS keyboard device.
-// This minimal font is ASCII-only. Extended text, IME, pointer and accessibility
-// APIs are future daily-driver requirements, not demonstrated by this preview.
-fn ascii(code: usize, shift: bool) -> Option<u8> {
-    let lower = match code {
-        2..=10 => b'1' + (code as u8 - 2),
-        11 => b'0',
-        12 => b'-',
-        16 => b'q', 17 => b'w', 18 => b'e', 19 => b'r', 20 => b't',
-        21 => b'y', 22 => b'u', 23 => b'i', 24 => b'o', 25 => b'p',
-        30 => b'a', 31 => b's', 32 => b'd', 33 => b'f', 34 => b'g',
-        35 => b'h', 36 => b'j', 37 => b'k', 38 => b'l',
-        44 => b'z', 45 => b'x', 46 => b'c', 47 => b'v', 48 => b'b',
-        49 => b'n', 50 => b'm',
-        53 => b'/', 57 => b' ',
-        _ => return None,
-    };
-    Some(if shift { lower.to_ascii_uppercase() } else { lower })
-}
+// The UI reducer's exact ASCII module owns the printable US-PC key mapping,
+// so the pixels and bytes delivered in Submit share a testable character set.
+// This guest does not yet provide keyboard layout switching or an IME.
 
 pcp_game_guest::entry!(tailorbird_main);
 #[no_mangle]
@@ -158,7 +142,7 @@ pub extern "C" fn tailorbird_main() -> ! {
             let shift = display.held[42] || display.held[54];
             for code in 0..128 {
                 if display.pressed[code] {
-                    if let Some(b) = ascii(code, shift) { dirty |= ui.input.push_ascii(b); }
+                    if let Some(b) = tailorbird_ui::exact_ascii::key_from_set1(code, shift) { dirty |= ui.input.push_ascii(b); }
                 }
             }
         }
