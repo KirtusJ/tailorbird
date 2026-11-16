@@ -3,6 +3,9 @@
 // Tailorbird presentation state and *intents*, not an authorization or execution engine.
 // An adapter owned by the service must authenticate and apply every effect.
 pub const INPUT_LIMIT: usize = 120;
+
+/// Source-pinned, case-sensitive rendering for the full request before submit.
+pub mod exact_ascii;
 pub const LOG_LIMIT: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -201,7 +204,8 @@ impl Ui {
             stop_enabled: self.connected && matches!(self.task.state,
                 TaskState::Running | TaskState::Unconfirmed),
             submit_enabled: self.connected && self.model == Model::Ready
-                && !self.input.is_empty() && !self.task.state.is_active(),
+                && !self.input.is_empty() && !self.task.state.is_active()
+                && exact_ascii::can_show_editor_input(self.input.as_str()),
             permission_visible: self.permission.is_some(),
             decision_enabled: self.connected && self.task.state == TaskState::Running
                 && self.permission.is_some() && self.decision_pending.is_none(),
