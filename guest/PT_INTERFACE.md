@@ -68,47 +68,64 @@ negative controls before connecting this UI to Qwen. The attached
 guest-only tests establish **presentation state**, not reliable delivery,
 trusted deduplication, task causality or permission enforcement.
 
-## Exact prompt rendering versus permission disclosure
+## Exact request rendering and permission inspector (UI-only)
 
-The original standalone guest request field clipped the 120-byte stored
-printable ASCII input at 92 bytes and uppercased all visible characters.
-The updated request editor uses the kernel's generated case-sensitive
-printable-ASCII 10x20 font with two 78-character rows. Host-side pixel
-tests must check that the last bytes and case of the submitted prompt
-match the entire `Intent::Submit` payload, including 92/93/120
-boundaries. Physical keyboard/locale and actual QEMU frame readback
-remain unverified. A fixed US-PC Set-1 keyboard map is not a general
-input method.
+The original preview truncated 120-byte inputs to 92 and folded their
+case. The request editor now uses the generated DejaVu Sans Mono 10x20
+ASCII font to display up to 120 bytes across two rows, preserving exact
+case and punctuation. The current CI also checks ordered QMP keyboard
+inputs and a visible byte count for trailing spaces on emulated PC/Q35.
+This does not qualify physical keyboards or an international input method.
 
-This is **not** the approval viewer. The old permission panel still
-has narrow renderability rules, so PT must deny effect requests it
-cannot fully disclose there. The standalone UI output feed likewise
-still uses a lossy five-by-seven status-label renderer. Neither should
-be used as evidence that a model-generated program, its source digest,
-or immutable destination was displayed exactly. PT's separate native
-integrated desktop uses its own renderer and must be assessed against
-its actual source, pixels and actor-bound effect records.
+**Permission review now has its own full-height native inspector.**
+`exact_ascii::draw_permission` accepts only nonempty, exact printable
+ASCII action <=48 bytes and destination <=72 bytes. It uses the same
+case-sensitive 10x20 font, draws the action without clipping and the
+destination across 54-character rows, and displays independent
+three-digit field lengths in that font. Even a trailing blank character
+changes visible length digits. The remaining fixed 5x7 font renders
+only static instructions/status; it does not represent the action or
+path. The inspector also exposes full decimal u64 task/request IDs
+without narrowing either to u32. An immutable `PermissionNeeded`
+payload is never reinterpreted or normalized to generate consent.
 
-## Exact visual disclosure before any Allow
+**Fail closed:** control bytes, Unicode, empty fields, lengths over the
+static capacities and too-small raster surfaces are rejected with no
+partial pixel writes. `Ui::observe` refuses a non-displayable
+`PermissionNeeded`, marks its state UNCONFIRMED, clears the permission
+request, and keeps task-scoped Stop available when connected. This
+disclosure improvement *does not* authorize an effect: `Decide` is
+merely an intent. No source code, expected source digest, trust label,
+actor identity or material edit diff can currently be disclosed by
+the standalone `BackendEvent::PermissionNeeded` shape; a future
+PT-trusted adapter must supply and verify those immutable components
+before offering a real writable effect. The guest remains completely
+disconnected in this draft. Do not claim the existing UI's approval
+intent is a fully informed release-build or installer authorization.
 
-This UI's native 5x7 renderer does **not** preserve lowercase case,
-underscore, backslash, colon, non-ASCII and control characters.
-A truncated or case-folded pathname must not be presented as the exact
-destination for a potentially privileged write. The reducer therefore
-fails closed on `PermissionNeeded` if the full action/target cannot
-be represented literally and within the fixed text limits; an
-ambiguous request cannot emit `Intent::Decide(allow=true)` or
-`Intent::Decide(allow=false)`. The state becomes `Unconfirmed`,
-with an anomaly in the UI and Stop still offered. The guest now draws
-ACTION and TARGET on different rows so even maximum-length allowed
-strings stay visible. This is intentionally restrictive: lowercase
-Unix paths, underscores, Unicode and Windows path separators are not
-yet eligible for confirmation. PT must still default-deny undecidable
-requests, apply its independent stop fence and provide an eventual
-readback. A future full text viewer must demonstrate exact case,
-controls, Unicode, overflow, action identity and actual immutable
-source-hash disclosure in the approval workflow. Never silently
-normalize a display string and treat it as informed consent.
+**Outstanding:** meaningful Unicode/IME and exact multiline/code
+review, accessibility, arbitrary long destination disclosure, pixel
+testing of the *actual native permission panel* inside QEMU, and
+renderability gating tied to negotiated framebuffer geometry. The
+current `960x540` freestanding guest uses a fixed buffer. Its task
+output/notice feed still uses the older lossy 5x7 label renderer, so
+the log cannot independently prove exact generated bytes. Physical
+pointer, input focus and actual effect readback remain untested.
+
+## Written pipeline choices and evidence-source boundaries
+
+Kirtus Justus's explicit-written-instruction selection and
+no-external-reference/offline requirements were acknowledged by
+Director PT at [PCP OS #132/6909706885].
+The standalone GUI has **not** implemented a stage selector or
+immutable user-text-to-stage-selection receipt. A UI checkbox, LLM
+interpretation, or mere text preview cannot independently change
+host permissions or override nonwaivable checks. PT owns binding
+written instructions, actor/session identity, stage availability,
+evidence-source provenance and trusted effect/ISO release policy.
+A owns eventual visible selection/readback and honest unsupported
+status. The current request input alone is not evidence those
+contracts are implemented.
 
 ## Service-reported grant contradicting UI consent
 
