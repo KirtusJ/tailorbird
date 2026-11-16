@@ -117,7 +117,11 @@ adapter needs idempotency keys, reliable correlation/reconciliation and
 cancellation fences; GUI state alone cannot safely solve transport retries.
 On reconnect an active task remains UNCONFIRMED. A task-scoped Stop
 **intent** becomes available again to seek cancellation, but it is not a
-claim of actual termination. The reducer accepts a matching, strictly newer
+claim of actual termination. The reducer also accepts a matching, strictly
+newer `StopAccepted` acknowledgment after reconnect and changes the UI from
+`STATUS UNKNOWN` to `STOP REQUESTED`; this acknowledges delivery only,
+not the effect of stopping the worker. An additional negative test checks
+wrong/stale stop receipts, accepted stop and eventual terminal readback. The reducer accepts a matching, strictly newer
 `Stopped`, `Completed`, or `Failed` event only after reconnection to
 settle the unknown task; it still rejects new output, tools and grants for
 that uncertain task. This prevents a GUI-only deadlock while keeping service
@@ -143,11 +147,12 @@ location for the ongoing/single-request setting before any adapter is linked.
 
 ## Test coverage and open defects
 
-The Rust unit suite now includes **22 authored cases**: offline refusal, text bounds,
+The Rust unit suite now includes **23 authored cases**: offline refusal, text bounds,
 one-shot permission choice and contradictory-input rejection, stop-acknowledgment
 permission refusal and prompt retraction, reconnect reconciliation only
 after task-matched terminal readback, immediate task-ID replay refusal,
 service-grant/no-GUI-consent mismatch and a service denial after Allow,
+post-reconnect stop acknowledgment without terminal overclaim,
 conservative Stop
 intents while the recovered status remains unknown, task stop/disconnection,
 and injection-like
