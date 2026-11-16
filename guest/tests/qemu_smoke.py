@@ -193,6 +193,46 @@ def run(kernel, guest, timeout):
             dims_burst, burst_pixels, hash_burst = m.screenshot("pt_ordered_burst")
             assert dims_burst == dims
             burst_editor = crop(burst_pixels, dims[0], editor)
+            # Decode the actual first cells against *observed* on-screen
+            # templates, not against source strings or test expectations.
+            # Print diagnostics before assertions so a negative run remains
+            # useful for investigating dropped/reordered QMP/PS2 events.
+            def cell(editor_pixels, index):
+                cx, cy = (index % 78) * 10, (index // 78) * 20
+                return b"".join(
+                    editor_pixels[((cy + dy) * 780 + cx) * 3:
+                                  ((cy + dy) * 780 + cx + 10) * 3]
+                    for dy in range(20)
+                )
+
+            observed_templates = {
+                "z": cell(ordered_editor, 0),
+                "x": cell(ordered_editor, 1),
+                "A": cell(ordered_editor, 3),
+                "a": cell(ordered_editor, 4),
+                " ": cell(base, 0),
+            }
+
+            def nearest_glyph(value):
+                distances = []
+                for name, template in observed_templates.items():
+                    mismatches = sum(
+                        value[i:i + 3] != template[i:i + 3]
+                        for i in range(0, len(value), 3)
+                    )
+                    distances.append((mismatches, name))
+                return sorted(distances)[0]
+
+            diagnosed = [nearest_glyph(cell(burst_editor, i)) for i in range(8)]
+            print("PT_BATCH_DIAGNOSIS", json.dumps({
+                "observed_first_8_cells": diagnosed,
+                "spaced_sha256": hash_ordered,
+                "previous_bad_sha256": hash_collapsed,
+                "burst_sha256": hash_burst,
+                "burst_equals_old_bad": burst_editor == old_bad_editor,
+                "burst_equals_spaced": burst_editor == ordered_editor,
+                "serial_excerpt": m.serial()[-1400:],
+            }), flush=True)
             assert burst_editor != old_bad_editor, (
                 "PT counterexample: batched input collapsed to azx pixels"
             )
