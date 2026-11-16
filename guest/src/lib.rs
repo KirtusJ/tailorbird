@@ -239,6 +239,17 @@ impl Ui {
         self.task.seq = seq;
         true
     }
+    /// A recovered unknown task may receive a stop-request acknowledgment
+    /// after its Stop intent. This still says nothing about whether it has
+    /// terminated. The service enforces the actual cancellation boundary.
+    fn accept_stop_ack(&mut self, id: u64, seq: u64) -> bool {
+        if !self.connected || id == 0 || id != self.task.id || seq <= self.task.seq
+            || !self.task.state.is_active() {
+            return false;
+        }
+        self.task.seq = seq;
+        true
+    }
     pub fn intent(&mut self, action: Action) -> Option<Intent> {
         match action {
             Action::Submit if self.controls().submit_enabled => {
@@ -376,7 +387,7 @@ impl Ui {
                 true
             }
             BackendEvent::StopAccepted { task_id, seq } => {
-                if !self.accept(task_id, seq) { return false; }
+                if !self.accept_stop_ack(task_id, seq) { return false; }
                 self.task.state = TaskState::StopRequested;
                 // An earlier pending UI grant is no longer actionable after
                 // Stop acknowledgment. Its service-side outcome, including
@@ -652,6 +663,34 @@ mod tests {
         assert!(!u.observe(BackendEvent::Completed { task_id: 7, seq: 4 }));
         assert!(u.observe(BackendEvent::Started { task_id: 8, seq: 1 }));
         assert_eq!(u.task.state, TaskState::Running);
+    }
+
+    #[test]
+    fn reconnected_unknown_task_accepts_stop_ack_without_claiming_termination() {
+        let mut u = Ui::new();
+        running(&mut u);
+        assert!(u.observe(BackendEvent::Output { task_id: 7, seq: 2, text: "working" }));
+        assert!(u.observe(BackendEvent::Service {
+            connected: false, model: Model::Unknown, saved_mode: Mode::Single,
+        }));
+        assert!(u.observe(BackendEvent::Service {
+            connected: true, model: Model::Ready, saved_mode: Mode::Single,
+        }));
+        assert_eq!(u.task.state, TaskState::Unconfirmed);
+        assert_eq!(u.intent(Action::Stop), Some(Intent::Stop { task_id: 7 }));
+        assert!(!u.observe(BackendEvent::StopAccepted { task_id: 8, seq: 3 }));
+        assert!(!u.observe(BackendEvent::StopAccepted { task_id: 7, seq: 2 }));
+        assert!(u.observe(BackendEvent::StopAccepted { task_id: 7, seq: 3 }));
+        assert_eq!(u.task.state, TaskState::StopRequested);
+        assert_eq!(u.task.seq, 3);
+        assert_eq!(u.notice.as_str(), "STOP ACCEPTED - NO NEW GRANTS; END UNCONFIRMED");
+        assert!(!u.controls().stop_enabled);
+        assert!(!u.observe(BackendEvent::PermissionNeeded {
+            task_id: 7, seq: 4, request: 99,
+            action: "WRITE", target: "/apps/blocked",
+        }));
+        assert!(u.observe(BackendEvent::Stopped { task_id: 7, seq: 5 }));
+        assert_eq!(u.task.state, TaskState::Stopped);
     }
 
     #[test]
