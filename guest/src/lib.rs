@@ -199,6 +199,10 @@ pub struct Ui {
     pub mode_pending: Option<Mode>,
     pub model: Model,
     pub connected: bool,
+    /// Monotonic service-status generation for local pointer gesture fencing.
+    /// Not an authenticated session ID or durable deduplication epoch.
+    /// At saturation, pointer capture must fail closed.
+    pub(crate) service_epoch: u64,
     pub task: Task,
     pub permission: Option<Grant>,
     /// A GUI confirmation may be sent only once for the pending request.
@@ -217,7 +221,7 @@ impl Ui {
         Self {
             input: Text::new(), pending_submit: None, next_submit_key: 1,
             mode: Mode::Single, mode_pending: None,
-            model: Model::Unknown, connected: false,
+            model: Model::Unknown, connected: false, service_epoch: 0,
             task: Task { id: 0, seq: 0, state: TaskState::Idle },
             permission: None, decision_pending: None, decision_choice: None,
             notice: Text::new(),
@@ -377,6 +381,11 @@ impl Ui {
     pub fn observe(&mut self, event: BackendEvent<'_>) -> bool {
         match event {
             BackendEvent::Service { connected, model, saved_mode } => {
+                // Even a same-mode reconnect or unsolicited status refresh
+                // invalidates a pointer Down captured under the old service
+                // context. Saturation is terminal for new pointer gestures;
+                // no generation wrap can make a stale click valid again.
+                self.service_epoch = self.service_epoch.saturating_add(1);
                 let requested_mode = self.mode_pending;
                 self.connected = connected;
                 self.model = if connected { model } else { Model::Unknown };
