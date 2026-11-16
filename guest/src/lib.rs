@@ -204,6 +204,11 @@ pub struct Ui {
     /// At saturation, pointer capture must fail closed.
     pub(crate) service_epoch: u64,
     pub task: Task,
+    /// Local presentation fence after a Stop intent is emitted. It does
+    /// NOT indicate a service acknowledgment, terminated worker, or
+    /// durable cancellation. It prevents this GUI from proposing another
+    /// Allow for the task while Stop delivery remains uncertain.
+    stop_intent_task: Option<u64>,
     pub permission: Option<Grant>,
     /// A GUI confirmation may be sent only once for the pending request.
     /// This is not an authorization record or proof of delivery.
@@ -223,7 +228,7 @@ impl Ui {
             mode: Mode::Single, mode_pending: None,
             model: Model::Unknown, connected: false, service_epoch: 0,
             task: Task { id: 0, seq: 0, state: TaskState::Idle },
-            permission: None, decision_pending: None, decision_choice: None,
+            stop_intent_task: None, permission: None, decision_pending: None, decision_choice: None,
             notice: Text::new(),
             lines: [Line::empty(); LOG_LIMIT], count: 0,
         }
@@ -242,6 +247,7 @@ impl Ui {
                 && exact_ascii::can_show_editor_input(self.input.as_str()),
             permission_visible: self.permission.is_some(),
             decision_enabled: self.connected && self.task.state == TaskState::Running
+                && self.stop_intent_task != Some(self.task.id)
                 && self.permission.is_some() && self.decision_pending.is_none(),
         }
     }
@@ -298,6 +304,7 @@ impl Ui {
     fn start_task(&mut self, task_id: u64, seq: u64) {
         self.task = Task { id: task_id, seq, state: TaskState::Running };
         self.pending_submit = None;
+        self.stop_intent_task = None;
         self.permission = None;
         self.decision_pending = None;
         self.decision_choice = None;
@@ -343,7 +350,12 @@ impl Ui {
                 Some(Intent::SetMode(next))
             }
             Action::Stop if self.controls().stop_enabled => {
-                self.notice("STOP INTENT ONLY - AWAIT SERVICE");
+                // Even before a StopAccepted receipt, a person who pressed
+                // Stop must not be offered a subsequent GUI Allow on this
+                // task. Retain the old grant for correlation with delayed
+                // service readback; only the trusted service fences effects.
+                self.stop_intent_task = Some(self.task.id);
+                self.notice("STOP INTENT ONLY - NO NEW GUI GRANTS");
                 Some(Intent::Stop { task_id: self.task.id })
             }
             Action::Approve | Action::Deny
@@ -466,6 +478,7 @@ impl Ui {
                 // present fresh effect requests. The service must independently
                 // enforce the stop fence; this is only UI state hygiene.
                 if self.task.state != TaskState::Running
+                    || self.stop_intent_task == Some(self.task.id)
                     || request == 0 || self.permission.is_some()
                     || !self.accept(task_id, seq) {
                     return false;
