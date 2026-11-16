@@ -86,6 +86,21 @@ write. An effect that was approved and executed before the stop fence
 may already have occurred. The service must record its actual write/stop
 ordering and report the resulting artifact independently.
 
+**Service grant / human-choice discrepancy:** a pending `PermissionNeeded`
+event is a request for explicit consent. The UI now stores whether the person
+chose Allow or Deny for that exact request. If the service reports
+`PermissionResolved(allowed=true)` after a local Deny **or no local
+choice**, the reducer displays `SERVICE GRANT MISMATCH - EFFECT UNKNOWN`,
+records a bounded `ANOMALY` line and moves the active task to
+`STATUS UNKNOWN`. Tool output and further approvals remain blocked;
+a task-scoped Stop intent stays available. A later trusted terminal
+readback can resolve the uncertain task. This detects a conflicting service
+**report**, not an actual write or malicious action. PT's native service
+must authenticate events and preserve the exact task, request, target,
+decision and effect readback in its own durable record. An automatic denial
+without UI approval, or a service denial despite a local Allow, remains a
+valid refused/denied outcome. The UI does not override PT's effect policy.
+
 **Completed-task ID replay hardening:** a service event that attempts to
 start the **immediately preceding task ID** again is rejected, even with a
 larger sequence number. A matching terminal state and displayed final event
@@ -128,10 +143,11 @@ location for the ongoing/single-request setting before any adapter is linked.
 
 ## Test coverage and open defects
 
-The Rust unit suite now includes **20 authored cases**: offline refusal, text bounds,
+The Rust unit suite now includes **22 authored cases**: offline refusal, text bounds,
 one-shot permission choice and contradictory-input rejection, stop-acknowledgment
 permission refusal and prompt retraction, reconnect reconciliation only
 after task-matched terminal readback, immediate task-ID replay refusal,
+service-grant/no-GUI-consent mismatch and a service denial after Allow,
 conservative Stop
 intents while the recovered status remains unknown, task stop/disconnection,
 and injection-like
