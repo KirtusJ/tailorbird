@@ -20,12 +20,12 @@ DEFAULT_TIMEOUT = 100.0
 
 
 class Qemu:
-    def __init__(self, kernel: pathlib.Path, guest: pathlib.Path, folder: pathlib.Path):
+    def __init__(self, kernel: pathlib.Path, guest: pathlib.Path, folder: pathlib.Path, machine: str):
         self.folder = folder
         self.qmp_path = folder / "q"
         self.serial_path = folder / "serial.log"
         cmd = [
-            "qemu-system-x86_64", "-cpu", "max", "-m", "256M",
+            "qemu-system-x86_64", "-machine", machine, "-cpu", "max", "-m", "256M",
             "-kernel", str(kernel), "-initrd", str(guest),
             "-append", "auto=tailorbird then=off",
             "-display", "none", "-vga", "std", "-nic", "none",
@@ -113,12 +113,12 @@ def crop(pixels: bytes, width: int, box):
     )
 
 
-def run(kernel, guest, timeout):
+def run(kernel, guest, timeout, machine):
     assert kernel.is_file() and kernel.stat().st_size > 10000
     assert guest.is_file() and guest.stat().st_size > 10000
     with tempfile.TemporaryDirectory(prefix="tailorbird-qmp-") as scratch:
         folder = pathlib.Path(scratch)
-        m = Qemu(kernel, guest, folder)
+        m = Qemu(kernel, guest, folder, machine)
         try:
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
@@ -278,5 +278,6 @@ if __name__ == "__main__":
     parser.add_argument("kernel", type=pathlib.Path)
     parser.add_argument("guest", type=pathlib.Path)
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
+    parser.add_argument("--machine", choices=("pc", "q35"), default="pc")
     args = parser.parse_args()
-    run(args.kernel.resolve(), args.guest.resolve(), args.timeout)
+    run(args.kernel.resolve(), args.guest.resolve(), args.timeout, args.machine)
