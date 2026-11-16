@@ -1800,6 +1800,63 @@ mod tests {
             "fresh work does not prove an earlier unapproved effect harmless");
     }
 
+
+    #[test]
+    fn stop_terminal_with_unresolved_permission_cannot_hide_effect_uncertainty() {
+        // A terminal readback can arrive before the service has returned an
+        // outstanding permission outcome. Clearing the request does not
+        // establish that a write did or did not happen.
+        let mut u = Ui::new();
+        running(&mut u);
+        assert!(u.observe(BackendEvent::PermissionNeeded {
+            task_id: 7, seq: 2, request: 95, action: "WRITE", target: "/home/a.txt",
+        }));
+        assert!(u.intent(Action::Approve).is_some());
+        assert!(u.intent(Action::Stop).is_some());
+        assert!(u.observe(BackendEvent::StopAccepted { task_id: 7, seq: 3 }));
+        assert!(u.observe(BackendEvent::Stopped { task_id: 7, seq: 4 }));
+        assert_eq!(u.task.state, TaskState::Stopped);
+        assert!(u.permission.is_none());
+        assert!(!u.controls().decision_enabled);
+        assert!(u.effect_uncertain,
+            "terminal receipt cannot settle a still-unresolved proposed effect");
+        assert!(u.notice.as_str().contains("EFFECT UNKNOWN"));
+        assert!(u.observe(BackendEvent::Service {
+            connected: true, model: Model::Ready, saved_mode: Mode::Single,
+        }));
+        assert!(u.notice.as_str().starts_with("EFFECT UNKNOWN"));
+        assert!(u.observe(BackendEvent::Started { task_id: 8, seq: 1 }));
+        assert!(u.notice.as_str().starts_with("EFFECT UNKNOWN"));
+    }
+
+    #[test]
+    fn completion_and_failure_with_unresolved_permission_remain_uncertain() {
+        // Both terminal kinds are service task-state receipts, not evidence
+        // resolving a previously displayed permission request.
+        for failed in [false, true] {
+            let mut u = Ui::new();
+            running(&mut u);
+            assert!(u.observe(BackendEvent::PermissionNeeded {
+                task_id: 7, seq: 2, request: 96,
+                action: "WRITE", target: "/home/unresolved.txt",
+            }));
+            let observed = if failed {
+                u.observe(BackendEvent::Failed {
+                    task_id: 7, seq: 3, reason: "PROCESS EXITED",
+                })
+            } else {
+                u.observe(BackendEvent::Completed { task_id: 7, seq: 3 })
+            };
+            assert!(observed);
+            assert!(matches!(u.task.state, TaskState::Failed | TaskState::Completed));
+            assert!(u.effect_uncertain);
+            assert!(u.notice.as_str().starts_with("EFFECT UNKNOWN"));
+            assert!(u.permission.is_none());
+            assert!(!u.controls().permission_visible);
+            assert!(!u.controls().decision_enabled);
+        }
+    }
+
 }
 
 #[cfg(test)]
