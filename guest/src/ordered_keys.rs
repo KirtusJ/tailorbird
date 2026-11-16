@@ -301,6 +301,68 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_chords_must_not_inject_editor_text_or_backspace() {
+        let mut keys = OrderedKeyboard::new();
+        let mut ui = Ui::new();
+        stroke(&mut keys, &mut ui, 30); // plain a
+        assert_eq!(ui.input.as_str(), "a");
+        keys.event(29, true, &mut ui); // Ctrl down
+        for code in [30, 31, 14] { // Ctrl+A, Ctrl+S, Ctrl+Backspace
+            assert_eq!(keys.event(code, true, &mut ui), KeyOutcome::Unchanged);
+            keys.event(code, false, &mut ui);
+        }
+        assert_eq!(ui.input.as_str(), "a",
+                   "unsupported Ctrl shortcuts are not literal text or deletion");
+        keys.event(29, false, &mut ui);
+        stroke(&mut keys, &mut ui, 48); // ordinary b after Ctrl release
+        assert_eq!(ui.input.as_str(), "ab");
+    }
+
+    #[test]
+    fn ctrl_enter_does_not_submit_and_release_alone_cannot_trigger_admission() {
+        let mut keys = OrderedKeyboard::new();
+        let mut ui = Ui::new();
+        assert!(ui.observe(BackendEvent::Service {
+            connected: true, model: Model::Ready, saved_mode: Mode::Single,
+        }));
+        stroke(&mut keys, &mut ui, 30); // a
+        keys.event(29, true, &mut ui); // Ctrl held
+        assert_eq!(keys.event(28, true, &mut ui), KeyOutcome::Unchanged);
+        assert!(ui.pending_submit.is_none());
+        keys.event(29, false, &mut ui);
+        assert_eq!(keys.event(28, true, &mut ui), KeyOutcome::Unchanged);
+        assert!(ui.pending_submit.is_none());
+        keys.event(28, false, &mut ui);
+        assert_eq!(keys.event(28, true, &mut ui), KeyOutcome::Redraw);
+        assert_eq!(ui.pending_submit.unwrap().idempotency_key, 1);
+    }
+
+    #[test]
+    fn ctrl_alt_approve_is_not_the_documented_alt_approve_chord() {
+        let mut keys = OrderedKeyboard::new();
+        let mut ui = Ui::new();
+        assert!(ui.observe(BackendEvent::Service {
+            connected: true, model: Model::Ready, saved_mode: Mode::Single,
+        }));
+        assert!(ui.observe(BackendEvent::Started { task_id: 7, seq: 1 }));
+        assert!(ui.observe(BackendEvent::PermissionNeeded {
+            task_id: 7, seq: 2, request: 11,
+            action: "WRITE", target: "/home/a.txt",
+        }));
+        keys.event(29, true, &mut ui); // Ctrl down
+        keys.event(56, true, &mut ui); // Alt down
+        assert_eq!(keys.event(30, true, &mut ui), KeyOutcome::Unchanged);
+        assert!(ui.decision_pending.is_none(),
+                "an unsupported modifier chord must never create Allow intent");
+        keys.event(30, false, &mut ui);
+        keys.event(29, false, &mut ui);
+        // A fresh exact Alt+A after Ctrl release is still the documented UI intent.
+        assert_eq!(keys.event(30, true, &mut ui), KeyOutcome::Redraw);
+        assert_eq!(ui.decision_pending, Some(11));
+        assert_eq!(ui.decision_choice, Some(true));
+    }
+
+    #[test]
     fn ordered_alt_actions_and_exit_do_not_type_text() {
         let mut keys = OrderedKeyboard::new();
         let mut ui = Ui::new();
