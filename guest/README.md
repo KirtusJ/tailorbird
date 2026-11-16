@@ -32,8 +32,16 @@ kernel prerequisites installed, run from the repository root:
 
     cargo test --manifest-path apps/tailorbird/guest/Cargo.toml --lib
     rustup target add x86_64-unknown-none
-    cargo build --release --target x86_64-unknown-none \
-      --manifest-path apps/tailorbird/guest/Cargo.toml
+    (cd apps/tailorbird/guest && \
+      CARGO_PROFILE_RELEASE_LTO=off \
+      cargo build --release --target x86_64-unknown-none)
+
+The native build intentionally changes into the guest directory: Cargo
+finds its freestanding linker settings in the local .cargo/config.toml
+relative to its working directory, not --manifest-path. Building from the
+repository root previously produced a different low-entry ELF64 PIE;
+the successful static high-address ELF was verified in GitHub Actions
+run 43802969930 at commit 18710a6d.
 
 Then separately build the pinned kernel using its documented run.sh path.
 Pass the actual compiled guest ELF as a Multiboot initrd, for example:
@@ -49,6 +57,51 @@ Press Alt+M and Alt+S to check their truthful unavailable-state notices.
 Press Esc and confirm the original launcher returns. Separately test
 Ctrl+Alt+Delete as a kernel-level stop and review the task register.
 No replay or hardware boot was performed by this authoring session.
+
+## Exact request editor, source and limits
+
+The original standalone 5x7 renderer could hide input after byte 92 and
+fold lowercase into uppercase even though the reducer retained and submitted
+the full 120-byte request. This was a source-level counterexample to
+human-visible input fidelity, not a demonstrated service exploit.
+
+The updated native guest now uses the *existing PCP kernel's generated*
+DejaVu Sans Mono printable-ASCII coverage table, linked from
+PCP_OS_Rust/crates/pcpos-kernel/src/font.rs. That table is 10x20 pixels
+per character and preserves case and ASCII punctuation. Its provenance,
+generator and license are maintained with the kernel source. This avoids
+silently copying a font into a new asset. This source reference must be
+rechecked if the kernel font is revised or relocated.
+
+The REQUEST editor draws two rows of 78 columns at fixed geometry
+(960x540 surface, x=140, y=460, 10x20 glyph cells), enough to show every
+one of the 120 admitted printable ASCII bytes. No additional truncation,
+case folding or invisible suffix is permitted. The drawing method
+preflights renderability, pixel-buffer extent and footprint before
+modifying pixels; the UI's Submit-enable condition also checks that the
+request can be shown. The US-PC Set-1 decoder now maps the normal shifted
+and unshifted printable key set, including underscores, braces, backslash
+and quotation marks. This remains a fixed US keyboard layout, not
+automatic locale detection, text composition, clipboard, Unicode or IME.
+
+New Rust tests compare *actual raster pixels* for case-sensitive paths
+and punctuation, assert visible last-byte glyphs at lengths 92, 93 and
+120, compare the stored text and the exact Submit intent, reject
+unrenderable strings without framebuffer writes, and cover all printable
+ASCII keyboard codes. A framebuffer test does **not** establish that a
+human can recognize every glyph or that a QEMU guest submitted the
+correct bytes: PT must still inspect native screenshot pixels and
+kernel-service request readback before attaching a model or tool adapter.
+
+**Separate unresolved content:** ordinary TASK OUTPUT and notices still
+use the original fixed-width five-by-seven status-label renderer, which
+folds case, clips at 92 bytes and can omit unsupported glyphs. They are
+not a fidelity-preserving source-file or audit viewer. The permission
+ACTION/TARGET panel deliberately keeps the previously fail-closed
+5x7 policy and remains restrictive for lowercase, underscore and
+Unicode paths. Do not generalize the new request-editor guarantee to
+output, full-source editing, immutable-grant disclosure, mouse input
+or the distinct integrated desktop renderer reported by PT.
 
 ## The proposed service-facing contract
 
@@ -186,7 +239,7 @@ location for the ongoing/single-request setting before any adapter is linked.
 
 ## Test coverage and open defects
 
-The Rust unit suite now includes **29 authored cases**: offline refusal, text bounds,
+The Rust reducer originally had **29 passing cases at commit 18710a6d**, and the new exact-input renderer adds **7 additional authored cases** (36 total): offline refusal, text bounds,
 one-shot permission choice and contradictory-input rejection, stop-acknowledgment
 permission refusal and prompt retraction, reconnect reconciliation only
 after task-matched terminal readback, immediate task-ID replay refusal,
@@ -198,10 +251,12 @@ and injection-like
 model output, exact and unrenderable permission metadata including target overflow and glyph aliases, matching/mismatched/unsolicited mode readback, stop request versus termination,
 wrong-task and out-of-order events, explicit grant decisions, stop/permission
 race, lost-service unconfirmed status, post-terminal rejection and bounded
-log order. These tests were **authored, not executed** in this absorption
-environment (no Rust toolchain or QEMU here). They are not proof of
-kernel execution, usability, permission enforcement, real cancellation,
-or a native service connection.
+log order. The original 29 reducer cases passed on exact-commit
+GitHub Actions run 43802969930 in debug and release with a static
+native ELF build. The 7 new editor/keyboard cases are authored and
+**not yet confirmed by the executor at this revision**. No kernel/QEMU
+boot, service integration, human usability or effective permission
+enforcement is established by passing host tests.
 
 Remaining daily-driver prerequisites include persistent storage, concurrent
 GUI processes/window management, text input and accessibility support, keyboard
