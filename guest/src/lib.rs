@@ -999,6 +999,36 @@ mod tests {
         assert!(u.permission.is_none());
     }
     #[test]
+    fn service_permission_resolution_must_replace_stale_pending_notice() {
+        // A real GUI hides the inspector after the reported resolution.
+        // The footer must not keep claiming we are waiting for a receipt.
+        for (choice, allowed, expected) in [
+            (Action::Approve, true, "SERVICE REPORTS GRANT - EFFECT UNVERIFIED"),
+            (Action::Deny, false, "SERVICE REPORTS DENIAL - NO EFFECT CLAIM"),
+        ] {
+            let mut u = Ui::new();
+            running(&mut u);
+            assert!(u.observe(BackendEvent::PermissionNeeded {
+                task_id: 7, seq: 2, request: 17,
+                action: "WRITE", target: "/home/a_b",
+            }));
+            assert_eq!(u.intent(choice), Some(Intent::Decide {
+                task_id: 7, request: 17, allow: allowed,
+            }));
+            assert_eq!(u.notice.as_str(), "PERMISSION DECISION SENT - AWAIT SERVICE");
+            assert!(u.observe(BackendEvent::PermissionResolved {
+                task_id: 7, seq: 3, request: 17, allowed,
+            }));
+            assert!(u.permission.is_none());
+            assert!(!u.controls().permission_visible);
+            assert!(!u.controls().decision_enabled);
+            assert_eq!(u.task.state, TaskState::Running);
+            assert_eq!(u.notice.as_str(), expected,
+                       "resolved service receipt must replace the stale pending footer");
+        }
+    }
+
+    #[test]
     fn controls_non_ascii_and_empty_permission_fields_cannot_offer_consent() {
         let invalid: [(&str, &str); 6] = [
             ("WRITE", "/data/file\nother"), // newline must not conceal a suffix
