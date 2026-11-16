@@ -157,6 +157,9 @@ pub struct Controls {
     pub stop_enabled: bool,
     pub submit_enabled: bool,
     pub permission_visible: bool,
+    /// Presentation affordance only. PT's trusted service decides whether an
+    /// immutable task-scoped edit is actually authorized and applied.
+    pub decision_enabled: bool,
 }
 
 pub struct Ui {
@@ -167,6 +170,9 @@ pub struct Ui {
     pub connected: bool,
     pub task: Task,
     pub permission: Option<Grant>,
+    /// A GUI confirmation may be sent only once for the pending request.
+    /// This is not an authorization record or proof of delivery.
+    pub decision_pending: Option<u64>,
     pub notice: Text<84>,
     lines: [Line; LOG_LIMIT],
     count: usize,
@@ -177,7 +183,7 @@ impl Ui {
             input: Text::new(), mode: Mode::Single, mode_pending: None,
             model: Model::Unknown, connected: false,
             task: Task { id: 0, seq: 0, state: TaskState::Idle },
-            permission: None, notice: Text::new(),
+            permission: None, decision_pending: None, notice: Text::new(),
             lines: [Line::empty(); LOG_LIMIT], count: 0,
         }
     }
@@ -188,6 +194,8 @@ impl Ui {
             submit_enabled: self.connected && self.model == Model::Ready
                 && !self.input.is_empty() && !self.task.state.is_active(),
             permission_visible: self.permission.is_some(),
+            decision_enabled: self.connected && self.task.state == TaskState::Running
+                && self.permission.is_some() && self.decision_pending.is_none(),
         }
     }
     pub fn lines(&self) -> &[Line] { &self.lines[..self.count] }
@@ -227,10 +235,11 @@ impl Ui {
                 Some(Intent::Stop { task_id: self.task.id })
             }
             Action::Approve | Action::Deny
-                if self.connected && self.task.state == TaskState::Running && self.permission.is_some() =>
+                if self.controls().decision_enabled =>
             {
                 let g = self.permission.unwrap();
-                self.notice("PERMISSION DECISION NOT YET CONFIRMED");
+                self.decision_pending = Some(g.request);
+                self.notice("PERMISSION DECISION SENT - AWAIT SERVICE");
                 Some(Intent::Decide {
                     task_id: self.task.id, request: g.request,
                     allow: action == Action::Approve,
@@ -239,6 +248,9 @@ impl Ui {
             Action::Submit => { self.notice("NO MODEL SERVICE - OS STILL USABLE"); None }
             Action::ToggleMode => { self.notice("MODE CHANGE UNAVAILABLE"); None }
             Action::Stop => { self.notice("NO STOPPABLE TASK - USE OS STOP KEY"); None }
+            Action::Approve | Action::Deny if self.decision_pending.is_some() => {
+                self.notice("DECISION PENDING - AWAIT SERVICE"); None
+            }
             Action::Approve | Action::Deny => { self.notice("NO VALID PERMISSION REQUEST"); None }
         }
     }
@@ -254,6 +266,7 @@ impl Ui {
                         self.task.state = TaskState::Unconfirmed;
                     }
                     self.permission = None;
+                    self.decision_pending = None;
                     self.notice("SERVICE LOST - NO STOP CONFIRMATION");
                 } else {
                     self.notice("SERVICE STATUS RECEIVED");
@@ -271,6 +284,7 @@ impl Ui {
             {
                 self.task = Task { id: task_id, seq, state: TaskState::Running };
                 self.permission = None;
+                self.decision_pending = None;
                 self.count = 0;
                 self.input.clear();
                 self.log(seq, "START", "TASK START REPORTED");
@@ -294,6 +308,7 @@ impl Ui {
                 self.permission = Some(Grant {
                     request, action: Text::display(action), target: Text::display(target),
                 });
+                self.decision_pending = None;
                 self.log(seq, "PERMISSION", "DECISION REQUIRED");
                 self.notice("PERMISSION PENDING - DEFAULT DENY");
                 true
@@ -303,6 +318,7 @@ impl Ui {
                     return false;
                 }
                 self.permission = None;
+                self.decision_pending = None;
                 self.log(seq, "DECISION", if allowed { "SERVICE REPORTED GRANT" } else { "SERVICE REPORTED DENIAL" });
                 true
             }
@@ -317,6 +333,7 @@ impl Ui {
                 if !self.accept(task_id, seq) { return false; }
                 self.task.state = TaskState::Stopped;
                 self.permission = None;
+                self.decision_pending = None;
                 self.log(seq, "STOPPED", "SERVICE REPORTED TERMINATION");
                 self.notice("SERVICE REPORTS STOPPED");
                 true
@@ -325,6 +342,7 @@ impl Ui {
                 if !self.accept(task_id, seq) { return false; }
                 self.task.state = TaskState::Completed;
                 self.permission = None;
+                self.decision_pending = None;
                 self.log(seq, "DONE", "SERVICE REPORTED COMPLETION");
                 self.notice("SERVICE REPORTS COMPLETE");
                 true
@@ -333,6 +351,7 @@ impl Ui {
                 if !self.accept(task_id, seq) { return false; }
                 self.task.state = TaskState::Failed;
                 self.permission = None;
+                self.decision_pending = None;
                 self.log(seq, "FAILED", reason);
                 self.notice("SERVICE REPORTS FAILURE");
                 true
@@ -491,6 +510,77 @@ mod tests {
         assert_eq!(u.lines()[0].seq, 12);
         assert_eq!(u.lines()[LOG_LIMIT - 1].seq, 19);
     }
+    #[test]
+    fn pending_permission_choice_is_sent_once_even_with_contradictory_keys() {
+        let mut u = Ui::new();
+        running(&mut u);
+        assert!(u.observe(BackendEvent::PermissionNeeded {
+            task_id: 7, seq: 2, request: 19,
+            action: "REPLACE", target: "/apps/bird.txt",
+        }));
+        assert!(u.controls().permission_visible && u.controls().decision_enabled);
+        assert_eq!(u.intent(Action::Approve), Some(Intent::Decide {
+            task_id: 7, request: 19, allow: true,
+        }));
+        assert_eq!(u.decision_pending, Some(19));
+        assert!(!u.controls().decision_enabled);
+        assert_eq!(u.intent(Action::Approve), None);
+        assert_eq!(u.intent(Action::Deny), None);
+        assert_eq!(u.permission.unwrap().request, 19);
+        // A stale/mismatched service event cannot unlock a second GUI decision.
+        assert!(!u.observe(BackendEvent::PermissionResolved {
+            task_id: 7, seq: 3, request: 20, allowed: false,
+        }));
+        assert!(!u.observe(BackendEvent::PermissionResolved {
+            task_id: 7, seq: 2, request: 19, allowed: false,
+        }));
+        assert_eq!(u.decision_pending, Some(19));
+        assert!(u.observe(BackendEvent::PermissionResolved {
+            task_id: 7, seq: 3, request: 19, allowed: true,
+        }));
+        assert!(u.permission.is_none() && u.decision_pending.is_none());
+
+        assert!(u.observe(BackendEvent::PermissionNeeded {
+            task_id: 7, seq: 4, request: 20, action: "CREATE", target: "/apps/other",
+        }));
+        assert_eq!(u.intent(Action::Deny), Some(Intent::Decide {
+            task_id: 7, request: 20, allow: false,
+        }));
+        assert!(u.controls().permission_visible);
+        assert!(!u.controls().decision_enabled);
+    }
+
+    #[test]
+    fn stop_or_disconnect_invalidates_pending_gui_decisions() {
+        let mut u = Ui::new();
+        running(&mut u);
+        assert!(u.observe(BackendEvent::PermissionNeeded {
+            task_id: 7, seq: 2, request: 25,
+            action: "WRITE", target: "/tmp/test",
+        }));
+        assert!(u.intent(Action::Deny).is_some());
+        assert!(u.observe(BackendEvent::StopAccepted { task_id: 7, seq: 3 }));
+        assert_eq!(u.intent(Action::Approve), None);
+        assert_eq!(u.intent(Action::Deny), None);
+        assert!(u.observe(BackendEvent::Stopped { task_id: 7, seq: 4 }));
+        assert!(u.permission.is_none() && u.decision_pending.is_none());
+        assert_eq!(u.intent(Action::Approve), None);
+
+        assert!(u.observe(BackendEvent::Started { task_id: 8, seq: 1 }));
+        assert!(u.observe(BackendEvent::PermissionNeeded {
+            task_id: 8, seq: 2, request: 26,
+            action: "DELETE", target: "/tmp/test",
+        }));
+        assert!(u.intent(Action::Approve).is_some());
+        assert!(u.observe(BackendEvent::Service {
+            connected: false, model: Model::Unavailable, saved_mode: Mode::Single,
+        }));
+        assert!(u.permission.is_none() && u.decision_pending.is_none());
+        assert_eq!(u.task.state, TaskState::Unconfirmed);
+        assert_eq!(u.intent(Action::Approve), None);
+        assert_eq!(u.intent(Action::Deny), None);
+    }
+
     #[test]
     fn unapproved_service_ack_does_not_imply_gui_authorization() {
         let mut u = Ui::new();
