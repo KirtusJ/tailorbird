@@ -73,8 +73,10 @@ generator and license are maintained with the kernel source. This avoids
 silently copying a font into a new asset. This source reference must be
 rechecked if the kernel font is revised or relocated.
 
-The REQUEST editor draws two rows of 78 columns at fixed geometry
-(960x540 surface, x=140, y=460, 10x20 glyph cells), enough to show every
+The REQUEST editor draws two rows of 78 columns in a logical 960×540 layout
+(x=140, y=460, 10×20 cells). The guest draws directly at the inherited display
+resolution and respects its row stride. At 1920×1080 the cells occupy 20×40
+physical pixels. The two rows have room for every
 one of the 120 admitted printable ASCII bytes. No additional truncation
 or case folding is permitted. Trailing spaces still have blank source
 font glyphs, so the left margin now displays **BYTES n/120**: entering or
@@ -98,15 +100,12 @@ human can recognize every glyph or that a QEMU guest submitted the
 correct bytes: PT must still inspect native screenshot pixels and
 kernel-service request readback before attaching a model or tool adapter.
 
-**Separate unresolved content:** ordinary TASK OUTPUT and notices still
-use the original fixed-width five-by-seven status-label renderer, which
-folds case, clips at 92 bytes and can omit unsupported glyphs. They are
-not a fidelity-preserving source-file or audit viewer. The permission
-ACTION/TARGET panel deliberately keeps the previously fail-closed
-5x7 policy and remains restrictive for lowercase, underscore and
-Unicode paths. Do not generalize the new request-editor guarantee to
-output, full-source editing, immutable-grant disclosure, mouse input
-or the distinct integrated desktop renderer reported by PT.
+TASK OUTPUT draws each retained printable ASCII byte with its original case. Each
+row fits the full 84-byte message, including its final cell. The reducer replaces
+control and non-ASCII bytes with `?` and keeps at most 84 bytes from each
+incoming event. A blank space has no visible ink. The permission inspector
+and request editor have separate length indicators. The integrated desktop,
+live service output and human legibility need their own checks.
 
 ## Ordered keyboard events: preserve the text actually typed
 

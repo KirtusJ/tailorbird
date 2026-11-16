@@ -95,8 +95,7 @@ fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
     } else {
         for (i, event) in ui.lines().iter().enumerate() {
             let y = 190 + i as i32 * 28;
-            label(f, 336, y, event.kind, 1, AMBER);
-            label(f, 438, y, event.message.as_str(), 1, TEXT);
+            f.task_output(y, event.kind, event.message.as_str(), AMBER, TEXT);
         }
     }
     if let Some(grant) = ui.permission {

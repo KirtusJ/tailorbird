@@ -116,6 +116,13 @@ impl<'a> Frame<'a> {
         }
     }
 
+    /// The event message is printable ASCII already retained by the reducer.
+    /// Starting at 422 leaves room in the panel for all 84 six-unit cells.
+    pub fn task_output(&mut self, y: i32, kind: &str, message: &str, kind_color: u32, text_color: u32) {
+        self.text(336, y, kind, 1, kind_color);
+        self.text(422, y, message, 1, text_color);
+    }
+
     pub fn text(&mut self, x: i32, y: i32, text: &str, size: i32, color: u32) {
         if x < 0 || y < 0 || size <= 0 {
             return;
@@ -164,6 +171,34 @@ mod tests {
                 .all(|r| r[w..].iter().all(|v| *v == 0xdeadbeef)));
         }
     }
+    #[test]
+    fn task_output_preserves_case_and_the_final_cell_inside_the_panel() {
+        // Model two service messages that differ only in the last path character.
+        let prefix = " ".repeat(82);
+        let lower = prefix.clone() + "_a";
+        let upper = prefix + "_A";
+        let render = |message: &str| {
+            let mut pixels = vec![0; 960 * 540];
+            let mut f = Frame::new(&mut pixels, 960, 540, 960, 0);
+            f.task_output(190, "OUTPUT", message, 0xff00, 0xffffff);
+            pixels
+        };
+        let a = render(&lower);
+        let b = render(&upper);
+        let mut reference = vec![0; 960 * 540];
+        let mut f = Frame::new(&mut reference, 960, 540, 960, 0);
+        f.glyph(914, 190, 6, 10, b'_', 0xffffff);
+        f.glyph(920, 190, 6, 10, b'a', 0xffffff);
+        let mut case_difference = false;
+        for y in 190..200 {
+            let offset = y * 960;
+            assert_eq!(&a[offset+914..offset+926], &reference[offset+914..offset+926]);
+            assert!(a[offset+926..offset+960].iter().all(|&p| p == 0));
+            case_difference |= a[offset+920..offset+926] != b[offset+920..offset+926];
+        }
+        assert!(case_difference);
+    }
+
     #[test]
     fn exact_source_glyphs_are_rasterized_at_the_selected_scale() {
         for k in [1, 2] {
