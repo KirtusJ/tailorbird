@@ -1128,6 +1128,55 @@ mod tests {
     }
 
     #[test]
+    fn late_successful_permission_readback_after_stop_intent_is_not_ordinary_consent() {
+        // A user can choose Allow and then press Stop before the service
+        // replies. A positive outcome in that interval is not evidence
+        // that the effect occurred before Stop, or that Stop fenced it.
+        // This is a presentation/readback ambiguity, not an enforcement test.
+        let mut u = Ui::new();
+        running(&mut u);
+        assert!(u.observe(BackendEvent::PermissionNeeded {
+            task_id: 7, seq: 2, request: 44,
+            action: "WRITE", target: "/home/a.txt",
+        }));
+        assert_eq!(u.intent(Action::Approve),
+                   Some(Intent::Decide { task_id: 7, request: 44, allow: true }));
+        assert_eq!(u.intent(Action::Stop), Some(Intent::Stop { task_id: 7 }));
+        assert!(u.observe(BackendEvent::PermissionResolved {
+            task_id: 7, seq: 3, request: 44, allowed: true,
+        }));
+        assert_eq!(u.task.state, TaskState::Unconfirmed,
+                   "a grant raced with Stop, so the UI cannot certify its effect order");
+        assert_eq!(u.lines().last().unwrap().kind, "ANOMALY");
+        assert!(u.notice.as_str().contains("EFFECT UNKNOWN"));
+        assert!(!u.controls().decision_enabled);
+        assert!(u.observe(BackendEvent::StopAccepted { task_id: 7, seq: 4 }));
+        assert_eq!(u.task.state, TaskState::StopRequested);
+        assert!(u.observe(BackendEvent::Stopped { task_id: 7, seq: 5 }));
+        assert_eq!(u.task.state, TaskState::Stopped);
+    }
+
+    #[test]
+    fn late_permission_denial_after_stop_intent_does_not_fabricate_a_grant() {
+        let mut u = Ui::new();
+        running(&mut u);
+        assert!(u.observe(BackendEvent::PermissionNeeded {
+            task_id: 7, seq: 2, request: 44,
+            action: "WRITE", target: "/home/a.txt",
+        }));
+        assert_eq!(u.intent(Action::Approve),
+                   Some(Intent::Decide { task_id: 7, request: 44, allow: true }));
+        assert_eq!(u.intent(Action::Stop), Some(Intent::Stop { task_id: 7 }));
+        assert!(u.observe(BackendEvent::PermissionResolved {
+            task_id: 7, seq: 3, request: 44, allowed: false,
+        }));
+        assert_eq!(u.task.state, TaskState::Running);
+        assert_eq!(u.lines().last().unwrap().kind, "DECISION");
+        assert_eq!(u.lines().last().unwrap().message.as_str(), "SERVICE REPORTED DENIAL");
+        assert!(!u.controls().decision_enabled);
+    }
+
+    #[test]
     fn stop_intent_before_ack_must_fence_existing_permission_decision() {
         let mut u = Ui::new();
         running(&mut u);
