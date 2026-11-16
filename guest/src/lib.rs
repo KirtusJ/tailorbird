@@ -595,6 +595,15 @@ impl Ui {
                     } else {
                         "SERVICE REPORTED DENIAL"
                     });
+                    // Once a correlated receipt arrives and the inspector
+                    // disappears, the footer cannot continue saying that
+                    // the decision is pending. The UI still has no durable
+                    // evidence of an authorized filesystem effect.
+                    self.notice(if allowed {
+                        "SERVICE REPORTS GRANT - EFFECT UNVERIFIED"
+                    } else {
+                        "SERVICE REPORTS DENIAL - NO EFFECT CLAIM"
+                    });
                 }
                 true
             }
