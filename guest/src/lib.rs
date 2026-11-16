@@ -996,6 +996,59 @@ mod tests {
     }
 
     #[test]
+    fn stop_intent_before_ack_must_fence_existing_permission_decision() {
+        let mut u = Ui::new();
+        running(&mut u);
+        assert!(u.observe(BackendEvent::PermissionNeeded {
+            task_id: 7, seq: 2, request: 44,
+            action: "WRITE", target: "/home/a.txt",
+        }));
+        assert!(u.controls().decision_enabled);
+        assert_eq!(u.intent(Action::Stop), Some(Intent::Stop { task_id: 7 }));
+        // Stop was an intent, not yet acknowledged by the service.
+        assert_eq!(u.task.state, TaskState::Running);
+        // No new GUI Allow or Deny is allowed *after the operator pressed Stop*.
+        assert!(!u.controls().decision_enabled);
+        assert_eq!(u.intent(Action::Approve), None);
+        assert_eq!(u.intent(Action::Deny), None);
+        // A repeated service-status snapshot without a Stop acknowledgment
+        // cannot resurrect consent during the still-unconfirmed interval.
+        assert!(u.observe(BackendEvent::Service {
+            connected: true, model: Model::Ready, saved_mode: Mode::Single,
+        }));
+        assert!(!u.controls().decision_enabled);
+        assert_eq!(u.intent(Action::Approve), None);
+        assert_eq!(u.task.state, TaskState::Running);
+        assert!(u.observe(BackendEvent::StopAccepted { task_id: 7, seq: 3 }));
+        assert_eq!(u.task.state, TaskState::StopRequested);
+        assert!(!u.controls().decision_enabled);
+    }
+
+    #[test]
+    fn stop_intent_before_ack_must_fence_fresh_permission_proposals() {
+        let mut u = Ui::new();
+        running(&mut u);
+        assert_eq!(u.intent(Action::Stop), Some(Intent::Stop { task_id: 7 }));
+        assert_eq!(u.task.state, TaskState::Running);
+        assert!(!u.observe(BackendEvent::PermissionNeeded {
+            task_id: 7, seq: 2, request: 45,
+            action: "DELETE", target: "/home/a.txt",
+        }));
+        assert!(u.permission.is_none());
+        assert!(!u.controls().decision_enabled);
+        assert!(u.observe(BackendEvent::StopAccepted { task_id: 7, seq: 2 }));
+        assert!(u.observe(BackendEvent::Stopped { task_id: 7, seq: 3 }));
+        assert_eq!(u.task.state, TaskState::Stopped);
+        assert!(u.observe(BackendEvent::Started { task_id: 8, seq: 1 }));
+        // This is a new task; the old request to stop task 7 does not
+        // block a separate, fresh task's permission display.
+        assert!(u.observe(BackendEvent::PermissionNeeded {
+            task_id: 8, seq: 2, request: 46,
+            action: "WRITE", target: "/home/b.txt",
+        }));
+        assert!(u.controls().decision_enabled);
+    }
+    #[test]
     fn no_approval_after_stop_request() {
         let mut u = Ui::new();
         running(&mut u);
