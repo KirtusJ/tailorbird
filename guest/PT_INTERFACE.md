@@ -25,7 +25,7 @@ until PT supplies a source pin and executable test receipt.
 
 | Guest UI | Trusted adapter/PT service | Required readback |
 | --- | --- | --- |
-| Ui::intent(Submit{prompt,mode}) | PT authenticates actor, allocates task/sequence, validates permitted scope; TaskGate::start() if applicable | Started{task_id,seq} from service; an intent alone is not a started task |
+| Ui::intent(Submit{idempotency_key,prompt,mode}) | PT binds actor, trusted session epoch, exact immutable payload/mode and single-use admission key; atomically deduplicates before TaskGate::start() | Matching SubmissionStarted{idempotency_key,task_id,seq} or SubmissionRejected{idempotency_key}; an intent alone is not a started task |
 | Ui::intent(SetMode) | PT saves the choice in the OS-controlled persistent configuration, not model context | ModeCommitted(mode), or saved_mode from a new authenticated Service status |
 | Ui::intent(Stop{task_id}) | PT routes an exact task stop via TaskGate::stop(task) and enforces a destination fence | StopAccepted is not termination; Stopped only after actual endpoint/supervisor readback |
 | Ui::intent(Decide{task_id,request,allow}) | PT checks pending() for the immutable action, target, actor, active task, and fresh request identity, then calls decision(req,allow) | PermissionResolved for that exact request; no automatic grant |
@@ -38,6 +38,35 @@ verified event source, request/response correlation, capability presentation
 and conflict behavior are PT's service work. TaskGate belongs outside the
 untrusted model process. The GUI will need an authenticated transport that
 does not yet exist in the pinned guest/kernel.
+
+## Submit admission and retransmission boundary
+
+The public GUI now rejects immediate duplicate Submit intents while a
+submission remains unconfirmed. Its `idempotency_key` is a monotonic
+**in-process** counter, NOT an authenticated globally unique request ID.
+Director PT's trusted controller must bind this key with a persistent
+session/actor epoch and an immutable payload digest, guarantee atomic
+deduplication and retention across disconnect/restart, and report either
+`SubmissionStarted` for that key and one actual task ID, or
+`SubmissionRejected` for that key. Uncorrelated `Started` remains a
+legacy/status-only event and cannot clear a pending submission.
+
+On temporary loss, the GUI retains the same prompt/mode/key, disables new
+submission and shows an unresolved status. Explicit Alt+R retry emits
+the *same* key, not a fresh request; this is a proposed transport operation,
+not proof that the prior submission did not run. PT must return the same
+task identity if the first transmission was already accepted. Timeouts,
+disconnects, and an unverified service return are not safe-to-repeat
+signals; no automatic retry or new key is permitted until an authorized
+status/denial receipt. Ordinary task output and tool effects remain
+distinct from task admission. The native UI locks input editing during
+pending submission to preserve the visual request snapshot.
+
+PT should run lost-ack, duplicate-in-flight, identical-key/different-
+payload, replay-across-epochs, service-restart and stop-during-admission
+negative controls before connecting this UI to Qwen. The attached
+guest-only tests establish **presentation state**, not reliable delivery,
+trusted deduplication, task causality or permission enforcement.
 
 ## Exact prompt rendering versus permission disclosure
 
