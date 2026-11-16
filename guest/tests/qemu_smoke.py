@@ -11,7 +11,7 @@ import hashlib
 import json
 import pathlib
 import re
-import socket
+import select
 import subprocess
 import tempfile
 import time
@@ -22,7 +22,6 @@ DEFAULT_TIMEOUT = 100.0
 class Qemu:
     def __init__(self, kernel: pathlib.Path, guest: pathlib.Path, folder: pathlib.Path, machine: str):
         self.folder = folder
-        self.qmp_path = folder / "q"
         self.serial_path = folder / "serial.log"
         cmd = [
             "qemu-system-x86_64", "-machine", machine, "-cpu", "max", "-m", "256M",
@@ -31,31 +30,20 @@ class Qemu:
             "-display", "none", "-vga", "std", "-nic", "none",
             "-serial", "file:" + str(self.serial_path),
             "-no-reboot", "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04",
-            "-qmp", "unix:" + str(self.qmp_path) + ",server=on,wait=off",
+            "-qmp", "stdio",
         ]
         print("QEMU_ARGS", json.dumps(cmd), flush=True)
         self.proc = subprocess.Popen(
-            cmd, cwd=folder, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+            cmd, cwd=folder, stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0
         )
-        self.sock = socket.socket(socket.AF_UNIX)
-        for _ in range(400):
-            if self.proc.poll() is not None:
-                raise RuntimeError("QEMU stopped before QMP, rc=" + str(self.proc.returncode))
-            try:
-                self.sock.connect(str(self.qmp_path))
-                break
-            except OSError:
-                time.sleep(0.05)
-        else:
-            raise TimeoutError("No QMP socket")
-        self.sock.settimeout(10)
-        self.conn = self.sock.makefile("rwb")
         self._response()
         self.qmp("qmp_capabilities")
 
     def _response(self):
         for _ in range(30):
-            payload = self.conn.readline()
+            if not select.select([self.proc.stdout], [], [], 30)[0]:
+                raise TimeoutError("QMP response timed out")
+            payload = self.proc.stdout.readline()
             if not payload:
                 raise EOFError("QMP closed")
             item = json.loads(payload)
@@ -67,15 +55,15 @@ class Qemu:
         raise RuntimeError("Too many unsolicited QMP events")
 
     def qmp(self, method, **arguments):
-        self.conn.write((json.dumps({"execute": method, "arguments": arguments}) + "\n").encode())
-        self.conn.flush()
+        self.proc.stdin.write((json.dumps({"execute": method, "arguments": arguments}) + "\n").encode())
+        self.proc.stdin.flush()
         return self._response()
 
     def key(self, *qcodes):
         self.qmp("send-key",
                  keys=[{"type": "qcode", "data": key} for key in qcodes],
                  **{"hold-time": 100})
-        time.sleep(0.22)
+        time.sleep(0.40)
 
     def screenshot(self, tag):
         path = self.folder / (tag + ".ppm")
@@ -97,8 +85,7 @@ class Qemu:
         if self.proc.poll() is None:
             self.proc.kill()
         self.proc.wait(timeout=10)
-        self.conn.close()
-        self.sock.close()
+        self.proc.stdin.close()
         if self.proc.stdout:
             extra = self.proc.stdout.read().decode(errors="replace")
             if extra:
@@ -126,20 +113,31 @@ def run(kernel, guest, timeout, machine):
                     raise RuntimeError("QEMU exited before guest display: " + m.serial()[-1800:])
                 try:
                     dims, baseline, first_hash = m.screenshot("initial")
-                    if dims == (960, 540):
+                    # The public kernel selects 1024x768 at default VGA memory.
+                    # Wait for actual Tailorbird pixels: the launcher uses this mode too.
+                    sample = ((114 + 110) * dims[0] + 32 + 22) * 3
+                    if (dims == (1024, 768) and "Tailorbird first frame presented" in m.serial()
+                            and baseline[sample:sample + 3] == bytes.fromhex("18364f")):
                         break
                 except RuntimeError as e:
                     # QMP screen may be transient during mode negotiation.
                     print("SCREEN_PENDING", str(e)[:160], flush=True)
                 time.sleep(0.3)
             else:
-                raise TimeoutError("No 960x540 guest surface. last_screen=" + str(dims)
+                raise TimeoutError("No Tailorbird frame at the inherited 1024x768 scanout. last_screen=" + str(dims)
                                    + " serial=" + m.serial()[-1800:])
 
-            editor = (140, 460, 920, 500)
+            left, top = (dims[0] - 960) // 2, (dims[1] - 540) // 2
+            editor = (left + 140, top + 460, left + 920, top + 500)
             base = crop(baseline, dims[0], editor)
             m.key("a")
-            dims_a, pixels_a, hash_a = m.screenshot("lower")
+            # Wait for the new frame independently of host scheduling and key delivery.
+            deadline = time.monotonic() + timeout
+            while True:
+                dims_a, pixels_a, hash_a = m.screenshot("lower")
+                if crop(pixels_a, dims[0], editor) != base or time.monotonic() >= deadline:
+                    break
+                time.sleep(0.08)
             assert dims_a == dims
             lower = crop(pixels_a, dims[0], editor)
             assert lower != base, "Typing lowercase a did not change request pixels"
@@ -147,7 +145,7 @@ def run(kernel, guest, timeout, machine):
             # Deliberately invisible trailing space: the text glyphs alone
             # cannot distinguish "a" from "a ", but the displayed exact
             # byte count must. It sits to the left of the editor raster.
-            counter = (20, 485, 135, 503)
+            counter = (left + 20, top + 485, left + 135, top + 503)
             count_a = crop(pixels_a, dims[0], counter)
             m.key("spc")
             dims_space, pixels_space, hash_space = m.screenshot("trailing_space")

@@ -117,19 +117,15 @@ pub fn draw_request(
         return Err(DrawError::InsufficientEditor);
     }
 
+    request_glyphs(input, |x, y, byte| paint_glyph(pixels, pitch, byte, x, y, colour))
+}
+
+/// Emit logical glyph positions for either the native viewport or a fixed-size surface.
+pub fn request_glyphs(input: &str, mut emit: impl FnMut(usize, usize, u8)) -> Result<(), DrawError> {
+    if !can_show_editor_input(input) { return Err(DrawError::UnrenderableInput); }
     for (i, byte) in input.bytes().enumerate() {
-        let glyph = &kernel_font::GLYPHS[(byte - kernel_font::FIRST) as usize];
-        let gx = EDITOR_X + (i % EDITOR_COLS) * CELL_WIDTH;
-        let gy = EDITOR_Y + (i / EDITOR_COLS) * CELL_HEIGHT;
-        for row in 0..CELL_HEIGHT {
-            for col in 0..CELL_WIDTH {
-                let coverage = glyph[row * CELL_WIDTH + col] as u32;
-                if coverage != 0 {
-                    let idx = (gy + row) * pitch + gx + col;
-                    pixels[idx] = blend(pixels[idx], colour, coverage);
-                }
-            }
-        }
+        emit(EDITOR_X + (i % EDITOR_COLS) * CELL_WIDTH,
+             EDITOR_Y + (i / EDITOR_COLS) * CELL_HEIGHT, byte);
     }
     Ok(())
 }
@@ -167,17 +163,6 @@ fn paint_glyph(pixels: &mut [u32], pitch: usize, byte: u8, x: usize, y: usize, c
     }
 }
 
-fn paint_decimal_length(
-    pixels: &mut [u32], pitch: usize, len: usize, y: usize, colour: u32,
-) {
-    // Admitted fields cannot exceed 72 bytes. Always draw three positions,
-    // including leading zeroes. Their source-font digits are unambiguous.
-    for (i, digit) in [len / 100, (len / 10) % 10, len % 10].iter().enumerate() {
-        paint_glyph(pixels, pitch, b'0' + *digit as u8,
-                    PERMISSION_LENGTH_X + i * CELL_WIDTH, y, colour);
-    }
-}
-
 /// Pixel-exact, case-preserving inspection of service-supplied effect text.
 ///
 /// This is presentation, NOT a security credential or trusted effect grant.
@@ -207,17 +192,21 @@ pub fn draw_permission(
     if width < text_right.max(length_right) || height < bottom {
         return Err(DrawError::InsufficientEditor);
     }
-    for (i, byte) in action.bytes().enumerate() {
-        paint_glyph(pixels, pitch, byte, PERMISSION_X + i * CELL_WIDTH,
-                    PERMISSION_ACTION_Y, colour);
+    permission_glyphs(action, target, |x, y, byte| paint_glyph(pixels, pitch, byte, x, y, colour))
+}
+
+pub fn permission_glyphs(action: &str, target: &str, mut emit: impl FnMut(usize, usize, u8)) -> Result<(), DrawError> {
+    if !can_show_permission(action, target) { return Err(DrawError::UnrenderableInput); }
+    for (field, top) in [(action, PERMISSION_ACTION_Y), (target, PERMISSION_TARGET_Y)] {
+        for (i, byte) in field.bytes().enumerate() {
+            emit(PERMISSION_X + (i % PERMISSION_COLS) * CELL_WIDTH,
+                 top + (i / PERMISSION_COLS) * CELL_HEIGHT, byte);
+        }
+        let len = field.len();
+        for (i, digit) in [len / 100, len / 10 % 10, len % 10].into_iter().enumerate() {
+            emit(PERMISSION_LENGTH_X + i * CELL_WIDTH, top, b'0' + digit as u8);
+        }
     }
-    paint_decimal_length(pixels, pitch, action.len(), PERMISSION_ACTION_Y, colour);
-    for (i, byte) in target.bytes().enumerate() {
-        let x = PERMISSION_X + (i % PERMISSION_COLS) * CELL_WIDTH;
-        let y = PERMISSION_TARGET_Y + (i / PERMISSION_COLS) * CELL_HEIGHT;
-        paint_glyph(pixels, pitch, byte, x, y, colour);
-    }
-    paint_decimal_length(pixels, pitch, target.len(), PERMISSION_TARGET_Y, colour);
     Ok(())
 }
 

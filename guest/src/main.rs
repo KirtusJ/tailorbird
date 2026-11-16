@@ -1,13 +1,14 @@
 #![no_std]
 #![no_main]
 
+mod frame;
+use frame::Frame;
+
 // Native graphical *offline preview*. No model, tool service or transport is linked.
 // This is a separate guest process using PCP OS' existing display and keyboard grants.
-use pcp_game_guest::{call, exit, ink::Frame, log, open, sleep_us, Display};
+use pcp_game_guest::{call, exit, log, open, sleep_us, Display};
 use tailorbird_ui::{ordered_keys::{KeyOutcome, OrderedKeyboard}, Model, Ui};
 
-const W: usize = 960;
-const H: usize = 540;
 const GROUND: u32 = 0x10283f;
 const PANEL: u32 = 0x18364f;
 const TEXT: u32 = 0xf2f7fc;
@@ -16,10 +17,6 @@ const TEAL: u32 = 0x41bad7;
 const AMBER: u32 = 0xe3a24b;
 const GOOD: u32 = 0x8fe0c2;
 const BAD: u32 = 0xf08a72;
-
-// The only unsafe code here borrows this app's own framebuffer.
-// The underlying mapping and page flip are handled by pcp-game-guest.
-static mut PIXELS: [u32; W * H] = [0; W * H];
 
 fn label(f: &mut Frame<'_>, x: i32, y: i32, value: &str, scale: i32, colour: u32) {
     let mut upper = [0u8; 92];
@@ -48,54 +45,58 @@ fn decimal_u64<'a>(mut value: u64, buf: &'a mut [u8; 20]) -> &'a str {
 }
 
 fn paint(display: &mut Display, ui: &Ui) {
-    let pixels = unsafe { &mut *(&raw mut PIXELS) };
-    pixels.fill(GROUND);
-    let mut f = Frame { px: pixels, pitch: W };
-    f.rect(0, 0, W as i32, 72, PANEL);
-    label(&mut f, 22, 16, "TAILORBIRD", 3, TEAL);
-    label(&mut f, 260, 23, "LOCAL TASK SURFACE", 2, TEXT);
-    label(&mut f, 737, 27, if ui.connected { "SERVICE LINK" } else { "NO SERVICE" }, 2,
+    display.draw(|pixels, width, height, pitch| {
+        let mut f = Frame::new(pixels, width, height, pitch, GROUND);
+        paint_frame(&mut f, ui);
+    });
+}
+
+fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
+    f.rect(0, 0, 960, 72, PANEL);
+    label(f, 22, 16, "TAILORBIRD", 3, TEAL);
+    label(f, 260, 23, "LOCAL TASK SURFACE", 2, TEXT);
+    label(f, 737, 27, if ui.connected { "SERVICE LINK" } else { "NO SERVICE" }, 2,
           if ui.connected { GOOD } else { BAD });
 
     // Mode and Stop are always visible even if the model is missing.
     f.rect(20, 94, 280, 352, PANEL);
-    label(&mut f, 38, 115, "CONNECTION", 2, TEAL);
-    label(&mut f, 38, 147, ui.model.label(), 2,
+    label(f, 38, 115, "CONNECTION", 2, TEAL);
+    label(f, 38, 147, ui.model.label(), 2,
           if ui.model == Model::Ready { GOOD } else { AMBER });
-    label(&mut f, 38, 187, "MODE", 2, TEAL);
+    label(f, 38, 187, "MODE", 2, TEAL);
     let mode_rect = tailorbird_ui::pointer::MODE_RECT;
     f.rect(mode_rect.x, mode_rect.y, mode_rect.width, mode_rect.height, GROUND);
-    label(&mut f, 48, 232, ui.mode.label(), 2, TEXT);
+    label(f, 48, 232, ui.mode.label(), 2, TEXT);
     if ui.mode_pending.is_some() {
-        label(&mut f, 40, 287, "CHANGE NOT CONFIRMED", 1, AMBER);
+        label(f, 40, 287, "CHANGE NOT CONFIRMED", 1, AMBER);
     } else {
-        label(&mut f, 40, 287, "ALT M CHANGE MODE", 1, SOFT);
+        label(f, 40, 287, "ALT M CHANGE MODE", 1, SOFT);
     }
 
     let stop_rect = tailorbird_ui::pointer::STOP_RECT;
     f.rect(stop_rect.x, stop_rect.y, stop_rect.width, stop_rect.height,
            if ui.controls().stop_enabled { BAD } else { GROUND });
-    label(&mut f, 48, 331, "STOP", 3, TEXT);
-    label(&mut f, 48, 361, ui.task.state.label(), 1, SOFT);
-    label(&mut f, 38, 408, "ALT S STOP TASK", 1, SOFT);
+    label(f, 48, 331, "STOP", 3, TEXT);
+    label(f, 48, 361, ui.task.state.label(), 1, SOFT);
+    label(f, 38, 408, "ALT S STOP TASK", 1, SOFT);
 
     f.rect(316, 94, 624, 352, PANEL);
-    label(&mut f, 335, 116, "TASK OUTPUT", 2, TEAL);
-    label(&mut f, 337, 150, ui.task.state.label(), 1, SOFT);
+    label(f, 335, 116, "TASK OUTPUT", 2, TEAL);
+    label(f, 337, 150, ui.task.state.label(), 1, SOFT);
     f.rect(333, 173, 588, 2, GROUND);
     if ui.permission.is_some() {
         // Consent details occupy a focused exact-text inspector instead of
         // fighting task-output rows for the same pixels. Stop and mode stay
         // visible in the separate x=20..300 sidebar.
     } else if ui.lines().is_empty() {
-        label(&mut f, 339, 205, "NO TASK EVENTS RECEIVED", 2, SOFT);
-        label(&mut f, 339, 246, "MANUAL OS USE REMAINS AVAILABLE", 1, GOOD);
-        label(&mut f, 339, 270, "ESC RETURNS TO THE PCP OS LAUNCHER", 1, SOFT);
+        label(f, 339, 205, "NO TASK EVENTS RECEIVED", 2, SOFT);
+        label(f, 339, 246, "MANUAL OS USE REMAINS AVAILABLE", 1, GOOD);
+        label(f, 339, 270, "ESC RETURNS TO THE PCP OS LAUNCHER", 1, SOFT);
     } else {
         for (i, event) in ui.lines().iter().enumerate() {
             let y = 190 + i as i32 * 28;
-            label(&mut f, 336, y, event.kind, 1, AMBER);
-            label(&mut f, 438, y, event.message.as_str(), 1, TEXT);
+            label(f, 336, y, event.kind, 1, AMBER);
+            label(f, 438, y, event.message.as_str(), 1, TEXT);
         }
     }
     if let Some(grant) = ui.permission {
@@ -105,19 +106,17 @@ fn paint(display: &mut Display, ui: &Ui) {
         // by Frame::text's uppercase-only 5x7 alphabet. Three native length
         // digits preserve the distinction between trailing-space paths.
         f.rect(333, 182, 588, 254, GROUND);
-        label(&mut f, 340, 188, "PERMISSION REQUIRED", 2, AMBER);
-        label(&mut f, 340, 209, "GUI REVIEW ONLY - NO EFFECT GRANTED", 1, SOFT);
-        label(&mut f, 340, 218, "ACTION", 1, TEAL);
-        label(&mut f, 845, 218, "A LEN", 1, TEAL);
-        label(&mut f, 340, 265, "TARGET", 1, TEAL);
-        label(&mut f, 845, 265, "T LEN", 1, TEAL);
-        if tailorbird_ui::exact_ascii::draw_permission(
-            &mut *f.px, W, H, W, grant.action.as_str(), grant.target.as_str(), TEXT,
-        ).is_err() {
+        label(f, 340, 188, "PERMISSION REQUIRED", 2, AMBER);
+        label(f, 340, 209, "GUI REVIEW ONLY - NO EFFECT GRANTED", 1, SOFT);
+        label(f, 340, 218, "ACTION", 1, TEAL);
+        label(f, 845, 218, "A LEN", 1, TEAL);
+        label(f, 340, 265, "TARGET", 1, TEAL);
+        label(f, 845, 265, "T LEN", 1, TEAL);
+        if tailorbird_ui::exact_ascii::permission_glyphs(grant.action.as_str(), grant.target.as_str(), |x, y, byte| f.glyph(x, y, 10, 20, byte, TEXT)).is_err() {
             // Not a license to approve a field that cannot be displayed.
             f.rect(333, 182, 588, 254, GROUND);
-            label(&mut f, 340, 227, "PERMISSION NOT DISPLAYABLE", 2, BAD);
-            label(&mut f, 340, 264, "STOP TASK - SERVICE MUST REFUSE", 1, BAD);
+            label(f, 340, 227, "PERMISSION NOT DISPLAYABLE", 2, BAD);
+            label(f, 340, 264, "STOP TASK - SERVICE MUST REFUSE", 1, BAD);
         } else {
             let decision_label = if ui.controls().decision_enabled {
                 "ALT A ALLOW - ALT D DENY"
@@ -126,43 +125,40 @@ fn paint(display: &mut Display, ui: &Ui) {
             } else {
                 "INPUT LOCKED - NO DECISION"
             };
-            label(&mut f, 340, 338, decision_label, 2, AMBER);
-            label(&mut f, 340, 372, "SOURCE DIGEST AND EFFECT BINDING ARE SERVICE DUTIES", 1, SOFT);
-            label(&mut f, 340, 392, "NO WRITE OR AUTHORIZATION BY THIS UI", 1, SOFT);
-            label(&mut f, 340, 414, "TASK", 1, TEAL);
+            label(f, 340, 338, decision_label, 2, AMBER);
+            label(f, 340, 372, "SOURCE DIGEST AND EFFECT BINDING ARE SERVICE DUTIES", 1, SOFT);
+            label(f, 340, 392, "NO WRITE OR AUTHORIZATION BY THIS UI", 1, SOFT);
+            label(f, 340, 414, "TASK", 1, TEAL);
             let mut task_digits = [0u8; 20];
-            label(&mut f, 380, 414, decimal_u64(ui.task.id, &mut task_digits), 1, TEXT);
-            label(&mut f, 530, 414, "REQUEST", 1, TEAL);
+            label(f, 380, 414, decimal_u64(ui.task.id, &mut task_digits), 1, TEXT);
+            label(f, 530, 414, "REQUEST", 1, TEAL);
             let mut req_digits = [0u8; 20];
-            label(&mut f, 590, 414, decimal_u64(grant.request, &mut req_digits), 1, TEXT);
+            label(f, 590, 414, decimal_u64(grant.request, &mut req_digits), 1, TEXT);
         }
     }
 
     f.rect(20, 458, 920, 48, PANEL);
-    label(&mut f, 32, 469, "REQUEST", 1, TEAL);
+    label(f, 32, 469, "REQUEST", 1, TEAL);
     // Trailing ASCII spaces have blank font cells. Display the exact byte
     // count alongside the editor so foo and foo-space are distinguishable.
     // These count glyphs are in the x<140 margin, outside the text raster.
-    label(&mut f, 32, 489, "BYTES", 1, TEAL);
+    label(f, 32, 489, "BYTES", 1, TEAL);
     let mut count_buf = [0u8; 10];
-    label(&mut f, 70, 489,
+    label(f, 70, 489,
           pcp_game_guest::digits(ui.input.as_str().len() as u32, &mut count_buf),
           1, TEXT);
-    label(&mut f, 102, 489, "/120", 1, SOFT);
+    label(f, 102, 489, "/120", 1, SOFT);
     // The text submitted to the service is the *exact* text painted here,
     // not the uppercased 5x7 label. Two lines at 78 cells expose all 120
     // stored bytes, including case-sensitive paths and source punctuation.
     // A drawing failure is visible, and the reducer independently refuses
     // submission when the editor cannot represent the request.
-    if tailorbird_ui::exact_ascii::draw_request(
-        &mut *f.px, W, H, W, ui.input.as_str(), TEXT,
-    ).is_err() {
+    if tailorbird_ui::exact_ascii::request_glyphs(ui.input.as_str(), |x, y, byte| f.glyph(x, y, 10, 20, byte, TEXT)).is_err() {
         f.rect(140, 460, 780, 42, GROUND);
-        label(&mut f, 146, 470, "INPUT NOT DISPLAYABLE", 1, BAD);
+        label(f, 146, 470, "INPUT NOT DISPLAYABLE", 1, BAD);
     }
-    label(&mut f, 22, 513, "ENTER SUBMIT   ALT R RETRY   ALT M MODE   ALT S STOP   ESC EXIT", 1, SOFT);
-    label(&mut f, 535, 513, ui.notice.as_str(), 1, AMBER);
-    display.show(pixels);
+    label(f, 22, 513, "ENTER SUBMIT   ALT R RETRY   ALT M MODE   ALT S STOP   ESC EXIT", 1, SOFT);
+    label(f, 535, 513, ui.notice.as_str(), 1, AMBER);
 }
 
 // The kernel's /dev/kbd is an ordered two-byte event FIFO. The shared
@@ -175,7 +171,7 @@ fn paint(display: &mut Display, ui: &Ui) {
 pcp_game_guest::entry!(tailorbird_main);
 #[no_mangle]
 pub extern "C" fn tailorbird_main() -> ! {
-    let mut display = Display::new(W, H);
+    let mut display = Display::current();
     let kb = open(b"/dev/kbd\0", 0x800);
     if kb < 0 {
         log(b"tailorbird: ordered keyboard unavailable\n");
@@ -184,6 +180,7 @@ pub extern "C" fn tailorbird_main() -> ! {
     let mut ordered = OrderedKeyboard::new();
     let mut ui = Ui::new();
     paint(&mut display, &ui);
+    log(b"Tailorbird first frame presented\n");
     loop {
         let mut dirty = false;
         loop {
