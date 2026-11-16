@@ -9,6 +9,8 @@ pub const INPUT_LIMIT: usize = 120;
 
 /// Source-pinned, case-sensitive rendering for the full request before submit.
 pub mod exact_ascii;
+/// Retain ordered keyboard event identity instead of pressed bitmap only.
+pub mod ordered_keys;
 pub const LOG_LIMIT: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
