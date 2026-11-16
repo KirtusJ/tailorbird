@@ -61,6 +61,20 @@ separately reviewed policy/report type. An automatic refusal is compatible
 with UI security and does not require a prior GUI Deny. UI-only state
 checks never substitute for TaskGate enforcement or filesystem readback.
 
+## Mode persistence and readback
+
+A user command `SetMode(Ongoing|Single)` does not prove the saved
+configuration changed. For the existing GUI to call a transition
+**confirmed**, the trusted adapter must return a `ModeCommitted`
+matching the outstanding requested value. A different returned value
+must be displayed as **not applied**, not as success. An unsolicited
+service mode update can be displayed as its authoritative *reported*
+value, but must not be credited as the person's new request. The same
+comparison applies when `Service{saved_mode}` is received before
+the pending command's receipt. PT owns durable mode storage, receipt
+correlation, caller identity and actual worker mode selection; the GUI
+has no direct authority over them.
+
 ## Edits must remain explicitly scoped
 
 For Edit::Create, the service needs an authorized destination and clear
