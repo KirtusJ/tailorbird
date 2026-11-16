@@ -621,6 +621,54 @@ mod tests {
         assert_eq!(u.lines().last().unwrap().kind, "OUTPUT");
     }
     #[test]
+    fn oversized_service_output_must_disclose_loss_before_first_content_byte() {
+        let mut u = Ui::new();
+        running(&mut u);
+        let source = "x".repeat(84) + "Z";
+        assert!(u.observe(BackendEvent::Output {
+            task_id: 7, seq: 2, text: &source,
+        }));
+        let displayed = u.lines().last().unwrap().message.as_str();
+        assert_eq!(displayed.len(), 84);
+        assert!(displayed.starts_with("[LOSSY] "),
+            "silent suffix loss can look like a full model/tool reply: {displayed}");
+        assert_eq!(&displayed[8..], &source[..76]);
+        assert_ne!(displayed, &source[..84]);
+        assert_eq!(u.lines().last().unwrap().kind, "OUTPUT");
+    }
+
+    #[test]
+    fn non_ascii_service_output_must_not_impersonate_literal_question_marks() {
+        let mut changed = Ui::new();
+        running(&mut changed);
+        assert!(changed.observe(BackendEvent::ToolResult {
+            task_id: 7, seq: 2, text: "go\u{00e9}",
+        }));
+        let changed_line = changed.lines().last().unwrap().message.as_str();
+        let mut exact = Ui::new();
+        running(&mut exact);
+        assert!(exact.observe(BackendEvent::ToolResult {
+            task_id: 7, seq: 2, text: "go??",
+        }));
+        assert_ne!(changed_line, exact.lines().last().unwrap().message.as_str(),
+            "byte-normalized Unicode and literal question marks are not equivalent");
+        assert_eq!(changed_line, "[LOSSY] go??");
+        assert_eq!(exact.lines().last().unwrap().message.as_str(), "go??");
+    }
+
+    #[test]
+    fn exact_84_byte_service_line_stays_exact_without_loss_marker() {
+        let mut u = Ui::new();
+        running(&mut u);
+        let source = "a".repeat(83) + "Z";
+        assert!(u.observe(BackendEvent::Output {
+            task_id: 7, seq: 2, text: &source,
+        }));
+        assert_eq!(u.lines().last().unwrap().message.as_str(), source);
+        assert_eq!(u.lines().last().unwrap().message.as_str().len(), 84);
+    }
+
+    #[test]
     fn submit_requires_service_and_its_result_is_only_an_intent() {
         let mut u = Ui::new();
         connected(&mut u);
