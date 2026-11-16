@@ -77,7 +77,11 @@ fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
     label(f, 335, 116, "TASK OUTPUT", 2, TEAL);
     label(f, 337, 150, ui.task.state.label(), 1, SOFT);
     f.rect(333, 173, 588, 2, GROUND);
-    if ui.permission.is_some() {
+    // An old grant can remain stored strictly to correlate late service
+    // receipts after StopAccepted. Never let that non-actionable metadata
+    // repaint a live-looking permission inspector or hide Stop/ANOMALY rows.
+    // The reducer's presentation gate is distinct from stored correlation.
+    if ui.controls().permission_visible {
         // Consent details occupy a focused exact-text inspector instead of
         // fighting task-output rows for the same pixels. Stop and mode stay
         // visible in the separate x=20..300 sidebar.
