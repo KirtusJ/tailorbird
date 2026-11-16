@@ -22,6 +22,6 @@ pcp-game-guest = { path = "../../../store/native/guest" }
 [profile.release]
 panic = "abort"
 opt-level = "s"
-lto = true
+lto = "off" # matches PT's successful CARGO_PROFILE_RELEASE_LTO=off link
 codegen-units = 1
 overflow-checks = true
