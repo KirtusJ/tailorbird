@@ -75,8 +75,12 @@ rechecked if the kernel font is revised or relocated.
 
 The REQUEST editor draws two rows of 78 columns at fixed geometry
 (960x540 surface, x=140, y=460, 10x20 glyph cells), enough to show every
-one of the 120 admitted printable ASCII bytes. No additional truncation,
-case folding or invisible suffix is permitted. The drawing method
+one of the 120 admitted printable ASCII bytes. No additional truncation
+or case folding is permitted. Trailing spaces still have blank source
+font glyphs, so the left margin now displays **BYTES n/120**: entering or
+removing a trailing space changes a visible byte count, even when the
+glyph raster is otherwise identical. This is a count cue, not a visual
+space marker or general accessibility certification. The drawing method
 preflights renderability, pixel-buffer extent and footprint before
 modifying pixels; the UI's Submit-enable condition also checks that the
 request can be shown. The US-PC Set-1 decoder now maps the normal shifted
@@ -129,9 +133,16 @@ Five additional host tests cover PT's exact `zxzAa` counterexample,
 numeric-key ordering, held Shift and repeat events, duplicate Enter
 while admission remains pending, and shortcuts. The QEMU smoke script
 also injects PT's same-batch QMP event stream and compares the **actual
-emulator scanout** with spaced typing of the same text and against
-the previous wrong `azx` sequence. The prior QEMU smoke checked only
-separately paced keys and could not detect this defect.
+emulator scanout** with the expected glyph pixels computed directly from
+the pinned 95-character source font, as well as against the previous wrong
+`azx` sequence. An earlier test incorrectly treated a *paced* capture
+containing `zxzA` as the `zxzAa` oracle and falsely reported failure.
+That incorrect reference and the failed CI runs remain preserved. The
+corrected source-font comparison passed on both PC and Q35 in
+[run 43810191329](https://github.com/KirtusJ/pcp-os/actions/runs/43810191329).
+The synthetic key-tracing feature was later removed; the **normal
+non-logging guest** reproduced the pass at exact source pin
+`3e39c1e1` in [run 43810706604](https://github.com/KirtusJ/pcp-os/actions/runs/43810706604).
 
 This is a source- and emulator-scoped keyboard improvement, not proof
 of locale-independent input, Unicode, international keyboard layouts,
@@ -140,6 +151,20 @@ kernel's 256-entry FIFO may still drop events under overload; the
 application does not yet receive an authenticated per-process dropped-
 event notification. PT must resolve that boundary for consequential
 live input and approve any new native device input contract.
+
+## Trailing whitespace in the request editor
+
+PT noted that even an exact-case ASCII font draws a space as a blank cell.
+The native REQUEST panel now has a visible `BYTES n/120` readback in the
+left margin. [Exact-source QEMU run 43811187850](https://github.com/KirtusJ/pcp-os/actions/runs/43811187850)
+checked the actual screen on **PC and Q35**: entering a trailing space
+preserved the text raster but changed the displayed count; Backspace
+restored its earlier count and pixels. The full-burst `zxzAa` source-font
+oracle, offline refusal and clean exit also passed. This only establishes
+a visible byte-length cue for printable ASCII under these modes. A
+cursor, per-whitespace markers, multi-line editor, Unicode, arbitrary
+accessibility tooling and PT's service-accepted exact request bytes
+remain separate qualification requirements.
 
 ## Pending submission admission and stable retry identity
 
@@ -331,12 +356,15 @@ and injection-like
 model output, exact and unrenderable permission metadata including target overflow and glyph aliases, matching/mismatched/unsolicited mode readback, stop request versus termination,
 wrong-task and out-of-order events, explicit grant decisions, stop/permission
 race, lost-service unconfirmed status, post-terminal rejection and bounded
-log order. The original 29 reducer cases passed on exact-commit
-GitHub Actions run 43802969930 in debug and release with a static
-native ELF build. The new editor/keyboard, ordered-input and submission-admission cases are authored and
-**not yet confirmed by the executor at this revision**. No kernel/QEMU
-boot, service integration, human usability or effective permission
-enforcement is established by passing host tests.
+log order. The 46 source tests **passed in debug and release**
+in [run 43811187850](https://github.com/KirtusJ/pcp-os/actions/runs/43811187850),
+which compiled the high-address native guest. Its separate QEMU job
+actually booted the *public legacy kernel* with the normal, model-free
+Tailorbird guest and passed both **PC and Q35** raster/input/exit smoke
+checks, including PT's original `zxzAa` key burst and the trailing-space
+count. These are emulator results, **not** the private integrated
+Qwen/TaskGate workflow, human usability testing, physical hardware
+operation or host-enforced permission and calibration.
 
 Remaining daily-driver prerequisites include persistent storage, concurrent
 GUI processes/window management, text input and accessibility support, keyboard
