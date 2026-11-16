@@ -88,7 +88,8 @@ New Rust tests compare *actual raster pixels* for case-sensitive paths
 and punctuation, assert visible last-byte glyphs at lengths 92, 93 and
 120, compare the stored text and the exact Submit intent, reject
 unrenderable strings without framebuffer writes, and cover all printable
-ASCII keyboard codes. A framebuffer test does **not** establish that a
+ASCII keyboard codes, including pairwise pixel distinction for all 95
+printable-ASCII glyphs. A framebuffer test does **not** establish that a
 human can recognize every glyph or that a QEMU guest submitted the
 correct bytes: PT must still inspect native screenshot pixels and
 kernel-service request readback before attaching a model or tool adapter.
@@ -239,7 +240,7 @@ location for the ongoing/single-request setting before any adapter is linked.
 
 ## Test coverage and open defects
 
-The Rust reducer originally had **29 passing cases at commit 18710a6d**, and the new exact-input renderer adds **7 additional authored cases** (36 total): offline refusal, text bounds,
+The Rust reducer originally had **29 passing cases at commit 18710a6d**, and the new exact-input renderer adds **8 additional authored cases** (37 total): offline refusal, text bounds,
 one-shot permission choice and contradictory-input rejection, stop-acknowledgment
 permission refusal and prompt retraction, reconnect reconciliation only
 after task-matched terminal readback, immediate task-ID replay refusal,
@@ -253,7 +254,7 @@ wrong-task and out-of-order events, explicit grant decisions, stop/permission
 race, lost-service unconfirmed status, post-terminal rejection and bounded
 log order. The original 29 reducer cases passed on exact-commit
 GitHub Actions run 43802969930 in debug and release with a static
-native ELF build. The 7 new editor/keyboard cases are authored and
+native ELF build. The 8 new editor/keyboard cases are authored and
 **not yet confirmed by the executor at this revision**. No kernel/QEMU
 boot, service integration, human usability or effective permission
 enforcement is established by passing host tests.
