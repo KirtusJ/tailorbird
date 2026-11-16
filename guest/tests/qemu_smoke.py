@@ -180,14 +180,33 @@ def run(kernel, guest, timeout, machine):
             def tap(key):
                 return [ev(key, True), ev(key, False)]
 
-            batch = []
-            batch += tap("z")
-            batch += tap("x")
-            batch += tap("z")
-            batch += [ev("shift", True)]
-            batch += tap("a")
-            batch += [ev("shift", False)]
-            batch += tap("a")
+            # Positive/negative discriminator for PS/2 queue saturation:
+            # two smaller QMP batches with a measured drain interval, but
+            # otherwise the identical key events and the same guest/parser.
+            # This does NOT replace the mandatory one-command adverse arm.
+            prefix = tap("z") + tap("x") + tap("z")
+            suffix = ([ev("shift", True)] + tap("a")
+                      + [ev("shift", False)] + tap("a"))
+            m.qmp("input-send-event", events=prefix)
+            time.sleep(0.40)
+            m.qmp("input-send-event", events=suffix)
+            time.sleep(0.40)
+            dims_split, split_pixels, hash_split = m.screenshot("pt_split_batches")
+            assert dims_split == dims
+            split_editor = crop(split_pixels, dims[0], editor)
+            print("PT_SPLIT_BATCH_CONTROL", json.dumps({
+                "split_matches_spaced": split_editor == ordered_editor,
+                "sha256": hash_split,
+                "spaced_sha256": hash_ordered,
+                "prefix_event_count": len(prefix),
+                "suffix_event_count": len(suffix),
+            }), flush=True)
+            # Clear the actual displayed editor even if the split-batch
+            # control failed. The baseline was empty before this arm.
+            for _ in range(6):
+                m.key("backspace")
+
+            batch = prefix + suffix
             m.qmp("input-send-event", events=batch)
             time.sleep(0.30)
             dims_burst, burst_pixels, hash_burst = m.screenshot("pt_ordered_burst")
@@ -213,22 +232,29 @@ def run(kernel, guest, timeout, machine):
                 " ": cell(base, 0),
             }
 
-            def nearest_glyph(value):
-                distances = []
+            def diagnose_glyph(value):
+                distances = {}
                 for name, template in observed_templates.items():
-                    mismatches = sum(
+                    distances[name] = sum(
                         value[i:i + 3] != template[i:i + 3]
                         for i in range(0, len(value), 3)
                     )
-                    distances.append((mismatches, name))
-                return sorted(distances)[0]
+                exact = [name for name, distance in distances.items()
+                         if distance == 0]
+                return {
+                    "exact_match": exact,
+                    "closest": min(distances.items(), key=lambda item: item[1]),
+                    "all_template_distances": distances,
+                }
 
-            diagnosed = [nearest_glyph(cell(burst_editor, i)) for i in range(8)]
+            diagnosed = [diagnose_glyph(cell(burst_editor, i)) for i in range(8)]
             print("PT_BATCH_DIAGNOSIS", json.dumps({
                 "observed_first_8_cells": diagnosed,
                 "spaced_sha256": hash_ordered,
                 "previous_bad_sha256": hash_collapsed,
                 "burst_sha256": hash_burst,
+                "split_sha256": hash_split,
+                "split_equals_spaced": split_editor == ordered_editor,
                 "burst_equals_old_bad": burst_editor == old_bad_editor,
                 "burst_equals_spaced": burst_editor == ordered_editor,
                 "serial_excerpt": m.serial()[-1400:],
