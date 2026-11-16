@@ -30,6 +30,10 @@ impl OrderedKeyboard {
         if code >= self.held.len() {
             return KeyOutcome::Unchanged;
         }
+        // Preserve typematic repeats for ordinary text, but a repeated
+        // Down must never be reinterpreted as a *new* Alt shortcut. This
+        // includes a letter held before Alt and repeated afterward.
+        let already_down = self.held[code];
         self.held[code] = down;
         if !down {
             return KeyOutcome::Unchanged;
@@ -47,6 +51,11 @@ impl OrderedKeyboard {
                 _ => None,
             };
             if let Some(a) = action {
+                // Commands are edge-triggered. A held text key followed by
+                // Alt and an auto-repeat is *not* an explicit permission
+                // decision, Stop, mode switch or retry. A release and fresh
+                // press while Alt is held is permitted.
+                if already_down { return KeyOutcome::Unchanged; }
                 let _ = ui.intent(a);
                 return KeyOutcome::Redraw;
             }
