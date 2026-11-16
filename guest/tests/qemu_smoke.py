@@ -143,6 +143,28 @@ def run(kernel, guest, timeout, machine):
             assert dims_a == dims
             lower = crop(pixels_a, dims[0], editor)
             assert lower != base, "Typing lowercase a did not change request pixels"
+
+            # Deliberately invisible trailing space: the text glyphs alone
+            # cannot distinguish "a" from "a ", but the displayed exact
+            # byte count must. It sits to the left of the editor raster.
+            counter = (20, 485, 135, 503)
+            count_a = crop(pixels_a, dims[0], counter)
+            m.key("spc")
+            dims_space, pixels_space, hash_space = m.screenshot("trailing_space")
+            assert dims_space == dims
+            assert crop(pixels_space, dims[0], editor) == lower, (
+                "A space glyph should preserve the visible text cells"
+            )
+            assert crop(pixels_space, dims[0], counter) != count_a, (
+                "Trailing space increased submitted bytes but no length cue"
+            )
+            m.key("backspace")
+            dims_no_space, pixels_no_space, _ = m.screenshot("space_removed")
+            assert dims_no_space == dims
+            assert crop(pixels_no_space, dims[0], counter) == count_a
+            assert crop(pixels_no_space, dims[0], editor) == lower
+            print("PASS: QEMU trailing-space byte-count changes visibly", flush=True)
+
             m.key("backspace")
             m.key("shift", "a")
             dims_A, pixels_A, hash_A = m.screenshot("upper")
@@ -331,6 +353,7 @@ def run(kernel, guest, timeout, machine):
             log = m.serial()
             print("SCREEN_SHA256", json.dumps({
                 "initial": first_hash, "lowercase": hash_a,
+                "trailing_space": hash_space,
                 "uppercase": hash_A, "ordered_spaced": hash_ordered,
                 "old_collapsed": hash_collapsed, "pt_burst": hash_burst,
                 "offline_enter": hash_enter,
