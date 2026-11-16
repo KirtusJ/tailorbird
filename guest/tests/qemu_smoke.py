@@ -150,6 +150,58 @@ def run(kernel, guest, timeout):
             upper = crop(pixels_A, dims[0], editor)
             assert upper != base and upper != lower, "A and a have identical request pixels"
 
+            # Preserve PT's adverse event: the previous guest reduced
+            # z,x,z,Shift+a,a in one raw QMP batch to "azx" because it
+            # scanned the collapsed pressed-key bitmap numerically.
+            # Compare actual scanout cells after spaced and batched events.
+            m.key("backspace")  # remove the uppercase A
+            for key in ("z", "x", "z"):
+                m.key(key)
+            m.key("shift", "a")
+            m.key("a")
+            dims_ordered, ordered_pixels, hash_ordered = m.screenshot("ordered_spaced")
+            assert dims_ordered == dims
+            ordered_editor = crop(ordered_pixels, dims[0], editor)
+            for _ in range(5):
+                m.key("backspace")
+            for key in ("a", "z", "x"):
+                m.key(key)
+            dims_collapsed, collapsed_pixels, hash_collapsed = m.screenshot("old_bad_order")
+            assert dims_collapsed == dims
+            old_bad_editor = crop(collapsed_pixels, dims[0], editor)
+            for _ in range(3):
+                m.key("backspace")
+
+            def ev(key, down):
+                return {"type": "key", "data": {
+                    "down": down, "key": {"type": "qcode", "data": key},
+                }}
+
+            def tap(key):
+                return [ev(key, True), ev(key, False)]
+
+            batch = []
+            batch += tap("z")
+            batch += tap("x")
+            batch += tap("z")
+            batch += [ev("shift", True)]
+            batch += tap("a")
+            batch += [ev("shift", False)]
+            batch += tap("a")
+            m.qmp("input-send-event", events=batch)
+            time.sleep(0.30)
+            dims_burst, burst_pixels, hash_burst = m.screenshot("pt_ordered_burst")
+            assert dims_burst == dims
+            burst_editor = crop(burst_pixels, dims[0], editor)
+            assert burst_editor != old_bad_editor, (
+                "PT counterexample: batched input collapsed to azx pixels"
+            )
+            assert burst_editor == ordered_editor, (
+                "PT counterexample: batch did not render zxzAa in original order"
+            )
+            print("PASS: QMP same-batch zxzAa matches spaced input, unlike old azx",
+                  flush=True)
+
             # The preview is deliberately disconnected. Enter must not start
             # a model service or create a privileged tool result.
             m.key("ret")
@@ -167,7 +219,9 @@ def run(kernel, guest, timeout):
             log = m.serial()
             print("SCREEN_SHA256", json.dumps({
                 "initial": first_hash, "lowercase": hash_a,
-                "uppercase": hash_A, "offline_enter": hash_enter,
+                "uppercase": hash_A, "ordered_spaced": hash_ordered,
+                "old_collapsed": hash_collapsed, "pt_burst": hash_burst,
+                "offline_enter": hash_enter,
             }), flush=True)
             print("SERIAL_TAIL", log[-2800:], flush=True)
             assert rc == 33, "Expected kernel normal self-test/debug exit 33, got " + str(rc)
