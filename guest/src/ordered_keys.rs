@@ -49,6 +49,15 @@ impl OrderedKeyboard {
         if code == 1 {
             return KeyOutcome::Exit;
         }
+        // Ctrl-modified keypresses are reserved for OS shortcuts or future
+        // explicitly implemented editor commands. Neither unsupported
+        // Ctrl+letters/backspace nor Ctrl+Enter may mutate the request.
+        // In particular Ctrl+Alt+A must not become the UI's Alt+A Allow
+        // intent. Key Down remains tracked so a held key cannot suddenly
+        // activate when Ctrl is released; release/fresh Down is required.
+        if self.held[29] {
+            return KeyOutcome::Unchanged;
+        }
         if self.held[56] {
             let action = match code {
                 50 => Some(Action::ToggleMode),
