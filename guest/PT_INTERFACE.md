@@ -31,7 +31,7 @@ until PT supplies a source pin and executable test receipt.
 | Ui::intent(Decide{task_id,request,allow}) | PT checks pending() for the immutable action, target, actor, active task, and fresh request identity, then calls decision(req,allow) | PermissionResolved for that exact request; no automatic grant |
 | BackendEvent::ToolResult | PT reads back actual tool result and renders as display data | Event with authentic task ID and increasing sequence; no implicit next tool call |
 | BackendEvent::Output | Model output is displayed, never parsed as a privileged instruction by this GUI | Approval and edit actions remain separate |
-| BackendEvent::Service(connected=false) | PT reconciles or fences previously running workers | UI marks active task UNCONFIRMED and disables privileged controls |
+| BackendEvent::Service(connected=false) | PT reconciles or fences previously running workers | UI marks active task UNCONFIRMED and disables dispatch while disconnected; reconnection does not certify stop |
 
 Do not let a GUI-issued boolean substitute for a verified capability. A
 verified event source, request/response correlation, capability presentation
@@ -52,6 +52,16 @@ A new edit, changed hash or changed target requires reauthorization.
 ## Stop, mode and offline invariants
 
 - Keep Stop and the ongoing/single-request control visible at all times.
+- After a service reconnects with an unresolved task, the GUI offers an
+  exact task-scoped Stop **intent** without enabling tool or permission
+  output. The task remains UNCONFIRMED until a newer matching Stopped,
+  Completed or Failed event from PT's trusted adapter. The adapter must
+  authenticate the event, prohibit task-ID reuse and perform any required
+  supervisor readback; a GUI state transition alone proves no effect.
+- Reconnecting is not a new task. Incoming output, tool results and
+  permission requests while UNCONFIRMED are rejected by the reducer.
+  The service must supply a separate, explicit reconciliation protocol
+  if it intends to resume or adopt a running task instead of terminating it.
 - Stop must interrupt active work through PT's real execution fence. A UI
   click, intent, exit from the GUI, or disappearance of output is not proof
   that the worker stopped. Use actual terminal readback and disclose residual
