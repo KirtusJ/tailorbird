@@ -104,6 +104,48 @@ Unicode paths. Do not generalize the new request-editor guarantee to
 output, full-source editing, immutable-grant disclosure, mouse input
 or the distinct integrated desktop renderer reported by PT.
 
+## Pending submission admission and stable retry identity
+
+A source-first adversarial review by Director PT at [PCP-OS issue #132 comment
+6907654034](https://github.com/KirtusJ/pcp-os/issues/132#issuecomment-6907654034)
+found that two rapid Enter presses could emit two Submit intents before any
+Started reply. This is a reducer-level defect, not evidence of two actual
+backend tasks in the deliberately disconnected preview.
+
+The UI now assigns a monotonic **in-process idempotency_key** for each
+submitted request, snapshots the exact original prompt and mode, and sets
+`pending_submit` BEFORE returning its first `Intent::Submit`. Further
+Enter presses and mode changes are refused pending a matching service
+readback. While pending, native text editing is frozen so the visible
+request remains the same as the retry payload. A **manual Alt+R** retry
+can emit only the *same* key, prompt and mode, never a new request. The
+UI never automatically retries after a timeout or reconnect.
+
+The proposed trusted adapter must emit
+`SubmissionStarted{idempotency_key,task_id,seq}` or
+`SubmissionRejected{idempotency_key}`. An unrelated `Started`, a
+wrong key, or an out-of-order reply cannot settle pending admission.
+Connection loss and restoration preserve the pending submission, with
+status unconfirmed until a matched service response. An explicitly
+rejected request can be submitted anew under a **new** local key.
+
+**This is not service-side idempotency or authentication.** A local
+counter alone is not globally unique: PT must scope it to a durable
+authenticated actor/session epoch, reject replay atomically and return
+the existing task identity on an acknowledged retry. The on-disk
+TaskGate must decide whether an earlier attempt started or effected
+anything, including when its acknowledgment was lost. No GUI timer,
+visible state, or repeated click makes an uncertain operation safe.
+A matching `SubmissionStarted` is a reported task admission, **not**
+evidence of an authorized filesystem write or completion.
+
+Four new unit controls assert double Enter refusal, delayed/wrong
+admission, disconnect-and-reconnect with unchanged retry payload/key,
+and local-key exhaustion without wrap. At this revision the total
+source suite is **41 authored tests** (37 previously verified + 4
+new), with no claim that the new source passed until the pinned CI
+run has actually executed.
+
 ## The proposed service-facing contract
 
 The library's Action produces only an Intent. A submit, per-task Stop,
@@ -240,7 +282,7 @@ location for the ongoing/single-request setting before any adapter is linked.
 
 ## Test coverage and open defects
 
-The Rust reducer originally had **29 passing cases at commit 18710a6d**, and the new exact-input renderer adds **8 additional authored cases** (37 total): offline refusal, text bounds,
+The Rust reducer originally had **29 passing cases at commit 18710a6d**, and the exact-input renderer added **8 cases**, and the pending-submission race adds **4 cases** (41 total): offline refusal, text bounds,
 one-shot permission choice and contradictory-input rejection, stop-acknowledgment
 permission refusal and prompt retraction, reconnect reconciliation only
 after task-matched terminal readback, immediate task-ID replay refusal,
@@ -254,7 +296,7 @@ wrong-task and out-of-order events, explicit grant decisions, stop/permission
 race, lost-service unconfirmed status, post-terminal rejection and bounded
 log order. The original 29 reducer cases passed on exact-commit
 GitHub Actions run 43802969930 in debug and release with a static
-native ELF build. The 8 new editor/keyboard cases are authored and
+native ELF build. The new editor/keyboard and submission-admission cases are authored and
 **not yet confirmed by the executor at this revision**. No kernel/QEMU
 boot, service integration, human usability or effective permission
 enforcement is established by passing host tests.
