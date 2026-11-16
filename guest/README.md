@@ -75,8 +75,11 @@ rechecked if the kernel font is revised or relocated.
 
 The REQUEST editor draws two rows of 78 columns in a logical 960×540 layout
 (x=140, y=460, 10×20 cells). The guest draws directly at the inherited display
-resolution and respects its row stride. At 1920×1080 the cells occupy 20×40
-physical pixels. The two rows have room for every
+resolution and respects its row stride. At 1920×1080 the default Fit view uses
+20×40 physical pixels per editor cell. Press F6 to switch to the centered
+Compact view with 10×20 cells, or press it again to restore Fit. On small
+screens both views shrink to keep the full layout visible. The choice lasts
+until Tailorbird closes. The two rows have room for every
 one of the 120 admitted printable ASCII bytes. No additional truncation
 or case folding is permitted. Trailing spaces still have blank source
 font glyphs, so the left margin now displays **BYTES n/120**: entering or

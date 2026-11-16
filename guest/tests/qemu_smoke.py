@@ -20,14 +20,16 @@ DEFAULT_TIMEOUT = 100.0
 
 
 class Qemu:
-    def __init__(self, kernel: pathlib.Path, guest: pathlib.Path, folder: pathlib.Path, machine: str):
+    def __init__(self, kernel: pathlib.Path, guest: pathlib.Path, folder: pathlib.Path, machine: str,
+                 boot_line: str = "auto=tailorbird then=off", display_args=None):
         self.folder = folder
         self.serial_path = folder / "serial.log"
         cmd = [
             "qemu-system-x86_64", "-machine", machine, "-cpu", "max", "-m", "256M",
             "-kernel", str(kernel), "-initrd", str(guest),
-            "-append", "auto=tailorbird then=off",
-            "-display", "none", "-vga", "std", "-nic", "none",
+            "-append", boot_line,
+            "-display", "none", *(display_args if display_args is not None else ["-vga", "std"]),
+            "-nic", "none",
             "-serial", "file:" + str(self.serial_path),
             "-no-reboot", "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04",
             "-qmp", "stdio",

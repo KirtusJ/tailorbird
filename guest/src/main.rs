@@ -46,7 +46,7 @@ fn decimal_u64<'a>(mut value: u64, buf: &'a mut [u8; 20]) -> &'a str {
 
 fn paint(display: &mut Display, ui: &Ui) {
     display.draw(|pixels, width, height, pitch| {
-        let mut f = Frame::new(pixels, width, height, pitch, GROUND);
+        let mut f = Frame::new(pixels, width, height, pitch, GROUND, ui.compact_view);
         paint_frame(&mut f, ui);
     });
 }
@@ -157,6 +157,7 @@ fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
         label(f, 146, 470, "INPUT NOT DISPLAYABLE", 1, BAD);
     }
     label(f, 22, 513, "ENTER SUBMIT   ALT R RETRY   ALT M MODE   ALT S STOP   ESC EXIT", 1, SOFT);
+    label(f, 418, 513, if ui.compact_view { "F6: COMPACT" } else { "F6: FIT" }, 1, TEAL);
     label(f, 535, 513, ui.notice.as_str(), 1, AMBER);
 }
 

@@ -38,6 +38,14 @@ impl OrderedKeyboard {
         if !down {
             return KeyOutcome::Unchanged;
         }
+        // F6 changes presentation once per physical press.
+        if code == 64 && !self.held[56] && !self.held[29] && !self.held[42] && !self.held[54] {
+            if already_down {
+                return KeyOutcome::Unchanged;
+            }
+            ui.compact_view = !ui.compact_view;
+            return KeyOutcome::Redraw;
+        }
         if code == 1 {
             return KeyOutcome::Exit;
         }
@@ -107,6 +115,29 @@ mod tests {
     fn stroke(keys: &mut OrderedKeyboard, ui: &mut Ui, code: usize) {
         keys.event(code, true, ui);
         keys.event(code, false, ui);
+    }
+
+    #[test]
+    fn f6_preserves_input_and_requires_a_fresh_unmodified_press() {
+        let mut keys = OrderedKeyboard::new();
+        let mut ui = Ui::new();
+        stroke(&mut keys, &mut ui, 30);
+        assert_eq!(keys.event(64, true, &mut ui), KeyOutcome::Redraw);
+        assert!(ui.compact_view);
+        assert_eq!(keys.event(64, true, &mut ui), KeyOutcome::Unchanged);
+        keys.event(64, false, &mut ui);
+        for modifier in [29, 42, 54, 56] {
+            keys.event(modifier, true, &mut ui);
+            keys.event(64, true, &mut ui);
+            keys.event(modifier, false, &mut ui);
+            keys.event(64, true, &mut ui);
+            keys.event(64, false, &mut ui);
+            assert!(ui.compact_view);
+        }
+        stroke(&mut keys, &mut ui, 64);
+        assert!(!ui.compact_view);
+        assert_eq!(ui.input.as_str(), "a");
+        assert!(ui.pending_submit.is_none());
     }
 
     #[test]

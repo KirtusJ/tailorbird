@@ -22,11 +22,12 @@ impl<'a> Frame<'a> {
         height: usize,
         pitch: usize,
         ground: u32,
+        compact: bool,
     ) -> Self {
         assert!(width > 0 && height > 0 && width <= pitch && height <= pixels.len() / pitch);
         let whole = (width / 960).min(height / 540);
         let (scale, divisor) = if whole > 0 {
-            (whole, 1)
+            (if compact { 1 } else { whole }, 1)
         } else if width * 540 < height * 960 {
             (width, 960)
         } else {
@@ -154,6 +155,20 @@ mod tests {
     use super::*;
     use std::vec;
     #[test]
+    fn compact_view_fits_the_screen_and_preserves_visible_bounds() {
+        for (w, h, geometry) in [
+            (800, 600, (0, 75, 800, 525)),
+            (1024, 768, (32, 114, 992, 654)),
+            (1920, 1080, (480, 270, 1440, 810)),
+            (2560, 1440, (800, 450, 1760, 990)),
+        ] {
+            let mut pixels = vec![0; w * h];
+            let f = Frame::new(&mut pixels, w, h, w, 0, true);
+            assert_eq!((f.x(0), f.y(0), f.x(960), f.y(540)), geometry);
+        }
+    }
+
+    #[test]
     fn clips_at_visible_edges_and_leaves_row_padding_untouched() {
         for (w, h, left, top) in [
             (800, 600, 0, 75),
@@ -164,7 +179,7 @@ mod tests {
             let pitch = w + 9;
             let mut pixels = vec![0xdeadbeef; pitch * h + 2];
             {
-                let mut f = Frame::new(&mut pixels[1..1 + pitch * h], w, h, pitch, 0x10283f);
+                let mut f = Frame::new(&mut pixels[1..1 + pitch * h], w, h, pitch, 0x10283f, false);
                 assert_eq!((f.left, f.top), (left, top));
                 f.rect(-10, -10, 990, 565, 0xabcdef);
                 f.text(22, 16, "TAILORBIRD", 3, 0xff01);
@@ -186,14 +201,14 @@ mod tests {
         let upper = prefix + "_A";
         let render = |message: &str| {
             let mut pixels = vec![0; 960 * 540];
-            let mut f = Frame::new(&mut pixels, 960, 540, 960, 0);
+            let mut f = Frame::new(&mut pixels, 960, 540, 960, 0, false);
             f.task_output(190, "OUTPUT", message, false, 0xff00, 0xffffff);
             pixels
         };
         let a = render(&lower);
         let b = render(&upper);
         let mut reference = vec![0; 960 * 540];
-        let mut f = Frame::new(&mut reference, 960, 540, 960, 0);
+        let mut f = Frame::new(&mut reference, 960, 540, 960, 0, false);
         f.glyph(914, 190, 6, 10, b'_', 0xffffff);
         f.glyph(920, 190, 6, 10, b'a', 0xffffff);
         let mut case_difference = false;
@@ -213,7 +228,7 @@ mod tests {
         // to be lit. No model bytes can write into x=404 through this API.
         let render = |lossy: bool| {
             let mut pixels = vec![0; 960 * 540];
-            let mut f = Frame::new(&mut pixels, 960, 540, 960, 0);
+            let mut f = Frame::new(&mut pixels, 960, 540, 960, 0, false);
             f.task_output(190, "OUTPUT", "[LOSSY] go??", lossy, 0xffffff, 0xffffff);
             pixels
         };
@@ -241,7 +256,7 @@ mod tests {
             let w = 960 * k;
             let h = 540 * k;
             let mut pixels = vec![0; w * h];
-            let mut f = Frame::new(&mut pixels, w, h, w, 0);
+            let mut f = Frame::new(&mut pixels, w, h, w, 0, false);
             f.glyph(140, 460, 10, 20, b'a', 0xffffff);
             let glyph = usize::from(b'a' - font::FIRST);
             let len = 200 * k * k;
