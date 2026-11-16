@@ -4,7 +4,7 @@
 // Native graphical *offline preview*. No model, tool service or transport is linked.
 // This is a separate guest process using PCP OS' existing display and keyboard grants.
 use pcp_game_guest::{exit, ink::Frame, sleep_us, Display};
-use tailorbird_ui::{Action, Mode, Model, TaskState, Ui};
+use tailorbird_ui::{Action, Model, Ui};
 
 const W: usize = 960;
 const H: usize = 540;
@@ -40,7 +40,8 @@ fn paint(display: &mut Display, ui: &Ui) {
     f.rect(0, 0, W as i32, 72, PANEL);
     label(&mut f, 22, 16, "TAILORBIRD", 3, TEAL);
     label(&mut f, 260, 23, "LOCAL TASK SURFACE", 2, TEXT);
-    label(&mut f, 737, 27, "NO SERVICE", 2, BAD);
+    label(&mut f, 737, 27, if ui.connected { "SERVICE LINK" } else { "NO SERVICE" }, 2,
+          if ui.connected { GOOD } else { BAD });
 
     // Mode and Stop are always visible even if the model is missing.
     f.rect(20, 94, 280, 352, PANEL);
