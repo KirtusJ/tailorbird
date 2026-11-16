@@ -242,6 +242,11 @@ pub struct Ui {
     /// grant without this exact Allow choice cannot be represented as consent.
     /// This field is presentation evidence, not an authorization credential.
     pub decision_choice: Option<bool>,
+    /// Sticky, in-process display warning after a reported grant whose
+    /// consent or ordering cannot be established here. Not an audit record,
+    /// not durable across restarts, and never cleared by a terminal event,
+    /// service refresh or a new task. PT owns trusted journal reconciliation.
+    pub effect_uncertain: bool,
     pub notice: Text<84>,
     lines: [Line; LOG_LIMIT],
     count: usize,
@@ -255,7 +260,7 @@ impl Ui {
             model: Model::Unknown, connected: false, service_epoch: 0,
             task: Task { id: 0, seq: 0, state: TaskState::Idle },
             stop_intent_task: None, permission: None, decision_pending: None, decision_choice: None,
-            notice: Text::new(),
+            effect_uncertain: false, notice: Text::new(),
             lines: [Line::empty(); LOG_LIMIT], count: 0,
         }
     }
@@ -282,7 +287,24 @@ impl Ui {
         }
     }
     pub fn lines(&self) -> &[Line] { &self.lines[..self.count] }
-    fn notice(&mut self, s: &str) { self.notice = Text::display(s); }
+    fn notice(&mut self, s: &str) {
+        // A later STOPPED/COMPLETED receipt, mode update, new task or
+        // service reconnect does not retroactively establish when an
+        // earlier effect occurred. Keep the warning visible alongside the
+        // normal state labels without allowing a long status string to
+        // clip the warning at the right screen edge (x=535, 6px/cell).
+        if self.effect_uncertain && !s.contains("EFFECT UNKNOWN") {
+            let mut msg = Text::<84>::new();
+            let mut count = 0usize;
+            for b in b"EFFECT UNKNOWN | ".iter().copied().chain(s.bytes()) {
+                if count == 70 { break; }
+                if msg.push_ascii(b) { count += 1; }
+            }
+            self.notice = msg;
+        } else {
+            self.notice = Text::display(s);
+        }
+    }
     /// The full permission action/target must fit the literal case-sensitive
     /// 10x20 inspector. A separate three-digit count discloses even spaces.
     /// Non-ASCII/control metadata still fails closed; never normalize a path
@@ -578,6 +600,7 @@ impl Ui {
                 self.decision_pending = None;
                 self.decision_choice = None;
                 if unexplained_grant || stop_race {
+                    self.effect_uncertain = true;
                     self.task.state = TaskState::Unconfirmed;
                     self.log(seq, "ANOMALY", if stop_race {
                         "GRANT REPORTED WITH STOP PENDING"
