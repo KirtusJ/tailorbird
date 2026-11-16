@@ -83,10 +83,12 @@ A new edit, changed hash or changed target requires reauthorization.
   roll back or erase that event.
 - After a service reconnects with an unresolved task, the GUI offers an
   exact task-scoped Stop **intent** without enabling tool or permission
-  output. The task remains UNCONFIRMED until a newer matching Stopped,
-  Completed or Failed event from PT's trusted adapter. The adapter must
-  authenticate the event, prohibit task-ID reuse and perform any required
-  supervisor readback; a GUI state transition alone proves no effect.
+  output. It accepts a newer, task-matched StopAccepted acknowledgment and
+  then displays STOP REQUESTED, **not** STOPPED. Only a newer matching
+  Stopped, Completed or Failed event from PT's trusted adapter can resolve
+  the terminal state. The adapter must authenticate the event, prohibit
+  task-ID reuse and perform any required supervisor readback; a GUI state
+  transition alone proves no effect.
 - Reconnecting is not a new task. Incoming output, tool results and
   permission requests while UNCONFIRMED are rejected by the reducer.
   The service must supply a separate, explicit reconciliation protocol
