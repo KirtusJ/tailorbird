@@ -100,6 +100,15 @@ fn paint(display: &mut Display, ui: &Ui) {
 
     f.rect(20, 458, 920, 48, PANEL);
     label(&mut f, 32, 469, "REQUEST", 1, TEAL);
+    // Trailing ASCII spaces have blank font cells. Display the exact byte
+    // count alongside the editor so foo and foo-space are distinguishable.
+    // These count glyphs are in the x<140 margin, outside the text raster.
+    label(&mut f, 32, 489, "BYTES", 1, TEAL);
+    let mut count_buf = [0u8; 10];
+    label(&mut f, 70, 489,
+          pcp_game_guest::digits(ui.input.as_str().len() as u32, &mut count_buf),
+          1, TEXT);
+    label(&mut f, 102, 489, "/120", 1, SOFT);
     // The text submitted to the service is the *exact* text painted here,
     // not the uppercased 5x7 label. Two lines at 78 cells expose all 120
     // stored bytes, including case-sensitive paths and source punctuation.
