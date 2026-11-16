@@ -61,6 +61,25 @@ Stopped means the service reported termination, which itself still requires
 PT's supervisor-side readback to substantiate. Disconnect leaves an active
 task UNCONFIRMED. The UI never converts model-generated text into an action.
 
+**One-shot permission intent hardening (Session A revision):** once the person
+presses Allow or Deny for an identified pending request, the reducer records
+`decision_pending` and refuses repeat or contradictory button presses for
+that request until a matching, newer `PermissionResolved` event is received
+from PT's trusted service. The visible panel changes from `ALT A / ALT D` to
+`DECISION SENT` while awaiting acknowledgment. Stop/terminal/disconnect
+paths disable or discard pending choices, without implying those choices were
+committed, canceled or enforced by the service. This avoids duplicate GUI
+dispatches but **does not provide idempotency or authorization** by itself.
+PT must still bind user, task, immutable action, destination and request to
+one service-side decision, including replay/late-message rejection.
+
+**Unresolved neighboring risk:** repeated Submit or Stop intents are still
+possible before the service supplies its first event receipt. The trusted
+adapter needs idempotency keys, reliable correlation/reconciliation and
+cancellation fences; GUI state alone cannot safely solve transport retries.
+On reconnect an active task remains UNCONFIRMED pending PT's authoritative
+resync design. No claim of recovery or termination is made.
+
 BackendEvent carries monotonically increasing per-task sequence numbers.
 Stale, wrong-task and post-terminal events are refused by the UI reducer.
 Task text is bounded and normalized to printable ASCII for this font.
@@ -78,7 +97,7 @@ location for the ongoing/single-request setting before any adapter is linked.
 
 ## Test coverage and open defects
 
-The Rust unit suite includes offline refusal, text bounds and injection-like
+The Rust unit suite now includes 14 authored cases: offline refusal, text bounds, one-shot permission choice and contradictory-input rejection, task stop/disconnection, and injection-like
 model output, deferred mode readback, stop request versus termination,
 wrong-task and out-of-order events, explicit grant decisions, stop/permission
 race, lost-service unconfirmed status, post-terminal rejection and bounded
