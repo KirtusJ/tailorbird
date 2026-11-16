@@ -261,7 +261,30 @@ impl Ui {
         exact_ascii::can_show_permission(action, target)
     }
     fn log(&mut self, seq: u64, kind: &'static str, message: &str) {
-        let line = Line { seq, kind, message: Text::display(message) };
+        // The service can return arbitrary-length UTF-8, while this fixed
+        // public guest retains only 84 printable ASCII cells per row.
+        // Without an unmistakable *leading* marker, truncation or replacing
+        // Unicode/control bytes with '?' can impersonate an exact service
+        // result. Mark the stored preview as lossy before any source bytes.
+        // This is display provenance, not a trusted effect/readback receipt.
+        const MARKER: &[u8; 8] = b"[LOSSY] ";
+        const ROW_CAP: usize = 84;
+        let altered = message.len() > ROW_CAP
+            || message.bytes().any(|b| !(0x20..=0x7e).contains(&b));
+        let shown = if altered {
+            let mut out = Text::<ROW_CAP>::new();
+            for &b in MARKER {
+                let _ = out.push_ascii(b);
+            }
+            for b in message.bytes().take(ROW_CAP - MARKER.len()) {
+                let printable = if (0x20..=0x7e).contains(&b) { b } else { b'?' };
+                let _ = out.push_ascii(printable);
+            }
+            out
+        } else {
+            Text::<ROW_CAP>::display(message)
+        };
+        let line = Line { seq, kind, message: shown };
         if self.count < LOG_LIMIT {
             self.lines[self.count] = line;
             self.count += 1;
