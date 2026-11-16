@@ -39,6 +39,27 @@ and conflict behavior are PT's service work. TaskGate belongs outside the
 untrusted model process. The GUI will need an authenticated transport that
 does not yet exist in the pinned guest/kernel.
 
+## Exact visual disclosure before any Allow
+
+This UI's native 5x7 renderer does **not** preserve lowercase case,
+underscore, backslash, colon, non-ASCII and control characters.
+A truncated or case-folded pathname must not be presented as the exact
+destination for a potentially privileged write. The reducer therefore
+fails closed on `PermissionNeeded` if the full action/target cannot
+be represented literally and within the fixed text limits; an
+ambiguous request cannot emit `Intent::Decide(allow=true)` or
+`Intent::Decide(allow=false)`. The state becomes `Unconfirmed`,
+with an anomaly in the UI and Stop still offered. The guest now draws
+ACTION and TARGET on different rows so even maximum-length allowed
+strings stay visible. This is intentionally restrictive: lowercase
+Unix paths, underscores, Unicode and Windows path separators are not
+yet eligible for confirmation. PT must still default-deny undecidable
+requests, apply its independent stop fence and provide an eventual
+readback. A future full text viewer must demonstrate exact case,
+controls, Unicode, overflow, action identity and actual immutable
+source-hash disclosure in the approval workflow. Never silently
+normalize a display string and treat it as informed consent.
+
 ## Service-reported grant contradicting UI consent
 
 A `PermissionNeeded` event means the UI is awaiting a human decision for
