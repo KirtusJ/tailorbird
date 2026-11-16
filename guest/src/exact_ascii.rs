@@ -178,6 +178,22 @@ mod tests {
     }
 
     #[test]
+    fn every_printable_ascii_glyph_has_distinct_pixels() {
+        // Every admitted ASCII character should have a unique raster so that
+        // visually different input bytes cannot become literally identical
+        // pixels. Human legibility still requires separate guest testing.
+        for a in 0..95usize {
+            for b in (a + 1)..95usize {
+                assert_ne!(
+                    kernel_font::GLYPHS[a], kernel_font::GLYPHS[b],
+                    "two ASCII bytes share identical glyph pixels: {} and {}",
+                    a + 32, b + 32,
+                );
+            }
+        }
+    }
+
+    #[test]
     fn all_submittable_bytes_at_92_93_and_120_are_drawn() {
         for len in [92, 93, 120] {
             let prompt = "x".repeat(len - 1) + "Z";
