@@ -62,6 +62,12 @@ impl OrderedKeyboard {
             return KeyOutcome::Unchanged;
         }
         if code == 28 {
+            // Submit is an admission request, not ordinary text. A held
+            // Enter can outlive a service refusal or an offline-to-online
+            // transition; typematic must not mint a new key or turn an
+            // earlier unavailable action into consent. Require release
+            // and a genuinely new Down, as for Alt permission shortcuts.
+            if already_down { return KeyOutcome::Unchanged; }
             let _ = ui.intent(Action::Submit);
             return KeyOutcome::Redraw;
         }
