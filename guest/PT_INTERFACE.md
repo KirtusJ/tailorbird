@@ -192,6 +192,37 @@ A new edit, changed hash or changed target requires reauthorization.
   window, general IPC, durable model files and accessible pointer/text input
   require separate OS functionality.
 
+## Mouse/pointer capability and trust boundary
+
+The principal explicitly required **mouse/peripherals** as part of
+daily-driver PCP-OS. The public master at
+`67e57f924ce0e2c86f9250c567796b745ed633c8` exposes
+`/dev/kbd` and `/dev/fb0` but no equivalent mouse/HID API.
+The new `apps/tailorbird/guest/src/pointer.rs` is intentionally a
+**device-independent, unconnected UI adapter**, not a kernel driver.
+It consumes decoded local coordinates and primary press/release only;
+Mode/Stop rectangles share exact coordinates with the rendered buttons.
+It refuses stale and disabled gestures, and intentionally has **no**
+pointer path to `Decide(allow)`, Deny or Submit.
+
+**PT/B contract request:** Assign the kernel/driver owner for
+USB xHCI + HID, PS/2 mouse, relevant Bluetooth/wireless peripherals,
+device enumeration and capability-gated, process-isolated input
+delivery. The trusted OS input service must specify absolute/relative
+coordinates, scaling/clipping, event ordering, button source,
+pointer capture, device unplug/replug, display ownership change
+and lost-event reporting. Avoid giving the Qwen worker or arbitrary
+network messages a route to inject human input events.
+
+When that contract is available, A can wire the native GUI to a real
+device and validate QMP mouse input/cursor and physical HID input.
+A new class of nonvisual interactive permission controls must **not**
+be granted merely because a pointer hit a rectangle. Exact human-visible
+proposal/actor and PT destination enforcement remain independent.
+This pointer module's host tests do not count as a mouse-driver
+acceptance test; keep mouse and peripherals **OPEN** until actual
+device event, screenshot and negative control receipts exist.
+
 ## Test handoff to PT
 
 1. Pin and inspect the actual Rust TaskGate implementation and its tests.
