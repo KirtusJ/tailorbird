@@ -49,7 +49,8 @@ fn paint(display: &mut Display, ui: &Ui) {
     label(&mut f, 38, 147, ui.model.label(), 2,
           if ui.model == Model::Ready { GOOD } else { AMBER });
     label(&mut f, 38, 187, "MODE", 2, TEAL);
-    f.rect(34, 218, 254, 58, GROUND);
+    let mode_rect = tailorbird_ui::pointer::MODE_RECT;
+    f.rect(mode_rect.x, mode_rect.y, mode_rect.width, mode_rect.height, GROUND);
     label(&mut f, 48, 232, ui.mode.label(), 2, TEXT);
     if ui.mode_pending.is_some() {
         label(&mut f, 40, 287, "CHANGE NOT CONFIRMED", 1, AMBER);
@@ -57,7 +58,9 @@ fn paint(display: &mut Display, ui: &Ui) {
         label(&mut f, 40, 287, "ALT M CHANGE MODE", 1, SOFT);
     }
 
-    f.rect(34, 318, 254, 72, if ui.controls().stop_enabled { BAD } else { GROUND });
+    let stop_rect = tailorbird_ui::pointer::STOP_RECT;
+    f.rect(stop_rect.x, stop_rect.y, stop_rect.width, stop_rect.height,
+           if ui.controls().stop_enabled { BAD } else { GROUND });
     label(&mut f, 48, 331, "STOP", 3, TEXT);
     label(&mut f, 48, 361, ui.task.state.label(), 1, SOFT);
     label(&mut f, 38, 408, "ALT S STOP TASK", 1, SOFT);
