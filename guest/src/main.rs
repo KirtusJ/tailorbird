@@ -79,9 +79,15 @@ fn paint(display: &mut Display, ui: &Ui) {
     }
     if let Some(grant) = ui.permission {
         f.rect(335, 385, 585, 52, GROUND);
-        label(&mut f, 342, 393, "PERMISSION REQUIRED", 1, AMBER);
-        label(&mut f, 342, 410, grant.action.as_str(), 1, TEXT);
-        label(&mut f, 527, 410, grant.target.as_str(), 1, TEXT);
+        // Put the exact action and target on separate rows. The underlying
+        // 5x7 font advances 6 px/character at scale 1. 48 action bytes
+        // from x=390 end at 678; 72 target bytes end at x=822, both
+        // within the x=335..920 permission panel with no overlap.
+        label(&mut f, 342, 392, "PERMISSION REQUIRED", 1, AMBER);
+        label(&mut f, 342, 406, "ACTION", 1, TEAL);
+        label(&mut f, 390, 406, grant.action.as_str(), 1, TEXT);
+        label(&mut f, 342, 420, "TARGET", 1, TEAL);
+        label(&mut f, 390, 420, grant.target.as_str(), 1, TEXT);
         let decision_label = if ui.controls().decision_enabled {
             "ALT A / ALT D"
         } else if ui.decision_pending.is_some() {
@@ -89,7 +95,7 @@ fn paint(display: &mut Display, ui: &Ui) {
         } else {
             "INPUT LOCKED"
         };
-        label(&mut f, 760, 410, decision_label, 1, SOFT);
+        label(&mut f, 760, 392, decision_label, 1, SOFT);
     }
 
     f.rect(20, 458, 920, 48, PANEL);
