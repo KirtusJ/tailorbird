@@ -126,10 +126,13 @@ pub struct Line {
     pub seq: u64,
     pub kind: &'static str,
     pub message: Text<84>,
+    /// UI-computed preview loss, independent of untrusted message bytes.
+    /// This is not authentication, a complete log, or an effect receipt.
+    pub preview_lossy: bool,
 }
 impl Line {
     pub const fn empty() -> Self {
-        Self { seq: 0, kind: "", message: Text::new() }
+        Self { seq: 0, kind: "", message: Text::new(), preview_lossy: false }
     }
 }
 
@@ -284,7 +287,7 @@ impl Ui {
         } else {
             Text::<ROW_CAP>::display(message)
         };
-        let line = Line { seq, kind, message: shown };
+        let line = Line { seq, kind, message: shown, preview_lossy: altered };
         if self.count < LOG_LIMIT {
             self.lines[self.count] = line;
             self.count += 1;
