@@ -86,6 +86,16 @@ write. An effect that was approved and executed before the stop fence
 may already have occurred. The service must record its actual write/stop
 ordering and report the resulting artifact independently.
 
+**Completed-task ID replay hardening:** a service event that attempts to
+start the **immediately preceding task ID** again is rejected, even with a
+larger sequence number. A matching terminal state and displayed final event
+are not erased. Two new tests cover completed/stopped/failed tasks and a
+fresh, distinct next task. This is only an adjacent-ID replay defense in
+the presentation layer. It does **not** enforce global task-ID uniqueness,
+detect reuse of older task IDs from earlier history, or authenticate events.
+PT's trusted service must issue fresh IDs within a durable epoch and
+reject replay before any system effect or terminal claim.
+
 **Unresolved neighboring risk:** repeated Submit or Stop intents are still
 possible before the service supplies its first event receipt. The trusted
 adapter needs idempotency keys, reliable correlation/reconciliation and
@@ -118,10 +128,11 @@ location for the ongoing/single-request setting before any adapter is linked.
 
 ## Test coverage and open defects
 
-The Rust unit suite now includes **18 authored cases**: offline refusal, text bounds,
+The Rust unit suite now includes **20 authored cases**: offline refusal, text bounds,
 one-shot permission choice and contradictory-input rejection, stop-acknowledgment
 permission refusal and prompt retraction, reconnect reconciliation only
-after task-matched terminal readback, conservative Stop
+after task-matched terminal readback, immediate task-ID replay refusal,
+conservative Stop
 intents while the recovered status remains unknown, task stop/disconnection,
 and injection-like
 model output, deferred mode readback, stop request versus termination,
