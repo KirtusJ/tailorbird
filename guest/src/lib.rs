@@ -247,19 +247,12 @@ impl Ui {
     }
     pub fn lines(&self) -> &[Line] { &self.lines[..self.count] }
     fn notice(&mut self, s: &str) { self.notice = Text::display(s); }
-    /// The native 5x7 font has only uppercase, digits, slash, dash, dot,
-    /// plus and blank space. The generic label renderer also folds case.
-    /// Refuse GUI consent when either exact field cannot be shown, rather
-    /// than approving a clipped or visually aliased destination.
-    fn permission_field_visible(s: &str, limit: usize, allow_space: bool) -> bool {
-        !s.is_empty() && s.len() <= limit && s.bytes().all(|b| {
-            matches!(b, b'A'..=b'Z' | b'0'..=b'9' | b'/' | b'-' | b'.' | b'+')
-                || (allow_space && b == b' ')
-        }) && (!allow_space || (!s.starts_with(' ') && !s.ends_with(' ')))
-    }
+    /// The full permission action/target must fit the literal case-sensitive
+    /// 10x20 inspector. A separate three-digit count discloses even spaces.
+    /// Non-ASCII/control metadata still fails closed; never normalize a path
+    /// before asking for a human choice. The trusted effect gate remains PT's.
     fn permission_details_visible(action: &str, target: &str) -> bool {
-        Self::permission_field_visible(action, 48, true)
-            && Self::permission_field_visible(target, 72, false)
+        exact_ascii::can_show_permission(action, target)
     }
     fn log(&mut self, seq: u64, kind: &'static str, message: &str) {
         let line = Line { seq, kind, message: Text::display(message) };
@@ -854,14 +847,14 @@ mod tests {
         assert!(u.permission.is_none());
     }
     #[test]
-    fn visually_aliased_targets_and_actions_cannot_offer_consent() {
+    fn controls_non_ascii_and_empty_permission_fields_cannot_offer_consent() {
         let invalid: [(&str, &str); 6] = [
-            ("WRITE FILE", "/data/file"),      // font folds lowercase to uppercase
-            ("WRITE FILE", "/DATA/FILE_NAME"), // underscore has no glyph
-            ("WRITE_FILE", "/DATA/FILE"),
-            ("WRITE FILE", "/DATA/FILE NAME"), // blank is ambiguous in a path
-            ("WRITE FILE", "/DATA/FILE\\NAME"), // backslash has no glyph
-            ("WRITE FILE", ""),
+            ("WRITE", "/data/file\nother"), // newline must not conceal a suffix
+            ("WRITE", "/data/🦜"), // UTF-8 not supported by this native viewer
+            ("WRITE", "/data/\tfile"), // tab has no literal printable glyph
+            ("WRITE\nDELETE", "/data/file"),
+            ("WRITE", ""),
+            ("", "/data/file"),
         ];
         for (action, target) in invalid {
             let mut u = Ui::new();
@@ -876,6 +869,33 @@ mod tests {
             assert!(u.intent(Action::Deny).is_none());
             assert!(u.controls().stop_enabled);
             assert_eq!(u.lines().last().unwrap().kind, "ANOMALY");
+        }
+    }
+
+    #[test]
+    fn normal_case_sensitive_paths_are_now_presented_exactly_not_fabricated() {
+        for target in [
+            "/home/a_b:{c}.rs", "/home/A_b:{c}.rs",
+            r"C:\Users\Sam\my_file.txt", "/home/a ", "/space inside/file",
+        ] {
+            let mut u = Ui::new();
+            running(&mut u);
+            assert!(u.observe(BackendEvent::PermissionNeeded {
+                task_id: 7, seq: 2, request: 17,
+                action: "WRITE file", target,
+            }));
+            assert_eq!(u.task.state, TaskState::Running);
+            let displayed = u.permission.unwrap();
+            assert_eq!(displayed.action.as_str(), "WRITE file");
+            assert_eq!(displayed.target.as_str(), target);
+            assert_eq!(u.decision_pending, None);
+            assert!(u.controls().decision_enabled);
+            assert_eq!(u.intent(Action::Approve), Some(Intent::Decide {
+                task_id: 7, request: 17, allow: true,
+            }));
+            assert!(u.decision_pending.is_some());
+            // This UI intent is not a service authorization or a write.
+            assert_eq!(u.task.state, TaskState::Running);
         }
     }
 
