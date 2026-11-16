@@ -39,6 +39,27 @@ and conflict behavior are PT's service work. TaskGate belongs outside the
 untrusted model process. The GUI will need an authenticated transport that
 does not yet exist in the pinned guest/kernel.
 
+## Exact prompt rendering versus permission disclosure
+
+The original standalone guest request field clipped the 120-byte stored
+printable ASCII input at 92 bytes and uppercased all visible characters.
+The updated request editor uses the kernel's generated case-sensitive
+printable-ASCII 10x20 font with two 78-character rows. Host-side pixel
+tests must check that the last bytes and case of the submitted prompt
+match the entire `Intent::Submit` payload, including 92/93/120
+boundaries. Physical keyboard/locale and actual QEMU frame readback
+remain unverified. A fixed US-PC Set-1 keyboard map is not a general
+input method.
+
+This is **not** the approval viewer. The old permission panel still
+has narrow renderability rules, so PT must deny effect requests it
+cannot fully disclose there. The standalone UI output feed likewise
+still uses a lossy five-by-seven status-label renderer. Neither should
+be used as evidence that a model-generated program, its source digest,
+or immutable destination was displayed exactly. PT's separate native
+integrated desktop uses its own renderer and must be assessed against
+its actual source, pixels and actor-bound effect records.
+
 ## Exact visual disclosure before any Allow
 
 This UI's native 5x7 renderer does **not** preserve lowercase case,
