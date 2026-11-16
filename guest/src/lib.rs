@@ -355,7 +355,7 @@ impl Ui {
                 // task. Retain the old grant for correlation with delayed
                 // service readback; only the trusted service fences effects.
                 self.stop_intent_task = Some(self.task.id);
-                self.notice("STOP INTENT ONLY - NO NEW GUI GRANTS");
+                self.notice("STOP INTENT ONLY - AWAIT SERVICE");
                 Some(Intent::Stop { task_id: self.task.id })
             }
             Action::Approve | Action::Deny
