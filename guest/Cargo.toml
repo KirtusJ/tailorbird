@@ -1,0 +1,27 @@
+[package]
+name = "tailorbird-guest"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91"
+publish = false
+description = "Native PCP OS Tailorbird UI prototype; no model or tool backend"
+
+[lib]
+name = "tailorbird_ui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tailorbird"
+path = "src/main.rs"
+test = false
+bench = false
+
+[target.'cfg(target_os = "none")'.dependencies]
+pcp-game-guest = { path = "../../../store/native/guest" }
+
+[profile.release]
+panic = "abort"
+opt-level = "s"
+lto = true
+codegen-units = 1
+overflow-checks = true
