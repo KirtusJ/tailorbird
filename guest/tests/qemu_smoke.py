@@ -212,10 +212,33 @@ def run(kernel, guest, timeout, machine):
             dims_burst, burst_pixels, hash_burst = m.screenshot("pt_ordered_burst")
             assert dims_burst == dims
             burst_editor = crop(burst_pixels, dims[0], editor)
-            # Decode the actual first cells against *observed* on-screen
-            # templates, not against source strings or test expectations.
-            # Print diagnostics before assertions so a negative run remains
-            # useful for investigating dropped/reordered QMP/PS2 events.
+            # Read the exact source-pinned kernel glyphs rather than using
+            # a QEMU "spaced" screenshot as the expected answer. That earlier
+            # oracle was invalid: its fifth cell was actually blank.
+            # Every colour/pixel below comes from the same table and blend
+            # algorithm used by Tailorbird's exact_ascii.rs renderer.
+            font_path = (pathlib.Path(__file__).resolve().parents[4]
+                         / "PCP_OS_Rust/crates/pcpos-kernel/src/font.rs")
+            font_source = font_path.read_text()
+            glyph_rows = re.findall(r"^\s*\[([0-9,\s]+)\],?\s*$",
+                                    font_source, flags=re.MULTILINE)
+            glyphs = []
+            for raw in glyph_rows:
+                values = [int(v.strip()) for v in raw.split(",") if v.strip()]
+                if len(values) == 200:
+                    glyphs.append(values)
+            assert len(glyphs) == 95, "font source did not yield all 95 glyphs"
+
+            def source_glyph(ch):
+                glyph = glyphs[ord(ch) - 32]
+                bg, fg = ((0x18, 0x36, 0x4F), (0xF2, 0xF7, 0xFC))
+                result = bytearray()
+                for coverage in glyph:
+                    for under, over in zip(bg, fg):
+                        result.append((under * (255 - coverage) +
+                                       over * coverage + 127) // 255)
+                return bytes(result)
+
             def cell(editor_pixels, index):
                 cx, cy = (index % 78) * 10, (index // 78) * 20
                 return b"".join(
@@ -224,48 +247,71 @@ def run(kernel, guest, timeout, machine):
                     for dy in range(20)
                 )
 
-            observed_templates = {
-                "z": cell(ordered_editor, 0),
-                "x": cell(ordered_editor, 1),
-                "A": cell(ordered_editor, 3),
-                "a": cell(ordered_editor, 4),
-                " ": cell(base, 0),
+            expected = bytearray(base)
+            intended = "zxzAa"
+            for i, ch in enumerate(intended):
+                raster = source_glyph(ch)
+                cx, cy = (i % 78) * 10, (i // 78) * 20
+                for y in range(20):
+                    dest = ((cy + y) * 780 + cx) * 3
+                    expected[dest:dest + 30] = raster[y * 30:(y + 1) * 30]
+            expected = bytes(expected)
+
+            all_glyphs = {chr(n): source_glyph(chr(n))
+                          for n in range(32, 127)}
+
+            def diagnose_editor(editor_pixels):
+                diagnosed = []
+                for i in range(8):
+                    value = cell(editor_pixels, i)
+                    distances = {
+                        name: sum(value[j:j+3] != template[j:j+3]
+                                  for j in range(0, len(value), 3))
+                        for name, template in all_glyphs.items()
+                    }
+                    exact = [ch for ch, distance in distances.items()
+                             if distance == 0]
+                    closest = sorted(distances.items(),
+                                     key=lambda pair: pair[1])[:5]
+                    diagnosed.append({
+                        "cell": i, "exact": exact,
+                        "closest_five": closest,
+                        "is_blank": value == all_glyphs[" "],
+                    })
+                return diagnosed
+
+            verdicts = {
+                "paced_equals_source": ordered_editor == expected,
+                "split_equals_source": split_editor == expected,
+                "burst_equals_source": burst_editor == expected,
+                "burst_equals_paced": burst_editor == ordered_editor,
+                "paced_fifth_is_blank": cell(ordered_editor, 4)
+                    == all_glyphs[" "],
+                "lower_a_matches_source": cell(lower, 0)
+                    == all_glyphs["a"],
+                "upper_A_matches_source": cell(upper, 0)
+                    == all_glyphs["A"],
             }
-
-            def diagnose_glyph(value):
-                distances = {}
-                for name, template in observed_templates.items():
-                    distances[name] = sum(
-                        value[i:i + 3] != template[i:i + 3]
-                        for i in range(0, len(value), 3)
-                    )
-                exact = [name for name, distance in distances.items()
-                         if distance == 0]
-                return {
-                    "exact_match": exact,
-                    "closest": min(distances.items(), key=lambda item: item[1]),
-                    "all_template_distances": distances,
-                }
-
-            diagnosed = [diagnose_glyph(cell(burst_editor, i)) for i in range(8)]
-            print("PT_BATCH_DIAGNOSIS", json.dumps({
-                "observed_first_8_cells": diagnosed,
+            print("PT_SOURCE_GLYPH_DIAGNOSIS", json.dumps({
+                "verdicts": verdicts,
+                "paced_first_eight": diagnose_editor(ordered_editor),
+                "split_first_eight": diagnose_editor(split_editor),
+                "burst_first_eight": diagnose_editor(burst_editor),
                 "spaced_sha256": hash_ordered,
-                "previous_bad_sha256": hash_collapsed,
-                "burst_sha256": hash_burst,
                 "split_sha256": hash_split,
-                "split_equals_spaced": split_editor == ordered_editor,
-                "burst_equals_old_bad": burst_editor == old_bad_editor,
-                "burst_equals_spaced": burst_editor == ordered_editor,
-                "serial_excerpt": m.serial()[-1400:],
+                "full_batch_sha256": hash_burst,
+                "previous_bad_sha256": hash_collapsed,
+                "serial_excerpt": m.serial()[-1200:],
             }), flush=True)
+            assert verdicts["lower_a_matches_source"]
+            assert verdicts["upper_A_matches_source"]
             assert burst_editor != old_bad_editor, (
                 "PT counterexample: batched input collapsed to azx pixels"
             )
-            assert burst_editor == ordered_editor, (
-                "PT counterexample: batch did not render zxzAa in original order"
+            assert verdicts["burst_equals_source"], (
+                "PT counterexample: full-batch pixels differ from exact zxzAa"
             )
-            print("PASS: QMP same-batch zxzAa matches spaced input, unlike old azx",
+            print("PASS: full-batch QMP exactly matches source-font zxzAa",
                   flush=True)
 
             # The preview is deliberately disconnected. Enter must not start
