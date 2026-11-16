@@ -290,8 +290,12 @@ impl Ui {
     pub fn observe(&mut self, event: BackendEvent<'_>) -> bool {
         match event {
             BackendEvent::Service { connected, model, saved_mode } => {
+                let requested_mode = self.mode_pending;
                 self.connected = connected;
                 self.model = if connected { model } else { Model::Unknown };
+                // A service status is an observation about the saved choice,
+                // not proof that the user's pending mode-change request
+                // succeeded. Never silently turn a mismatch into success.
                 self.mode = saved_mode;
                 self.mode_pending = None;
                 if !connected {
@@ -302,15 +306,24 @@ impl Ui {
                     self.decision_pending = None;
                     self.decision_choice = None;
                     self.notice("SERVICE LOST - NO STOP CONFIRMATION");
+                } else if requested_mode.is_some() && requested_mode != Some(saved_mode) {
+                    self.notice("MODE NOT APPLIED - SERVICE STATUS");
+                } else if requested_mode.is_some() {
+                    self.notice("MODE MATCHES SERVICE STATUS");
                 } else {
                     self.notice("SERVICE STATUS RECEIVED");
                 }
                 true
             }
             BackendEvent::ModeCommitted(mode) if self.connected => {
+                let requested = self.mode_pending;
                 self.mode = mode;
                 self.mode_pending = None;
-                self.notice("MODE CONFIRMED BY SERVICE");
+                self.notice(match requested {
+                    Some(wanted) if wanted == mode => "MODE CONFIRMED BY SERVICE",
+                    Some(_) => "MODE NOT APPLIED - SERVICE REPLIED DIFFERENTLY",
+                    None => "SERVICE MODE UPDATE - NO UI REQUEST",
+                });
                 true
             }
             BackendEvent::Started { task_id, seq }
@@ -499,6 +512,50 @@ mod tests {
         assert_eq!(u.mode, Mode::Ongoing);
         assert_eq!(u.mode_pending, None);
     }
+    #[test]
+    fn committed_mode_mismatch_is_not_displayed_as_confirmed() {
+        let mut u = Ui::new();
+        connected(&mut u);
+        assert_eq!(u.intent(Action::ToggleMode), Some(Intent::SetMode(Mode::Ongoing)));
+        assert_eq!(u.mode_pending, Some(Mode::Ongoing));
+        // Service returns the current Single setting rather than the
+        // requested Ongoing setting. This is not a successful toggle.
+        assert!(u.observe(BackendEvent::ModeCommitted(Mode::Single)));
+        assert_eq!(u.mode, Mode::Single);
+        assert_eq!(u.mode_pending, None);
+        assert_eq!(u.notice.as_str(), "MODE NOT APPLIED - SERVICE REPLIED DIFFERENTLY");
+    }
+
+    #[test]
+    fn unsolicited_service_mode_update_is_not_called_a_ui_ack() {
+        let mut u = Ui::new();
+        connected(&mut u);
+        assert!(u.observe(BackendEvent::ModeCommitted(Mode::Ongoing)));
+        assert_eq!(u.mode, Mode::Ongoing);
+        assert_eq!(u.mode_pending, None);
+        assert_eq!(u.notice.as_str(), "SERVICE MODE UPDATE - NO UI REQUEST");
+    }
+
+    #[test]
+    fn status_readback_can_refute_requested_mode() {
+        let mut u = Ui::new();
+        connected(&mut u);
+        assert_eq!(u.intent(Action::ToggleMode), Some(Intent::SetMode(Mode::Ongoing)));
+        assert!(u.observe(BackendEvent::Service {
+            connected: true, model: Model::Ready, saved_mode: Mode::Single,
+        }));
+        assert_eq!(u.mode, Mode::Single);
+        assert_eq!(u.mode_pending, None);
+        assert_eq!(u.notice.as_str(), "MODE NOT APPLIED - SERVICE STATUS");
+
+        assert_eq!(u.intent(Action::ToggleMode), Some(Intent::SetMode(Mode::Ongoing)));
+        assert!(u.observe(BackendEvent::Service {
+            connected: true, model: Model::Ready, saved_mode: Mode::Ongoing,
+        }));
+        assert_eq!(u.mode, Mode::Ongoing);
+        assert_eq!(u.notice.as_str(), "MODE MATCHES SERVICE STATUS");
+    }
+
     #[test]
     fn stop_needs_task_and_service_then_separate_ack_and_termination() {
         let mut u = Ui::new();
