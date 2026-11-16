@@ -275,4 +275,69 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn stop_control_ink_is_readable_on_the_real_framebuffer_at_both_scales() {
+        use crate::palette::{stop_colors, PANEL};
+
+        // WCAG relative luminance and contrast ratio, computed from the
+        // exact sRGB colors passed to the pixel renderer.
+        fn luminance(color: u32) -> f64 {
+            let channel = |shift| {
+                let v = ((color >> shift) & 255u32) as f64 / 255.0;
+                if v <= 0.04045 { v / 12.92 }
+                else { ((v + 0.055) / 1.055).powf(2.4) }
+            };
+            0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
+        }
+        fn contrast(a: u32, b: u32) -> f64 {
+            let (high, low) = (luminance(a).max(luminance(b)),
+                               luminance(a).min(luminance(b)));
+            (high + 0.05) / (low + 0.05)
+        }
+
+        for enabled in [false, true] {
+            let (fill, heading, caption) = stop_colors(enabled);
+            assert!(contrast(heading, fill) >= 4.5,
+                    "Stop title must meet normal-text contrast when enabled={enabled}");
+            assert!(contrast(caption, fill) >= 4.5,
+                    "Stop task state must meet normal-text contrast when enabled={enabled}");
+            if enabled {
+                assert!(contrast(fill, PANEL) >= 3.0,
+                        "enabled Stop fill must be distinguishable from its panel");
+            }
+
+            for k in [1usize, 2] {
+                let (width, height) = (960 * k, 540 * k);
+                let pitch = width + 11;
+                let mut guarded = vec![0xdeadbeef; pitch * height + 2];
+                {
+                    let pixels = &mut guarded[1..1 + pitch * height];
+                    let mut f = Frame::new(pixels, width, height, pitch, PANEL, false);
+                    f.rect(20, 94, 280, 352, PANEL);
+                    let rect = crate::pointer::STOP_RECT;
+                    f.rect(rect.x, rect.y, rect.width, rect.height, fill);
+                    f.text(48, 331, "STOP", 3, heading);
+                    f.text(48, 361, if enabled { "RUNNING" } else { "NO TASK" },
+                           1, caption);
+                }
+                let px = |x: usize, y: usize| guarded[1 + y * pitch + x];
+                assert_eq!(px(35 * k, 319 * k), fill);
+                for (x, y, w, h) in [(48, 331, 72, 30), (48, 361, 70, 10)] {
+                    let mut ink = 0usize;
+                    for row in y * k..(y + h) * k {
+                        for col in x * k..(x + w) * k {
+                            ink += usize::from(px(col, row) != fill);
+                        }
+                    }
+                    assert!(ink > 0, "Stop title/state raster missing at scale {k}");
+                }
+                assert_eq!(guarded[0], 0xdeadbeef);
+                assert_eq!(guarded[pitch * height + 1], 0xdeadbeef);
+                assert!(guarded[1..1 + pitch * height]
+                    .chunks_exact(pitch)
+                    .all(|row| row[width..].iter().all(|&v| v == 0xdeadbeef)));
+            }
+        }
+    }
+
 }

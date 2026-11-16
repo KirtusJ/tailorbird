@@ -7,6 +7,26 @@ extern crate std;
 // An adapter owned by the service must authenticate and apply every effect.
 pub const INPUT_LIMIT: usize = 120;
 
+    
+/// Pixel palette shared by the native renderer and its host-backed tests.
+pub mod palette {
+    pub const GROUND: u32 = 0x10283f;
+    pub const PANEL: u32 = 0x18364f;
+    pub const TEXT: u32 = 0xf2f7fc;
+    pub const SOFT: u32 = 0x9fb4c8;
+    pub const TEAL: u32 = 0x41bad7;
+    pub const AMBER: u32 = 0xe3a24b;
+    pub const GOOD: u32 = 0x8fe0c2;
+    pub const BAD: u32 = 0xf08a72;
+
+    /// Enabled Stop needs dark ink against the coral fill. White ink on
+    /// that fill is below minimum normal-text contrast; the second line
+    /// inside the same control must switch with the heading.
+    pub const fn stop_colors(enabled: bool) -> (u32, u32, u32) {
+        if enabled { (BAD, GROUND, GROUND) } else { (GROUND, TEXT, SOFT) }
+    }
+}
+
 /// Source-pinned, case-sensitive rendering for the full request before submit.
 pub mod exact_ascii;
 /// Retain ordered keyboard event identity instead of pressed bitmap only.
