@@ -609,10 +609,10 @@ mod tests {
         let mut u = Ui::new();
         running(&mut u);
         assert!(u.observe(BackendEvent::PermissionNeeded {
-            task_id: 7, seq: 2, request: 14, action: "WRITE FILE", target: "/APPS/test",
+            task_id: 7, seq: 2, request: 14, action: "WRITE FILE", target: "/APPS/TEST",
         }));
         assert!(u.controls().permission_visible);
-        assert_eq!(u.permission.unwrap().target.as_str(), "/APPS/test");
+        assert_eq!(u.permission.unwrap().target.as_str(), "/APPS/TEST");
         assert!(!u.observe(BackendEvent::PermissionNeeded {
             task_id: 7, seq: 3, request: 15, action: "DELETE", target: "/",
         }));
@@ -701,7 +701,7 @@ mod tests {
         // This newer service-supplied proposal is not a reason to reopen a
         // permission prompt after the service acknowledged a stop request.
         assert!(!u.observe(BackendEvent::PermissionNeeded {
-            task_id: 7, seq: 3, request: 46, action: "WRITE", target: "/APPS/bird.txt",
+            task_id: 7, seq: 3, request: 46, action: "WRITE", target: "/APPS/BIRD.TXT",
         }));
         assert_eq!(u.task.seq, 2); // rejected proposal consumes no event seq
         assert!(u.permission.is_none());
@@ -720,7 +720,7 @@ mod tests {
         running(&mut u);
         assert!(u.observe(BackendEvent::PermissionNeeded {
             task_id: 7, seq: 2, request: 17,
-            action: "REPLACE", target: "/APPS/old",
+            action: "REPLACE", target: "/APPS/OLD",
         }));
         assert_eq!(u.intent(Action::Approve), Some(Intent::Decide {
             task_id: 7, request: 17, allow: true,
@@ -741,7 +741,7 @@ mod tests {
         assert_eq!(u.task.seq, 3);
         assert!(!u.observe(BackendEvent::PermissionNeeded {
             task_id: 7, seq: 4, request: 18,
-            action: "CREATE", target: "/APPS/new",
+            action: "CREATE", target: "/APPS/NEW",
         }));
         assert!(u.observe(BackendEvent::Stopped { task_id: 7, seq: 5 }));
         assert!(u.permission.is_none() && u.decision_pending.is_none());
@@ -833,7 +833,7 @@ mod tests {
         assert!(!u.controls().stop_enabled);
         assert!(!u.observe(BackendEvent::PermissionNeeded {
             task_id: 7, seq: 4, request: 99,
-            action: "WRITE", target: "/APPS/blocked",
+            action: "WRITE", target: "/APPS/BLOCKED",
         }));
         assert!(u.observe(BackendEvent::Stopped { task_id: 7, seq: 5 }));
         assert_eq!(u.task.state, TaskState::Stopped);
@@ -845,7 +845,7 @@ mod tests {
         running(&mut u);
         assert!(u.observe(BackendEvent::PermissionNeeded {
             task_id: 7, seq: 2, request: 10,
-            action: "REPLACE", target: "/APPS/example",
+            action: "REPLACE", target: "/APPS/EXAMPLE",
         }));
         assert!(u.intent(Action::Approve).is_some());
         assert!(u.observe(BackendEvent::Service {
@@ -933,7 +933,7 @@ mod tests {
         running(&mut u);
         assert!(u.observe(BackendEvent::PermissionNeeded {
             task_id: 7, seq: 2, request: 19,
-            action: "REPLACE", target: "/APPS/bird.txt",
+            action: "REPLACE", target: "/APPS/BIRD.TXT",
         }));
         assert!(u.controls().permission_visible && u.controls().decision_enabled);
         assert_eq!(u.intent(Action::Approve), Some(Intent::Decide {
@@ -958,7 +958,7 @@ mod tests {
         assert!(u.permission.is_none() && u.decision_pending.is_none());
 
         assert!(u.observe(BackendEvent::PermissionNeeded {
-            task_id: 7, seq: 4, request: 20, action: "CREATE", target: "/APPS/other",
+            task_id: 7, seq: 4, request: 20, action: "CREATE", target: "/APPS/OTHER",
         }));
         assert_eq!(u.intent(Action::Deny), Some(Intent::Decide {
             task_id: 7, request: 20, allow: false,
@@ -973,7 +973,7 @@ mod tests {
         running(&mut u);
         assert!(u.observe(BackendEvent::PermissionNeeded {
             task_id: 7, seq: 2, request: 25,
-            action: "WRITE", target: "/TMP/test",
+            action: "WRITE", target: "/TMP/TEST",
         }));
         assert!(u.intent(Action::Deny).is_some());
         assert!(u.observe(BackendEvent::StopAccepted { task_id: 7, seq: 3 }));
@@ -986,7 +986,7 @@ mod tests {
         assert!(u.observe(BackendEvent::Started { task_id: 8, seq: 1 }));
         assert!(u.observe(BackendEvent::PermissionNeeded {
             task_id: 8, seq: 2, request: 26,
-            action: "DELETE", target: "/TMP/test",
+            action: "DELETE", target: "/TMP/TEST",
         }));
         assert!(u.intent(Action::Approve).is_some());
         assert!(u.observe(BackendEvent::Service {
@@ -1004,7 +1004,7 @@ mod tests {
         running(&mut u);
         assert!(u.observe(BackendEvent::PermissionNeeded {
             task_id: 7, seq: 2, request: 21,
-            action: "REPLACE", target: "/APPS/bird.txt",
+            action: "REPLACE", target: "/APPS/BIRD.TXT",
         }));
         assert_eq!(u.intent(Action::Deny), Some(Intent::Decide {
             task_id: 7, request: 21, allow: false,
@@ -1022,7 +1022,7 @@ mod tests {
         }));
         assert!(!u.observe(BackendEvent::PermissionNeeded {
             task_id: 7, seq: 4, request: 22,
-            action: "WRITE", target: "/APPS/new",
+            action: "WRITE", target: "/APPS/NEW",
         }));
         assert!(u.observe(BackendEvent::Failed {
             task_id: 7, seq: 4, reason: "verified service failure",
@@ -1041,7 +1041,7 @@ mod tests {
             running(&mut u);
             assert!(u.observe(BackendEvent::PermissionNeeded {
                 task_id: 7, seq: 2, request: 33,
-                action: "CREATE", target: "/APPS/demo",
+                action: "CREATE", target: "/APPS/DEMO",
             }));
             assert_eq!(u.intent(Action::Approve), Some(Intent::Decide {
                 task_id: 7, request: 33, allow: true,
