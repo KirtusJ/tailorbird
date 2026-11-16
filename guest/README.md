@@ -86,6 +86,32 @@ write. An effect that was approved and executed before the stop fence
 may already have occurred. The service must record its actual write/stop
 ordering and report the resulting artifact independently.
 
+**Non-ambiguous permission target display (Session A review):** the
+existing shared 5x7 text renderer displays uppercase Latin letters,
+digits, slash, dash, dot and plus; it uppercases incoming labels and
+silently draws unsupported glyphs as blank. Originally the action and
+target also shared one row, so a long visible action overlapped a
+target and the decision hint. This could show two *different* effect
+destinations identically, or conceal a suffix, precisely when a person
+is deciding to Allow a write. The reducer now refuses to expose either
+Allow **or** Deny for a metadata-bearing permission event unless the
+entire action (1..48 bytes) and target (1..72 bytes) consist of exactly
+renderable characters. Only action labels may contain internal spaces;
+targets disallow spaces and lowercase because case is semantically
+meaningful for filesystem paths. A rejected proposal leaves no
+permission button, logs a bounded `ANOMALY`, marks the task
+`STATUS UNKNOWN` and keeps task-scoped Stop available. The renderer
+now gives ACTION and TARGET distinct rows and fits all 48/72
+permitted glyphs within the panel at the built-in 6-pixel advance.
+Three new adverse/boundary tests were authored. This conservative
+prototype behavior **blocks common real paths** such as
+`/home/name/file.txt`, paths containing underscores, Windows drive
+syntax and Unicode. It must not be turned into an operative
+daily-driver approval surface until a full exact target viewer and
+trusted confirmation flow exist. The service must independently
+default-deny undecidable effect requests; a GUI refusal alone does
+not prevent an actual write.
+
 **Service grant / human-choice discrepancy:** a pending `PermissionNeeded`
 event is a request for explicit consent. The UI now stores whether the person
 chose Allow or Deny for that exact request. If the service reports
@@ -160,7 +186,7 @@ location for the ongoing/single-request setting before any adapter is linked.
 
 ## Test coverage and open defects
 
-The Rust unit suite now includes **26 authored cases**: offline refusal, text bounds,
+The Rust unit suite now includes **29 authored cases**: offline refusal, text bounds,
 one-shot permission choice and contradictory-input rejection, stop-acknowledgment
 permission refusal and prompt retraction, reconnect reconciliation only
 after task-matched terminal readback, immediate task-ID replay refusal,
@@ -169,7 +195,7 @@ post-reconnect stop acknowledgment without terminal overclaim,
 conservative Stop
 intents while the recovered status remains unknown, task stop/disconnection,
 and injection-like
-model output, matching/mismatched/unsolicited mode readback, stop request versus termination,
+model output, exact and unrenderable permission metadata including target overflow and glyph aliases, matching/mismatched/unsolicited mode readback, stop request versus termination,
 wrong-task and out-of-order events, explicit grant decisions, stop/permission
 race, lost-service unconfirmed status, post-terminal rejection and bounded
 log order. These tests were **authored, not executed** in this absorption
