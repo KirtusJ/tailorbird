@@ -173,6 +173,10 @@ pub struct Ui {
     /// A GUI confirmation may be sent only once for the pending request.
     /// This is not an authorization record or proof of delivery.
     pub decision_pending: Option<u64>,
+    /// The last GUI choice for the current pending request. A service-side
+    /// grant without this exact Allow choice cannot be represented as consent.
+    /// This field is presentation evidence, not an authorization credential.
+    pub decision_choice: Option<bool>,
     pub notice: Text<84>,
     lines: [Line; LOG_LIMIT],
     count: usize,
@@ -183,7 +187,8 @@ impl Ui {
             input: Text::new(), mode: Mode::Single, mode_pending: None,
             model: Model::Unknown, connected: false,
             task: Task { id: 0, seq: 0, state: TaskState::Idle },
-            permission: None, decision_pending: None, notice: Text::new(),
+            permission: None, decision_pending: None, decision_choice: None,
+            notice: Text::new(),
             lines: [Line::empty(); LOG_LIMIT], count: 0,
         }
     }
@@ -255,6 +260,7 @@ impl Ui {
             {
                 let g = self.permission.unwrap();
                 self.decision_pending = Some(g.request);
+                self.decision_choice = Some(action == Action::Approve);
                 self.notice("PERMISSION DECISION SENT - AWAIT SERVICE");
                 Some(Intent::Decide {
                     task_id: self.task.id, request: g.request,
@@ -283,6 +289,7 @@ impl Ui {
                     }
                     self.permission = None;
                     self.decision_pending = None;
+                    self.decision_choice = None;
                     self.notice("SERVICE LOST - NO STOP CONFIRMATION");
                 } else {
                     self.notice("SERVICE STATUS RECEIVED");
@@ -307,6 +314,7 @@ impl Ui {
                 self.task = Task { id: task_id, seq, state: TaskState::Running };
                 self.permission = None;
                 self.decision_pending = None;
+                self.decision_choice = None;
                 self.count = 0;
                 self.input.clear();
                 self.log(seq, "START", "TASK START REPORTED");
@@ -336,6 +344,7 @@ impl Ui {
                     request, action: Text::display(action), target: Text::display(target),
                 });
                 self.decision_pending = None;
+                self.decision_choice = None;
                 self.log(seq, "PERMISSION", "DECISION REQUIRED");
                 self.notice("PERMISSION PENDING - DEFAULT DENY");
                 true
@@ -344,9 +353,26 @@ impl Ui {
                 if self.permission.map(|p| p.request) != Some(request) || !self.accept(task_id, seq) {
                     return false;
                 }
+                // If PT's service reports a grant for an action explicitly
+                // denied here, or never approved here, display an anomaly
+                // rather than silently treating the event as GUI consent.
+                // Effects may already have happened; the service must audit
+                // them and enforce the actual destination permission.
+                let unexplained_grant = allowed && self.decision_choice != Some(true);
                 self.permission = None;
                 self.decision_pending = None;
-                self.log(seq, "DECISION", if allowed { "SERVICE REPORTED GRANT" } else { "SERVICE REPORTED DENIAL" });
+                self.decision_choice = None;
+                if unexplained_grant {
+                    self.task.state = TaskState::Unconfirmed;
+                    self.log(seq, "ANOMALY", "SERVICE GRANT WITHOUT GUI CONSENT");
+                    self.notice("SERVICE GRANT MISMATCH - EFFECT UNKNOWN");
+                } else {
+                    self.log(seq, "DECISION", if allowed {
+                        "SERVICE REPORTED GRANT"
+                    } else {
+                        "SERVICE REPORTED DENIAL"
+                    });
+                }
                 true
             }
             BackendEvent::StopAccepted { task_id, seq } => {
@@ -357,6 +383,7 @@ impl Ui {
                 // any effect already dispatched, remains unknown until readback.
                 self.permission = None;
                 self.decision_pending = None;
+                self.decision_choice = None;
                 self.notice("STOP ACCEPTED - NO NEW GRANTS; END UNCONFIRMED");
                 self.log(seq, "STOP", "REQUEST ACCEPTED BY SERVICE");
                 true
@@ -366,6 +393,7 @@ impl Ui {
                 self.task.state = TaskState::Stopped;
                 self.permission = None;
                 self.decision_pending = None;
+                self.decision_choice = None;
                 self.log(seq, "STOPPED", "SERVICE REPORTED TERMINATION");
                 self.notice("SERVICE REPORTS STOPPED");
                 true
@@ -375,6 +403,7 @@ impl Ui {
                 self.task.state = TaskState::Completed;
                 self.permission = None;
                 self.decision_pending = None;
+                self.decision_choice = None;
                 self.log(seq, "DONE", "SERVICE REPORTED COMPLETION");
                 self.notice("SERVICE REPORTS COMPLETE");
                 true
@@ -384,6 +413,7 @@ impl Ui {
                 self.task.state = TaskState::Failed;
                 self.permission = None;
                 self.decision_pending = None;
+                self.decision_choice = None;
                 self.log(seq, "FAILED", reason);
                 self.notice("SERVICE REPORTS FAILURE");
                 true
@@ -784,6 +814,69 @@ mod tests {
     }
 
     #[test]
+    fn explicit_deny_followed_by_reported_grant_flags_contradiction() {
+        let mut u = Ui::new();
+        running(&mut u);
+        assert!(u.observe(BackendEvent::PermissionNeeded {
+            task_id: 7, seq: 2, request: 21,
+            action: "REPLACE", target: "/apps/bird.txt",
+        }));
+        assert_eq!(u.intent(Action::Deny), Some(Intent::Decide {
+            task_id: 7, request: 21, allow: false,
+        }));
+        assert_eq!(u.decision_choice, Some(false));
+        assert!(u.observe(BackendEvent::PermissionResolved {
+            task_id: 7, seq: 3, request: 21, allowed: true,
+        }));
+        assert_eq!(u.task.seq, 3);
+        assert_eq!(u.task.state, TaskState::Unconfirmed);
+        assert_eq!(u.lines().last().unwrap().kind, "ANOMALY");
+        assert!(u.controls().stop_enabled);
+        assert!(!u.observe(BackendEvent::ToolResult {
+            task_id: 7, seq: 4, text: "unverified result",
+        }));
+        assert!(!u.observe(BackendEvent::PermissionNeeded {
+            task_id: 7, seq: 4, request: 22,
+            action: "WRITE", target: "/apps/new",
+        }));
+        assert!(u.observe(BackendEvent::Failed {
+            task_id: 7, seq: 4, reason: "verified service failure",
+        }));
+        assert_eq!(u.task.state, TaskState::Failed);
+        assert!(!u.controls().stop_enabled);
+    }
+
+    #[test]
+    fn denial_after_allow_and_grant_after_allow_are_distinguished() {
+        for (allowed, expected) in [
+            (false, "SERVICE REPORTED DENIAL"),
+            (true, "SERVICE REPORTED GRANT"),
+        ] {
+            let mut u = Ui::new();
+            running(&mut u);
+            assert!(u.observe(BackendEvent::PermissionNeeded {
+                task_id: 7, seq: 2, request: 33,
+                action: "CREATE", target: "/apps/demo",
+            }));
+            assert_eq!(u.intent(Action::Approve), Some(Intent::Decide {
+                task_id: 7, request: 33, allow: true,
+            }));
+            assert_eq!(u.decision_choice, Some(true));
+            assert!(u.observe(BackendEvent::PermissionResolved {
+                task_id: 7, seq: 3, request: 33, allowed,
+            }));
+            assert_eq!(u.task.state, TaskState::Running);
+            assert_eq!(u.lines().last().unwrap().kind, "DECISION");
+            assert_eq!(u.lines().last().unwrap().message.as_str(), expected);
+            assert!(u.permission.is_none());
+            assert!(u.decision_pending.is_none());
+            assert!(u.decision_choice.is_none());
+            // A service event is a report. It does not independently show a
+            // completed file write or a host-enforced permission decision.
+        }
+    }
+
+    #[test]
     fn unapproved_service_ack_does_not_imply_gui_authorization() {
         let mut u = Ui::new();
         running(&mut u);
@@ -793,7 +886,18 @@ mod tests {
         assert!(u.observe(BackendEvent::PermissionResolved {
             task_id: 7, seq: 3, request: 9, allowed: true,
         }));
-        // This is a service *report*, never evidence that this GUI granted permission.
-        assert_eq!(u.lines().last().unwrap().message.as_str(), "SERVICE REPORTED GRANT");
+        // A grant without an Allow intent is a contradiction visible to the
+        // person, not evidence of a GUI authorization or confirmed effect.
+        assert_eq!(u.lines().last().unwrap().kind, "ANOMALY");
+        assert_eq!(u.lines().last().unwrap().message.as_str(),
+            "SERVICE GRANT WITHOUT GUI CONSENT");
+        assert_eq!(u.task.state, TaskState::Unconfirmed);
+        assert_eq!(u.notice.as_str(), "SERVICE GRANT MISMATCH - EFFECT UNKNOWN");
+        assert!(u.permission.is_none() && u.decision_pending.is_none());
+        assert!(!u.controls().decision_enabled);
+        assert!(!u.controls().submit_enabled);
+        assert!(u.controls().stop_enabled);
+        assert!(u.observe(BackendEvent::Stopped { task_id: 7, seq: 4 }));
+        assert_eq!(u.task.state, TaskState::Stopped);
     }
 }
