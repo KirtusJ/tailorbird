@@ -488,6 +488,16 @@ impl Ui {
                 self.mode = saved_mode;
                 self.mode_pending = None;
                 if !connected {
+                    // The transport can vanish after a GUI decision is sent
+                    // but before a correlated permission/effect receipt. The
+                    // next task-state update cannot settle that effect. Keep
+                    // an in-process warning before discarding non-actionable
+                    // consent metadata; trusted reconciliation belongs PT.
+                    if self.permission.is_some() {
+                        self.effect_uncertain = true;
+                        self.log(self.task.seq, "ANOMALY",
+                            "SERVICE LOST WITH PERMISSION OUTCOME UNKNOWN");
+                    }
                     if self.task.state.is_active() {
                         self.task.state = TaskState::Unconfirmed;
                     }
