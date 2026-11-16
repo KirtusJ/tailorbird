@@ -3,8 +3,8 @@
 
 // Native graphical *offline preview*. No model, tool service or transport is linked.
 // This is a separate guest process using PCP OS' existing display and keyboard grants.
-use pcp_game_guest::{exit, ink::Frame, sleep_us, Display};
-use tailorbird_ui::{Action, Model, Ui};
+use pcp_game_guest::{call, exit, ink::Frame, log, open, sleep_us, Display};
+use tailorbird_ui::{ordered_keys::{KeyOutcome, OrderedKeyboard}, Model, Ui};
 
 const W: usize = 960;
 const H: usize = 540;
@@ -116,41 +116,38 @@ fn paint(display: &mut Display, ui: &Ui) {
     display.show(pixels);
 }
 
-// The UI reducer's exact ASCII module owns the printable US-PC key mapping,
-// so the pixels and bytes delivered in Submit share a testable character set.
-// This guest does not yet provide keyboard layout switching or an IME.
+// The kernel's /dev/kbd is an ordered two-byte event FIFO. The shared
+// game Display::poll reduces it to two bitmaps and loses both ordering and
+// repeated keys during a single poll. Tailorbird opens the *same* existing
+// keyboard device as a separate guest capability and consumes that FIFO
+// directly. No kernel, firmware, shared guest or device ABI change is made.
+// This is still a US-PC scancode map, not a general IME/layout service.
 
 pcp_game_guest::entry!(tailorbird_main);
 #[no_mangle]
 pub extern "C" fn tailorbird_main() -> ! {
     let mut display = Display::new(W, H);
+    let kb = open(b"/dev/kbd\0", 0x800);
+    if kb < 0 {
+        log(b"tailorbird: ordered keyboard unavailable\n");
+        exit(2);
+    }
+    let mut ordered = OrderedKeyboard::new();
     let mut ui = Ui::new();
     paint(&mut display, &ui);
     loop {
-        display.poll();
         let mut dirty = false;
-        if display.pressed[1] { exit(0); }
-        let alt = display.held[56];
-        if alt {
-            if display.pressed[50] { let _ = ui.intent(Action::ToggleMode); dirty = true; }
-            if display.pressed[19] { let _ = ui.intent(Action::RetrySubmit); dirty = true; }
-            if display.pressed[31] { let _ = ui.intent(Action::Stop); dirty = true; }
-            if display.pressed[30] { let _ = ui.intent(Action::Approve); dirty = true; }
-            if display.pressed[32] { let _ = ui.intent(Action::Deny); dirty = true; }
-        } else {
-            if display.pressed[28] { let _ = ui.intent(Action::Submit); dirty = true; }
-            // Freeze the visible original request while the service's task
-            // admission remains unknown. Retry always resends that snapshot.
-            if ui.pending_submit.is_none() {
-                if display.pressed[14] { dirty |= ui.input.pop(); }
-                let shift = display.held[42] || display.held[54];
-                for code in 0..128 {
-                    if display.pressed[code] {
-                        if let Some(b) = tailorbird_ui::exact_ascii::key_from_set1(code, shift) {
-                            dirty |= ui.input.push_ascii(b);
-                        }
-                    }
-                }
+        loop {
+            let mut event = [0u8; 2];
+            if call(0, kb as usize, event.as_mut_ptr() as usize, 2, 0, 0, 0) != 2 {
+                break; // no more event records in nonblocking FIFO
+            }
+            let code = (event[0] & 127) as usize;
+            let down = event[1] & 1 == 0;
+            match ordered.event(code, down, &mut ui) {
+                KeyOutcome::Exit => exit(0),
+                KeyOutcome::Redraw => dirty = true,
+                KeyOutcome::Unchanged => {}
             }
         }
         if dirty { paint(&mut display, &ui); }
