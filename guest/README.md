@@ -73,6 +73,19 @@ dispatches but **does not provide idempotency or authorization** by itself.
 PT must still bind user, task, immutable action, destination and request to
 one service-side decision, including replay/late-message rejection.
 
+**Stop/permission ordering correction (PT-requested review):** a trusted
+`StopAccepted` event is an acknowledgment of a stop request, *not* worker
+termination. Once received, the UI now hides any preexisting permission
+proposal, clears the GUI's pending choice and rejects later
+`PermissionNeeded` events for that task even if the incoming event has a
+higher sequence number. A delayed `PermissionResolved` likewise cannot
+reopen a permission panel. The screen remains `STOP REQUESTED` and makes
+no new grant available. This is a GUI presentation invariant, **not**
+evidence that the trusted service prevented or rolled back a filesystem
+write. An effect that was approved and executed before the stop fence
+may already have occurred. The service must record its actual write/stop
+ordering and report the resulting artifact independently.
+
 **Unresolved neighboring risk:** repeated Submit or Stop intents are still
 possible before the service supplies its first event receipt. The trusted
 adapter needs idempotency keys, reliable correlation/reconciliation and
@@ -105,9 +118,10 @@ location for the ongoing/single-request setting before any adapter is linked.
 
 ## Test coverage and open defects
 
-The Rust unit suite now includes **16 authored cases**: offline refusal, text bounds,
-one-shot permission choice and contradictory-input rejection, reconnect
-reconciliation only after task-matched terminal readback, conservative Stop
+The Rust unit suite now includes **18 authored cases**: offline refusal, text bounds,
+one-shot permission choice and contradictory-input rejection, stop-acknowledgment
+permission refusal and prompt retraction, reconnect reconciliation only
+after task-matched terminal readback, conservative Stop
 intents while the recovered status remains unknown, task stop/disconnection,
 and injection-like
 model output, deferred mode readback, stop request versus termination,
