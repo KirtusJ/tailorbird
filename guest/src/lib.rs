@@ -563,13 +563,27 @@ impl Ui {
                 // Effects may already have happened; the service must audit
                 // them and enforce the actual destination permission.
                 let unexplained_grant = allowed && self.decision_choice != Some(true);
+                // Even a previously chosen Allow cannot establish whether a
+                // reported grant took effect before or after the operator
+                // pressed Stop. Keep it visibly uncertain until PT's trusted
+                // effect/stop journal supplies an ordered, authenticated
+                // readback. This UI does not cancel or authorize the effect.
+                let stop_race = allowed && self.stop_intent_task == Some(self.task.id);
                 self.permission = None;
                 self.decision_pending = None;
                 self.decision_choice = None;
-                if unexplained_grant {
+                if unexplained_grant || stop_race {
                     self.task.state = TaskState::Unconfirmed;
-                    self.log(seq, "ANOMALY", "SERVICE GRANT WITHOUT GUI CONSENT");
-                    self.notice("SERVICE GRANT MISMATCH - EFFECT UNKNOWN");
+                    self.log(seq, "ANOMALY", if stop_race {
+                        "GRANT REPORTED WITH STOP PENDING"
+                    } else {
+                        "SERVICE GRANT WITHOUT GUI CONSENT"
+                    });
+                    self.notice(if stop_race {
+                        "GRANT/STOP ORDER UNCONFIRMED - EFFECT UNKNOWN"
+                    } else {
+                        "SERVICE GRANT MISMATCH - EFFECT UNKNOWN"
+                    });
                 } else {
                     self.log(seq, "DECISION", if allowed {
                         "SERVICE REPORTED GRANT"
