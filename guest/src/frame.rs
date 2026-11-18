@@ -169,7 +169,7 @@ impl<'a> Frame<'a> {
 mod tests {
     extern crate std;
     use super::*;
-    use std::vec;
+    use std::{format, vec};
     #[test]
     fn compact_view_fits_the_screen_and_preserves_visible_bounds() {
         for (w, h, geometry) in [
