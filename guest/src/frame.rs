@@ -117,6 +117,34 @@ impl<'a> Frame<'a> {
         }
     }
 
+
+    /// Label only rows actually removed from the bounded local GUI feed.
+    /// First/last values are retained-row sequence labels, not a guarantee
+    /// that the service delivered contiguous events or stored a transcript.
+    pub fn feed_window(&mut self, hidden: u64, first_seq: u64, last_seq: u64, colour: u32) {
+        if hidden == 0 { return; }
+        self.text(505, 116, "OLDER UI ROWS HIDDEN", 1, colour);
+        let mut count = [0u8; 20];
+        self.text(650, 116, Self::decimal(hidden, &mut count), 1, colour);
+        self.text(340, 161, "FIRST SEQ", 1, colour);
+        let mut first = [0u8; 20];
+        self.text(410, 161, Self::decimal(first_seq, &mut first), 1, colour);
+        self.text(550, 161, "LAST SEQ", 1, colour);
+        let mut last = [0u8; 20];
+        self.text(615, 161, Self::decimal(last_seq, &mut last), 1, colour);
+    }
+
+    fn decimal<'b>(mut value: u64, output: &'b mut [u8; 20]) -> &'b str {
+        let mut i = output.len();
+        loop {
+            i -= 1;
+            output[i] = b'0' + (value % 10) as u8;
+            value /= 10;
+            if value == 0 { break; }
+        }
+        core::str::from_utf8(&output[i..]).unwrap_or("")
+    }
+
     /// The event message is printable ASCII already retained by the reducer.
     /// Starting at 422 leaves room in the panel for all 84 six-unit cells.
     /// For OUTPUT/TOOL rows the UI-owned "NNB" at x386..404 reports the
@@ -170,6 +198,41 @@ mod tests {
     extern crate std;
     use super::*;
     use std::{format, vec};
+
+    #[test]
+    fn local_feed_window_badge_is_visible_and_confined_to_header() {
+        for (width, height) in [(960usize, 540usize), (800, 600), (1024, 768)] {
+            let render = |hidden: u64, first: u64, last: u64| {
+                let mut pixels = vec![0x18364f; width * height];
+                let mut f = Frame::new(&mut pixels, width, height, width, 0x18364f, false);
+                f.feed_window(hidden, first, last, 0xe3a24b);
+                pixels
+            };
+            let empty = render(0, 1, 8);
+            let a = render(1, 2, 9);
+            let b = render(2, 3, 9);
+            assert_ne!(empty, a, "missing window marker at {width}x{height}");
+            assert_ne!(a, b, "different local evictions same pixels at {width}x{height}");
+            let mut sample = vec![0u32; width * height];
+            let f = Frame::new(&mut sample, width, height, width, 0, false);
+            let (x0, x1, y0, y1) = (f.x(340), f.x(780), f.y(116), f.y(171));
+            let mut changed = 0usize;
+            for y in 0..height {
+                for x in 0..width {
+                    let i = y * width + x;
+                    if a[i] != b[i] {
+                        changed += 1;
+                        assert!(x >= x0 && x < x1 && y >= y0 && y < y1,
+                            "UI metadata escaped header at {width}x{height}");
+                    }
+                }
+            }
+            assert!(changed > 0);
+            let maximum = render(u64::MAX, u64::MAX, u64::MAX);
+            assert_ne!(empty, maximum, "20-digit status not painted");
+        }
+    }
+
     #[test]
     fn compact_view_fits_the_screen_and_preserves_visible_bounds() {
         for (w, h, geometry) in [
