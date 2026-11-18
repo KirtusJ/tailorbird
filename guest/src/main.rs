@@ -77,6 +77,11 @@ fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
     label(f, 335, 116, "TASK OUTPUT", 2, TEAL);
     label(f, 337, 150, ui.task.state.label(), 1, SOFT);
     f.rect(333, 173, 588, 2, GROUND);
+    // These are only rows omitted by the eight-row local GUI window.
+    // Service-sequence gaps and durable transcript readback remain PT-owned.
+    if let Some((first_seq, last_seq)) = ui.retained_feed_bounds() {
+        f.feed_window(ui.hidden_feed_rows(), first_seq, last_seq, AMBER);
+    }
     // An old grant can remain stored strictly to correlate late service
     // receipts after StopAccepted. Never let that non-actionable metadata
     // repaint a live-looking permission inspector or hide Stop/ANOMALY rows.
