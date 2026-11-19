@@ -400,7 +400,7 @@ impl Ui {
         self.decision_choice = None;
     }
 
-    fn start_task(&mut self, task_id: u64, seq: u64) {
+    fn start_task(&mut self, task_id: u64, seq: u64, consumes_local_submission: bool) {
         self.task = Task { id: task_id, seq, state: TaskState::Running };
         self.pending_submit = None;
         self.stop_intent_task = None;
@@ -409,9 +409,15 @@ impl Ui {
         self.decision_choice = None;
         self.count = 0;
         self.feed_hidden_rows = 0;
-        self.input.clear();
+        // An unsolicited/status-only Started must not erase a local editor
+        // draft. Only a matching keyed local admission consumes this input.
+        if consumes_local_submission { self.input.clear(); }
         self.log(seq, "START", "TASK START REPORTED");
-        self.notice("RUNNING - SERVICE REPORTED");
+        self.notice(if !consumes_local_submission && !self.input.is_empty() {
+            "TASK STARTED - UNSENT DRAFT RETAINED"
+        } else {
+            "RUNNING - SERVICE REPORTED"
+        });
     }
 
     pub fn intent(&mut self, action: Action) -> Option<Intent> {
@@ -553,7 +559,7 @@ impl Ui {
                     && task_id != self.task.id
                     && !self.task.state.is_active() =>
             {
-                self.start_task(task_id, seq);
+                self.start_task(task_id, seq, false);
                 true
             }
             BackendEvent::SubmissionStarted { idempotency_key, task_id, seq }
@@ -562,7 +568,7 @@ impl Ui {
                     && self.pending_submit.map(|p| p.idempotency_key)
                         == Some(idempotency_key) =>
             {
-                self.start_task(task_id, seq);
+                self.start_task(task_id, seq, true);
                 true
             }
             BackendEvent::SubmissionRejected { idempotency_key }
@@ -780,6 +786,56 @@ mod tests {
         u.feed_hidden_rows = u64::MAX;
         assert!(u.observe(BackendEvent::Output { task_id: 7, seq: 9, text: "x" }));
         assert_eq!(u.hidden_feed_rows(), u64::MAX);
+    }
+
+    #[test]
+    fn status_only_start_retains_unsent_editor_and_resets_feed_window() {
+        let mut u = Ui::new();
+        connected(&mut u);
+        for b in b"draft_A/case.rs" { assert!(u.input.push_ascii(*b)); }
+        let original = u.input;
+        assert!(u.observe(BackendEvent::Started { task_id: 7, seq: 1 }));
+        for seq in 2..=10 {
+            assert!(u.observe(BackendEvent::Output { task_id: 7, seq, text: "old" }));
+        }
+        assert_eq!(u.hidden_feed_rows(), 2);
+        assert!(u.observe(BackendEvent::Completed { task_id: 7, seq: 11 }));
+        assert_eq!(u.input, original);
+        assert!(u.observe(BackendEvent::Started { task_id: 8, seq: 1 }));
+        assert_eq!(u.input, original);
+        assert_eq!(u.hidden_feed_rows(), 0);
+        assert_eq!(u.retained_feed_bounds(), Some((1, 1)));
+        assert_eq!(u.notice.as_str(), "TASK STARTED - UNSENT DRAFT RETAINED");
+        assert!(!u.controls().submit_enabled);
+        assert!(u.observe(BackendEvent::Completed { task_id: 8, seq: 2 }));
+        assert_eq!(u.input, original);
+        assert!(u.controls().submit_enabled);
+    }
+
+    #[test]
+    fn keyed_local_start_consumes_editor_and_resets_feed_window() {
+        let mut u = Ui::new();
+        connected(&mut u);
+        assert!(u.observe(BackendEvent::Started { task_id: 7, seq: 1 }));
+        for seq in 2..=9 {
+            assert!(u.observe(BackendEvent::Output { task_id: 7, seq, text: "old" }));
+        }
+        assert_eq!(u.hidden_feed_rows(), 1);
+        assert!(u.observe(BackendEvent::Completed { task_id: 7, seq: 10 }));
+        for b in b"draft_A/case.rs" { assert!(u.input.push_ascii(*b)); }
+        let snapshot = u.input;
+        assert_eq!(u.intent(Action::Submit), Some(Intent::Submit {
+            idempotency_key: 1, prompt: snapshot, mode: Mode::Single
+        }));
+        assert!(!u.observe(BackendEvent::Started { task_id: 8, seq: 1 }));
+        assert_eq!(u.input, snapshot);
+        assert!(u.observe(BackendEvent::SubmissionStarted {
+            idempotency_key: 1, task_id: 8, seq: 1
+        }));
+        assert!(u.input.is_empty());
+        assert!(u.pending_submit.is_none());
+        assert_eq!(u.hidden_feed_rows(), 0);
+        assert_eq!(u.retained_feed_bounds(), Some((1, 1)));
     }
 
     #[test]
