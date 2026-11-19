@@ -73,16 +73,19 @@ pub struct PointerUi {
     // Physical primary-button edge latch. A drag-out or chord invalidates
     // capture but cannot turn a repeated held Down into a fresh click.
     primary_held: bool,
+    // Track Secondary/Middle when pressed before Primary, too.
+    nonprimary_held: [bool; 2],
 }
 
 impl PointerUi {
-    pub const fn new() -> Self { Self { captured: None, primary_held: false } }
+    pub const fn new() -> Self { Self { captured: None, primary_held: false, nonprimary_held: [false; 2] } }
 
     /// Must also be called when the OS reports pointer focus loss, unplug,
     /// screen resize/mode change, display ownership transfer or GUI exit.
     pub fn cancel(&mut self) {
         self.captured = None;
         self.primary_held = false;
+        self.nonprimary_held = [false; 2];
     }
 
     /// Only a primary-button DOWN, followed by UP in the same region, with
@@ -100,7 +103,10 @@ impl PointerUi {
                 // recreate a capture that Move already invalidated.
                 if self.primary_held { return None; }
                 self.primary_held = true;
-                if self.captured.is_none() && ui.service_epoch != u64::MAX {
+                if self.captured.is_none()
+                    && !self.nonprimary_held[0] && !self.nonprimary_held[1]
+                    && ui.service_epoch != u64::MAX
+                {
                     self.captured = if MODE_RECT.contains(e.x, e.y)
                         && ui.connected && ui.mode_pending.is_none()
                         && ui.pending_submit.is_none()
@@ -122,8 +128,13 @@ impl PointerUi {
                 None
             }
             PointerPhase::Down => {
-                // A chord invalidates capture, not the held-primary latch.
-                // Another primary Down before the real Up cannot rearm.
+                // Remember other held buttons regardless of press order.
+                // A new Primary Down during a chord must not arm a click.
+                match e.button {
+                    PointerButton::Secondary => self.nonprimary_held[0] = true,
+                    PointerButton::Middle => self.nonprimary_held[1] = true,
+                    PointerButton::Primary => unreachable!(),
+                }
                 self.captured = None;
                 None
             }
@@ -137,6 +148,11 @@ impl PointerUi {
             }
             PointerPhase::Up => {
                 if e.button != PointerButton::Primary {
+                    match e.button {
+                        PointerButton::Secondary => self.nonprimary_held[0] = false,
+                        PointerButton::Middle => self.nonprimary_held[1] = false,
+                        PointerButton::Primary => unreachable!(),
+                    }
                     self.captured = None;
                     return None;
                 }
@@ -306,6 +322,50 @@ mod tests {
         assert_eq!(pointer.input(event(50, 234, PointerPhase::Cancel), &mut ui), None);
         assert_eq!(pointer.input(event(50, 234, PointerPhase::Up), &mut ui), None);
         assert_eq!(ui.mode_pending, None);
+    }
+
+
+    #[test]
+    fn secondary_or_middle_first_chord_cannot_activate_mode() {
+        for other in [PointerButton::Secondary, PointerButton::Middle] {
+            let mut ui = connected();
+            let mut pointer = PointerUi::new();
+            let chord = |phase| PointerEvent {
+                x: 50, y: 234, button: other, phase,
+            };
+            assert_eq!(pointer.input(chord(PointerPhase::Down), &mut ui), None);
+            assert_eq!(pointer.input(event(50, 234, PointerPhase::Down), &mut ui), None);
+            assert_eq!(pointer.input(event(50, 234, PointerPhase::Up), &mut ui), None);
+            assert_eq!(ui.mode_pending, None);
+            assert_eq!(pointer.input(chord(PointerPhase::Up), &mut ui), None);
+
+            // Full release allows a fresh solitary primary gesture.
+            assert_eq!(pointer.input(event(50, 234, PointerPhase::Down), &mut ui), None);
+            assert_eq!(pointer.input(event(50, 234, PointerPhase::Up), &mut ui),
+                       Some(Intent::SetMode(Mode::Ongoing)));
+        }
+    }
+
+    #[test]
+    fn secondary_first_stop_press_requires_new_primary_edge() {
+        let mut ui = connected();
+        let mut pointer = PointerUi::new();
+        assert!(ui.observe(BackendEvent::Started { task_id: 7, seq: 1 }));
+        let other_down = PointerEvent {
+            x: 60, y: 340, button: PointerButton::Secondary, phase: PointerPhase::Down,
+        };
+        let other_up = PointerEvent { phase: PointerPhase::Up, ..other_down };
+        assert_eq!(pointer.input(other_down, &mut ui), None);
+        assert_eq!(pointer.input(event(60, 340, PointerPhase::Down), &mut ui), None);
+        assert_eq!(pointer.input(other_up, &mut ui), None);
+        // Auto-repeat after Secondary lifts is not a fresh Primary press.
+        assert_eq!(pointer.input(event(60, 340, PointerPhase::Down), &mut ui), None);
+        assert_eq!(pointer.input(event(60, 340, PointerPhase::Up), &mut ui), None);
+        assert_eq!(ui.task.state, TaskState::Running);
+
+        assert_eq!(pointer.input(event(60, 340, PointerPhase::Down), &mut ui), None);
+        assert_eq!(pointer.input(event(60, 340, PointerPhase::Up), &mut ui),
+                   Some(Intent::Stop { task_id: 7 }));
     }
 
     #[test]
