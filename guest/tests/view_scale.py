@@ -29,6 +29,8 @@ TEXT = bytes.fromhex("f2f7fc")
 FONT = Path(__file__).resolve().parents[4] / "PCP_OS_Rust/crates/pcpos-kernel/src/font.rs"
 GROUND = bytes.fromhex("10283f")
 SOFT = bytes.fromhex("9fb4c8")
+BAD = bytes.fromhex("f08a72")
+AMBER = bytes.fromhex("e3a24b")
 
 
 def kernel_glyphs():
@@ -141,6 +143,29 @@ def selftest_f6_receipts():
     print("F6 receipt gate: 1 valid and 2 missing-check controls PASS", flush=True)
 
 
+def require_offline_status_receipts(receipts):
+    # Every native frame must prove all three actual offline identity labels
+    # and each host-side whole-label erasure must be refused.
+    expected = {"native_frames": 4, "erased_label_negatives": 12}
+    if receipts != expected:
+        raise AssertionError(f"offline status oracle incomplete: {receipts!r} != {expected!r}")
+
+
+def selftest_offline_status_receipts():
+    complete = {"native_frames": 4, "erased_label_negatives": 12}
+    require_offline_status_receipts(dict(complete))
+    for key in complete:
+        damaged = dict(complete)
+        damaged[key] -= 1
+        try:
+            require_offline_status_receipts(damaged)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError(f"missing offline status check accepted: {key}")
+    print("Offline-status receipt gate: 1 valid and 2 skipped-check controls PASS", flush=True)
+
+
 def check(kernel, app, measurement, folder, small):
     folder.mkdir(parents=True, exist_ok=False)
     w, h = (800, 600) if small else (1920, 1080)
@@ -214,6 +239,7 @@ def check(kernel, app, measurement, folder, small):
     mode_receipts = {"native_frames": 0, "erased_heading_negatives": 0,
                      "erased_state_negatives": 0}
     f6_receipts = {"native_frames": 0, "erased_badge_negatives": 0}
+    offline_receipts = {"native_frames": 0, "erased_label_negatives": 0}
 
     def stop_text_ok(rgb, mode, text, x, y, step, cell_width, cell_height, ink, background=GROUND):
         for i, ch in enumerate(text):
@@ -334,6 +360,45 @@ def check(kernel, app, measurement, folder, small):
         f6_receipts["native_frames"] += 1
         f6_receipts["erased_badge_negatives"] += 1
 
+
+    # Pinned native offline preview at this exact guest revision: Ui::new()
+    # starts connected=false, Model::Unknown. This is a display identity
+    # check, not a claim about a trusted service or an authenticated model.
+    offline_labels = (
+        ("NO SERVICE", 737, 27, BAD),
+        ("CONNECTION", 38, 115, TEAL),
+        ("NOT CONNECTED", 38, 147, AMBER),
+    )
+
+    def offline_label_ok(rgb, mode, label, x, y, ink):
+        # The first label occupies the top PANEL; the latter two the
+        # left-sidebar PANEL. All use the actual guest Frame::text 2x cells.
+        return stop_text_ok(rgb, mode, label, x, y, 12, 12, 20, ink, PANEL)
+
+    def erased_offline_label(rgb, mode, label, x, y):
+        # Host-only mutation of an original native P6; never modify the
+        # guest or pretend this adverse frame was produced by QEMU.
+        altered = bytearray(rgb)
+        for i in range(len(label)):
+            left, top, right, bottom = box(mode, x+i*12, y, 12, 20)
+            for yy in range(top, bottom):
+                offset = (yy*w + left)*3
+                altered[offset:offset+(right-left)*3] = PANEL*(right-left)
+        return bytes(altered)
+
+    def check_offline_positive_and_negatives(rgb, mode):
+        for label, x, y, ink in offline_labels:
+            assert offline_label_ok(rgb, mode, label, x, y, ink), (
+                f"native offline status {label!r} differs from pinned source RGB"
+            )
+            erased = erased_offline_label(rgb, mode, label, x, y)
+            assert erased != rgb, f"offline status {label!r} erasure removed no ink"
+            assert not offline_label_ok(erased, mode, label, x, y, ink), (
+                f"erased offline status {label!r} accepted"
+            )
+            offline_receipts["erased_label_negatives"] += 1
+        offline_receipts["native_frames"] += 1
+
     def editor(rgb, mode):
         return area(rgb,mode,140,460,10,20)
 
@@ -351,11 +416,13 @@ def check(kernel, app, measurement, folder, small):
         check_stop_positive_and_negatives(empty,"fit")
         check_mode_positive_and_negatives(empty,"fit")
         check_f6_positive_and_negative(empty,"fit")
+        check_offline_positive_and_negatives(empty,"fit")
         m.key("a")
         typed = sample("typed",lambda rgb: form(rgb,"fit") and editor(rgb,"fit") != editor(empty,"fit"))
         check_stop_positive_and_negatives(typed,"fit")
         check_mode_positive_and_negatives(typed,"fit")
         check_f6_positive_and_negative(typed,"fit")
+        check_offline_positive_and_negatives(typed,"fit")
         m.key("f6")
         compact = sample("compact",lambda rgb: form(rgb,"compact") and
                          badge(rgb,"compact") != badge(typed,"fit") and
@@ -363,6 +430,7 @@ def check(kernel, app, measurement, folder, small):
         check_stop_positive_and_negatives(compact,"compact")
         check_mode_positive_and_negatives(compact,"compact")
         check_f6_positive_and_negative(compact,"compact")
+        check_offline_positive_and_negatives(compact,"compact")
         if small:
             assert editor(compact,"compact") == editor(typed,"fit")
         for mode, rgb in [("fit",typed),("compact",compact)]:
@@ -375,10 +443,13 @@ def check(kernel, app, measurement, folder, small):
         check_stop_positive_and_negatives(fit_again,"fit")
         check_mode_positive_and_negatives(fit_again,"fit")
         check_f6_positive_and_negative(fit_again,"fit")
+        check_offline_positive_and_negatives(fit_again,"fit")
         require_stop_receipts(stop_receipts, small)
         require_mode_receipts(mode_receipts)
         require_f6_receipts(f6_receipts)
+        require_offline_status_receipts(offline_receipts)
         report["f6_badge_source_rgb"] = dict(f6_receipts)
+        report["offline_status_source_rgb"] = dict(offline_receipts)
         report["disabled_stop_source_rgb"] = dict(stop_receipts)
         report["mode_source_rgb"] = dict(mode_receipts)
         m.key("esc")
@@ -400,6 +471,7 @@ if __name__ == "__main__":
     selftest_stop_receipts()
     selftest_mode_receipts()
     selftest_f6_receipts()
+    selftest_offline_status_receipts()
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("kernel","app","output"):
         parser.add_argument(name,type=Path)
