@@ -51,7 +51,7 @@ def double_glyphs():
     return [raw[i:i+800] for i in range(0, len(raw), 800)]
 
 
-def stop_cell_rgb(glyphs, doubled, ch, width, height, ink):
+def stop_cell_rgb(glyphs, doubled, ch, width, height, ink, background=GROUND):
     """Separate source-exact replay of Frame::glyph's font choice and RGB blend."""
     if width < 1 or height < 1 or width > 40 or height > 60:
         raise AssertionError("outside pinned native Stop font regime")
@@ -65,7 +65,7 @@ def stop_cell_rgb(glyphs, doubled, ch, width, height, ink):
             alpha = sum(mask[yy*sw+xx] for yy in range(y0,y1)
                         for xx in range(x0,x1)) // ((x1-x0)*(y1-y0))
             result.extend((base*(255-alpha)+channel*alpha+127)//255
-                          for base,channel in zip(GROUND,ink))
+                          for base,channel in zip(background,ink))
     return bytes(result)
 
 
@@ -96,6 +96,28 @@ def selftest_stop_receipts():
             else:
                 raise AssertionError(f"missing {key} not refused at small={small}")
     print("Stop receipt gate: 2 valid and 10 skipped-check adverse controls PASS", flush=True)
+
+def require_mode_receipts(receipts):
+    expected = {"native_frames": 4, "erased_heading_negatives": 4,
+                "erased_state_negatives": 4}
+    if receipts != expected:
+        raise AssertionError(f"native MODE optical checks incomplete: {receipts!r} != {expected!r}")
+
+
+def selftest_mode_receipts():
+    expected = {"native_frames": 4, "erased_heading_negatives": 4,
+                "erased_state_negatives": 4}
+    require_mode_receipts(dict(expected))
+    for key in expected:
+        missing = dict(expected)
+        missing[key] -= 1
+        try:
+            require_mode_receipts(missing)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError(f"missing MODE check not refused: {key}")
+    print("MODE receipt gate: 1 valid and 3 missing-check controls PASS", flush=True)
 
 
 def check(kernel, app, measurement, folder, small):
@@ -168,12 +190,14 @@ def check(kernel, app, measurement, folder, small):
     stop_receipts = {"native_frames": 0, "erased_letter_negatives": 0,
                      "heading_frames": 0, "erased_heading_negatives": 0,
                      "erased_caption_negatives": 0}
+    mode_receipts = {"native_frames": 0, "erased_heading_negatives": 0,
+                     "erased_state_negatives": 0}
 
-    def stop_text_ok(rgb, mode, text, x, y, step, cell_width, cell_height, ink):
+    def stop_text_ok(rgb, mode, text, x, y, step, cell_width, cell_height, ink, background=GROUND):
         for i, ch in enumerate(text):
             bounds = box(mode,x+i*step,y,cell_width,cell_height)
             left, top, right, bottom = bounds
-            expected = stop_cell_rgb(glyphs,doubled,ch,right-left,bottom-top,ink)
+            expected = stop_cell_rgb(glyphs,doubled,ch,right-left,bottom-top,ink,background)
             if crop(rgb,w,bounds) != expected:
                 return False
         return True
@@ -229,6 +253,39 @@ def check(kernel, app, measurement, folder, small):
         stop_receipts["erased_heading_negatives"] += 1
         stop_receipts["erased_caption_negatives"] += 1
 
+
+    def mode_heading_ok(rgb, mode):
+        # Heading uses PANEL background, while the button state uses GROUND.
+        return stop_text_ok(rgb,mode,"MODE",38,187,12,12,20,TEAL,PANEL)
+
+    def mode_state_ok(rgb, mode):
+        # Offline native guest begins in SINGLE REQUEST; F6 changes only view.
+        return stop_text_ok(rgb,mode,"SINGLE REQUEST",48,232,12,12,20,TEXT)
+
+    def erased_mode_text(rgb, mode, heading):
+        text, x, y, background = (("MODE",38,187,PANEL) if heading
+                                  else ("SINGLE REQUEST",48,232,GROUND))
+        damaged = bytearray(rgb)
+        for i in range(len(text)):
+            left, top, right, bottom = box(mode,x+i*12,y,12,20)
+            for row in range(top,bottom):
+                offset = (row*w+left)*3
+                damaged[offset:offset+(right-left)*3] = background*(right-left)
+        return bytes(damaged)
+
+    def check_mode_positive_and_negatives(rgb, mode):
+        assert mode_heading_ok(rgb,mode), "native MODE heading differs from source glyphs"
+        assert mode_state_ok(rgb,mode), "native mode-state text differs from source glyphs"
+        erased_heading = erased_mode_text(rgb,mode,True)
+        assert erased_heading != rgb, "MODE heading adverse control did not alter native ink"
+        assert not mode_heading_ok(erased_heading,mode), "erased MODE heading accepted"
+        erased_state = erased_mode_text(rgb,mode,False)
+        assert erased_state != rgb, "mode-state adverse control did not alter native ink"
+        assert not mode_state_ok(erased_state,mode), "erased mode state accepted"
+        mode_receipts["native_frames"] += 1
+        mode_receipts["erased_heading_negatives"] += 1
+        mode_receipts["erased_state_negatives"] += 1
+
     def editor(rgb, mode):
         return area(rgb,mode,140,460,10,20)
 
@@ -244,14 +301,17 @@ def check(kernel, app, measurement, folder, small):
         wait_serial("Tailorbird first frame presented")
         empty = sample("fit",lambda rgb: form(rgb,"fit"))
         check_stop_positive_and_negatives(empty,"fit")
+        check_mode_positive_and_negatives(empty,"fit")
         m.key("a")
         typed = sample("typed",lambda rgb: form(rgb,"fit") and editor(rgb,"fit") != editor(empty,"fit"))
         check_stop_positive_and_negatives(typed,"fit")
+        check_mode_positive_and_negatives(typed,"fit")
         m.key("f6")
         compact = sample("compact",lambda rgb: form(rgb,"compact") and
                          badge(rgb,"compact") != badge(typed,"fit") and
                          len(set(editor(rgb,"compact")[::3])) > 1)
         check_stop_positive_and_negatives(compact,"compact")
+        check_mode_positive_and_negatives(compact,"compact")
         if small:
             assert editor(compact,"compact") == editor(typed,"fit")
         for mode, rgb in [("fit",typed),("compact",compact)]:
@@ -262,8 +322,11 @@ def check(kernel, app, measurement, folder, small):
         m.key("f6")
         fit_again = sample("fit_again",lambda rgb: rgb == typed)
         check_stop_positive_and_negatives(fit_again,"fit")
+        check_mode_positive_and_negatives(fit_again,"fit")
         require_stop_receipts(stop_receipts, small)
+        require_mode_receipts(mode_receipts)
         report["disabled_stop_source_rgb"] = dict(stop_receipts)
+        report["mode_source_rgb"] = dict(mode_receipts)
         m.key("esc")
         wait_serial(f"{app.name} ended DONE: exit 0")
         sample("returned",lambda rgb: menu(rgb) and crop(rgb,w,(0,0,520,150)) == selection)
@@ -281,6 +344,7 @@ def check(kernel, app, measurement, folder, small):
 
 if __name__ == "__main__":
     selftest_stop_receipts()
+    selftest_mode_receipts()
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("kernel","app","output"):
         parser.add_argument(name,type=Path)
