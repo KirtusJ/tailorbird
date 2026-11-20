@@ -264,6 +264,32 @@ def selftest_task_section_receipts():
           flush=True)
 
 
+def require_affordance_receipts(receipts):
+    # The local mode action and editor-capacity disclosures must each be
+    # source-RGB checked and adversarially erased in four true guest states.
+    expected = {"native_frames": 4, "erased_affordance_negatives": 16}
+    if receipts != expected:
+        raise AssertionError(
+            f"native mode/request affordance checks incomplete: {receipts!r} != {expected!r}"
+        )
+
+
+def selftest_affordance_receipts():
+    complete = {"native_frames": 4, "erased_affordance_negatives": 16}
+    require_affordance_receipts(dict(complete))
+    for key in complete:
+        missing = dict(complete)
+        missing[key] -= 1
+        try:
+            require_affordance_receipts(missing)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError(f"missing native affordance check accepted: {key}")
+    print("Mode/request affordance receipt gate: 1 valid, 2 missing-check refusals PASS",
+          flush=True)
+
+
 def check(kernel, app, measurement, folder, small):
     folder.mkdir(parents=True, exist_ok=False)
     w, h = (800, 600) if small else (1920, 1080)
@@ -344,6 +370,7 @@ def check(kernel, app, measurement, folder, small):
                          "erased_exit_negatives": 0}
     empty_output_receipts = {"native_frames": 0, "erased_guidance_negatives": 0}
     task_section_receipts = {"native_frames": 0, "erased_label_negatives": 0}
+    affordance_receipts = {"native_frames": 0, "erased_affordance_negatives": 0}
 
     def stop_text_ok(rgb, mode, text, x, y, step, cell_width, cell_height, ink, background=GROUND):
         for i, ch in enumerate(text):
@@ -652,6 +679,35 @@ def check(kernel, app, measurement, folder, small):
             task_section_receipts["erased_label_negatives"] += 1
         task_section_receipts["native_frames"] += 1
 
+    # These four already-painted native UI disclosures are separate from the
+    # previously guarded MODE state, F6 badge, request count and footer legend.
+    # In particular, the actual mode-change command and 120-byte capacity
+    # must remain legible even while the model and service are unavailable.
+    affordance_labels = (
+        ("ALT M CHANGE MODE", 40, 287, SOFT),
+        ("REQUEST", 32, 469, TEAL),
+        ("BYTES", 32, 489, TEAL),
+        ("/120", 102, 489, SOFT),
+    )
+
+    def affordance_label_ok(rgb, mode, label, x, y, ink):
+        return stop_text_ok(rgb, mode, label, x, y, 6, 6, 10, ink, PANEL)
+
+    def check_affordance_positive_and_negatives(rgb, mode):
+        for label, x, y, ink in affordance_labels:
+            assert affordance_label_ok(rgb, mode, label, x, y, ink), (
+                f"native mode/request affordance {label!r} differs from source RGB"
+            )
+            # Change only a host copy of the native screenshot; do not alter
+            # the original guest P6 or assert that QEMU rendered the damage.
+            erased = erased_empty_output_label(rgb, mode, label, x, y, 6, 10)
+            assert erased != rgb, f"no real native ink removed for {label!r}"
+            assert not affordance_label_ok(erased, mode, label, x, y, ink), (
+                f"erased native mode/request affordance {label!r} accepted"
+            )
+            affordance_receipts["erased_affordance_negatives"] += 1
+        affordance_receipts["native_frames"] += 1
+
     def editor(rgb, mode):
         return area(rgb,mode,140,460,10,20)
 
@@ -674,6 +730,7 @@ def check(kernel, app, measurement, folder, small):
         check_shortcut_legend(empty,"fit")
         check_empty_output_positive_and_negatives(empty,"fit")
         check_task_section_positive_and_negatives(empty,"fit")
+        check_affordance_positive_and_negatives(empty,"fit")
         m.key("a")
         typed = sample("typed",lambda rgb: form(rgb,"fit") and editor(rgb,"fit") != editor(empty,"fit"))
         check_stop_positive_and_negatives(typed,"fit")
@@ -684,6 +741,7 @@ def check(kernel, app, measurement, folder, small):
         check_shortcut_legend(typed,"fit")
         check_empty_output_positive_and_negatives(typed,"fit")
         check_task_section_positive_and_negatives(typed,"fit")
+        check_affordance_positive_and_negatives(typed,"fit")
         m.key("f6")
         compact = sample("compact",lambda rgb: form(rgb,"compact") and
                          badge(rgb,"compact") != badge(typed,"fit") and
@@ -696,6 +754,7 @@ def check(kernel, app, measurement, folder, small):
         check_shortcut_legend(compact,"compact")
         check_empty_output_positive_and_negatives(compact,"compact")
         check_task_section_positive_and_negatives(compact,"compact")
+        check_affordance_positive_and_negatives(compact,"compact")
         if small:
             assert editor(compact,"compact") == editor(typed,"fit")
         for mode, rgb in [("fit",typed),("compact",compact)]:
@@ -713,6 +772,7 @@ def check(kernel, app, measurement, folder, small):
         check_shortcut_legend(fit_again,"fit")
         check_empty_output_positive_and_negatives(fit_again,"fit")
         check_task_section_positive_and_negatives(fit_again,"fit")
+        check_affordance_positive_and_negatives(fit_again,"fit")
         require_stop_receipts(stop_receipts, small)
         require_mode_receipts(mode_receipts)
         require_f6_receipts(f6_receipts)
@@ -721,12 +781,14 @@ def check(kernel, app, measurement, folder, small):
         require_shortcut_legend_receipts(shortcut_receipts)
         require_empty_output_receipts(empty_output_receipts)
         require_task_section_receipts(task_section_receipts)
+        require_affordance_receipts(affordance_receipts)
         report["f6_badge_source_rgb"] = dict(f6_receipts)
         report["offline_status_source_rgb"] = dict(offline_receipts)
         report["editor_source_rgb"] = dict(editor_receipts)
         report["keyboard_shortcut_legend_source_rgb"] = dict(shortcut_receipts)
         report["empty_output_guidance_source_rgb"] = dict(empty_output_receipts)
         report["task_section_source_rgb"] = dict(task_section_receipts)
+        report["mode_request_affordance_source_rgb"] = dict(affordance_receipts)
         report["disabled_stop_source_rgb"] = dict(stop_receipts)
         report["mode_source_rgb"] = dict(mode_receipts)
         m.key("esc")
@@ -753,6 +815,7 @@ if __name__ == "__main__":
     selftest_shortcut_legend_receipts()
     selftest_empty_output_receipts()
     selftest_task_section_receipts()
+    selftest_affordance_receipts()
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("kernel","app","output"):
         parser.add_argument(name,type=Path)
