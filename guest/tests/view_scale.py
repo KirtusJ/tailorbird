@@ -152,7 +152,7 @@ def check(kernel, app, measurement, folder, small):
 
     def check_stop_positive_and_negatives(rgb, mode):
         assert stop_caption_ok(rgb,mode), "original native disabled Stop caption differs from source glyphs"
-        for i in (1,3):  # O and S, the faint characters missed by threshold-only masks
+        for i in (1,5):  # O and S, the faint characters missed by threshold-only masks
             mutated = erased_stop_letter(rgb,mode,i)
             assert mutated != rgb, "Stop adverse control did not alter actual ink"
             assert not stop_caption_ok(mutated,mode), "missing Stop caption letter was accepted"
