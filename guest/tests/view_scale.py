@@ -165,6 +165,28 @@ def selftest_offline_status_receipts():
             raise AssertionError(f"missing offline status check accepted: {key}")
     print("Offline-status receipt gate: 1 valid and 2 skipped-check controls PASS", flush=True)
 
+def require_editor_receipts(receipts):
+    expected = {"native_frames": 4, "case_negatives": 4,
+                "count_negatives": 3}
+    if receipts != expected:
+        raise AssertionError(f"native request-editor oracle incomplete: {receipts!r} != {expected!r}")
+
+
+def selftest_editor_receipts():
+    complete = {"native_frames": 4, "case_negatives": 4,
+                "count_negatives": 3}
+    require_editor_receipts(dict(complete))
+    for key in complete:
+        missing = dict(complete)
+        missing[key] -= 1
+        try:
+            require_editor_receipts(missing)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError(f"missing native editor check accepted: {key}")
+    print("Editor receipt gate: 1 valid and 3 missing-check controls PASS", flush=True)
+
 
 def check(kernel, app, measurement, folder, small):
     folder.mkdir(parents=True, exist_ok=False)
@@ -240,6 +262,8 @@ def check(kernel, app, measurement, folder, small):
                      "erased_state_negatives": 0}
     f6_receipts = {"native_frames": 0, "erased_badge_negatives": 0}
     offline_receipts = {"native_frames": 0, "erased_label_negatives": 0}
+    editor_receipts = {"native_frames": 0, "case_negatives": 0,
+                       "count_negatives": 0}
 
     def stop_text_ok(rgb, mode, text, x, y, step, cell_width, cell_height, ink, background=GROUND):
         for i, ch in enumerate(text):
@@ -399,6 +423,51 @@ def check(kernel, app, measurement, folder, small):
             offline_receipts["erased_label_negatives"] += 1
         offline_receipts["native_frames"] += 1
 
+
+    # The native preview types lower-case 'a'. Source-identity checks must
+    # distinguish that byte from uppercase 'A', as well as 0 versus 1 BYTES.
+    # Mere changed-pixel presence in editor() cannot establish either fact.
+    def editor_glyph_ok(rgb, mode, character):
+        return stop_text_ok(rgb, mode, character, 140, 460, 10, 10, 20, TEXT, PANEL)
+
+    def editor_count_ok(rgb, mode, digit):
+        return stop_text_ok(rgb, mode, digit, 70, 489, 6, 6, 10, TEXT, PANEL)
+
+    def substitute_editor_cell(rgb, mode, x, y, cell_w, cell_h, character):
+        left, top, right, bottom = box(mode, x, y, cell_w, cell_h)
+        expected = stop_cell_rgb(glyphs, doubled, character,
+                                 right-left, bottom-top, TEXT, PANEL)
+        amended = bytearray(rgb)
+        cell_w_rgb = (right-left)*3
+        for yy in range(top, bottom):
+            out = (yy*w+left)*3
+            offset = (yy-top)*cell_w_rgb
+            amended[out:out+cell_w_rgb] = expected[offset:offset+cell_w_rgb]
+        return bytes(amended)
+
+    def check_editor_positive_and_negatives(rgb, mode, character, digit):
+        assert editor_glyph_ok(rgb, mode, character), (
+            f"native editor {character!r} differs from case-sensitive kernel glyph"
+        )
+        assert editor_count_ok(rgb, mode, digit), (
+            f"native editor BYTES {digit!r} differs from kernel glyph"
+        )
+        # Host-only injection into the empty editor, or case flip of typed 'a'.
+        injected = substitute_editor_cell(rgb, mode, 140, 460, 10, 20, "A")
+        assert injected != rgb, "editor adverse case control did not change pixels"
+        assert not editor_glyph_ok(injected, mode, character), (
+            "wrong-case/nonempty editor host copy accepted"
+        )
+        editor_receipts["case_negatives"] += 1
+        if digit == "1":
+            reset = substitute_editor_cell(rgb, mode, 70, 489, 6, 10, "0")
+            assert reset != rgb, "BYTES reset adverse control did not change pixels"
+            assert not editor_count_ok(reset, mode, digit), (
+                "wrong request byte count host copy accepted"
+            )
+            editor_receipts["count_negatives"] += 1
+        editor_receipts["native_frames"] += 1
+
     def editor(rgb, mode):
         return area(rgb,mode,140,460,10,20)
 
@@ -417,12 +486,14 @@ def check(kernel, app, measurement, folder, small):
         check_mode_positive_and_negatives(empty,"fit")
         check_f6_positive_and_negative(empty,"fit")
         check_offline_positive_and_negatives(empty,"fit")
+        check_editor_positive_and_negatives(empty,"fit"," ","0")
         m.key("a")
         typed = sample("typed",lambda rgb: form(rgb,"fit") and editor(rgb,"fit") != editor(empty,"fit"))
         check_stop_positive_and_negatives(typed,"fit")
         check_mode_positive_and_negatives(typed,"fit")
         check_f6_positive_and_negative(typed,"fit")
         check_offline_positive_and_negatives(typed,"fit")
+        check_editor_positive_and_negatives(typed,"fit","a","1")
         m.key("f6")
         compact = sample("compact",lambda rgb: form(rgb,"compact") and
                          badge(rgb,"compact") != badge(typed,"fit") and
@@ -431,6 +502,7 @@ def check(kernel, app, measurement, folder, small):
         check_mode_positive_and_negatives(compact,"compact")
         check_f6_positive_and_negative(compact,"compact")
         check_offline_positive_and_negatives(compact,"compact")
+        check_editor_positive_and_negatives(compact,"compact","a","1")
         if small:
             assert editor(compact,"compact") == editor(typed,"fit")
         for mode, rgb in [("fit",typed),("compact",compact)]:
@@ -444,12 +516,15 @@ def check(kernel, app, measurement, folder, small):
         check_mode_positive_and_negatives(fit_again,"fit")
         check_f6_positive_and_negative(fit_again,"fit")
         check_offline_positive_and_negatives(fit_again,"fit")
+        check_editor_positive_and_negatives(fit_again,"fit","a","1")
         require_stop_receipts(stop_receipts, small)
         require_mode_receipts(mode_receipts)
         require_f6_receipts(f6_receipts)
         require_offline_status_receipts(offline_receipts)
+        require_editor_receipts(editor_receipts)
         report["f6_badge_source_rgb"] = dict(f6_receipts)
         report["offline_status_source_rgb"] = dict(offline_receipts)
+        report["editor_source_rgb"] = dict(editor_receipts)
         report["disabled_stop_source_rgb"] = dict(stop_receipts)
         report["mode_source_rgb"] = dict(mode_receipts)
         m.key("esc")
@@ -472,6 +547,7 @@ if __name__ == "__main__":
     selftest_mode_receipts()
     selftest_f6_receipts()
     selftest_offline_status_receipts()
+    selftest_editor_receipts()
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("kernel","app","output"):
         parser.add_argument(name,type=Path)
