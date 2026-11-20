@@ -23,6 +23,43 @@ PANEL = bytes.fromhex("18364f")
 TEXT = bytes.fromhex("f2f7fc")
 
 
+# Independent source-font oracle for the disabled Stop caption. Checking the
+# full original RGB glyph cells catches missing faint letters that a contrast
+# threshold or a single-color-presence assertion would silently accept.
+FONT = Path(__file__).resolve().parents[4] / "PCP_OS_Rust/crates/pcpos-kernel/src/font.rs"
+GROUND = bytes.fromhex("10283f")
+SOFT = bytes.fromhex("9fb4c8")
+
+
+def kernel_glyphs():
+    source = FONT.read_text()
+    marker = "pub static GLYPHS: [[u8; 200]; 95] = ["
+    if source.count(marker) != 1:
+        raise AssertionError("kernel font table declaration changed")
+    values = [int(x) for x in re.findall(r"\\b\\d+\\b",
+              source.split(marker, 1)[1].split("];", 1)[0])]
+    if len(values) != 95 * 200 or any(x > 255 for x in values):
+        raise AssertionError("kernel font coverage table malformed")
+    return [values[i:i+200] for i in range(0, len(values), 200)]
+
+
+def stop_cell_rgb(glyphs, ch, width, height):
+    """Separate Python replay of Frame::glyph's exact 10x20 box filter/blend."""
+    if width < 1 or height < 1 or width > 10 or height > 20:
+        raise AssertionError("outside original single-size font regime")
+    mask = glyphs[ord(ch) - 32]
+    result = bytearray()
+    for y in range(height):
+        y0, y1 = y*20//height, max((y+1)*20//height, y*20//height+1)
+        for x in range(width):
+            x0, x1 = x*10//width, max((x+1)*10//width, x*10//width+1)
+            alpha = sum(mask[yy*10+xx] for yy in range(y0,y1)
+                        for xx in range(x0,x1)) // ((x1-x0)*(y1-y0))
+            result.extend((base*(255-alpha)+ink*alpha+127)//255
+                          for base,ink in zip(GROUND,SOFT))
+    return bytes(result)
+
+
 def check(kernel, app, measurement, folder, small):
     folder.mkdir(parents=True, exist_ok=False)
     w, h = (800, 600) if small else (1920, 1080)
@@ -86,6 +123,40 @@ def check(kernel, app, measurement, folder, small):
         damaged[start:start+3] = TEAL
         return bytes(damaged)
 
+
+    glyphs = kernel_glyphs()
+    caption = "NO TASK"
+
+    def stop_caption_ok(rgb, mode):
+        # 800px uses 5/6 source scaling in either F6 preference; 1080p
+        # Compact uses 1x. 1080p Fit uses the separate 2x font, so it is
+        # intentionally excluded from this 10x20-source-only oracle.
+        if not (small or mode == "compact"):
+            raise AssertionError("unsupported font size for Stop oracle")
+        for i, ch in enumerate(caption):
+            bounds = box(mode,48+i*6,361,6,10)
+            left, top, right, bottom = bounds
+            if crop(rgb,w,bounds) != stop_cell_rgb(glyphs,ch,right-left,bottom-top):
+                return False
+        return True
+
+    def erased_stop_letter(rgb, mode, i):
+        # Deliberately damage a HOST COPY of an actually captured P6 frame,
+        # leaving the original capture and other six cells unchanged.
+        left, top, right, bottom = box(mode,48+i*6,361,6,10)
+        damaged = bytearray(rgb)
+        for y in range(top,bottom):
+            offset = (y*w+left)*3
+            damaged[offset:offset+(right-left)*3] = GROUND*(right-left)
+        return bytes(damaged)
+
+    def check_stop_positive_and_negatives(rgb, mode):
+        assert stop_caption_ok(rgb,mode), "original native disabled Stop caption differs from source glyphs"
+        for i in (1,3):  # O and S, the faint characters missed by threshold-only masks
+            mutated = erased_stop_letter(rgb,mode,i)
+            assert mutated != rgb, "Stop adverse control did not alter actual ink"
+            assert not stop_caption_ok(mutated,mode), "missing Stop caption letter was accepted"
+
     def editor(rgb, mode):
         return area(rgb,mode,140,460,10,20)
 
@@ -100,12 +171,15 @@ def check(kernel, app, measurement, folder, small):
         wait_serial(f"starting {app.name} ({app.stat().st_size} bytes, SHA-256 {report['app_sha256']})")
         wait_serial("Tailorbird first frame presented")
         empty = sample("fit",lambda rgb: form(rgb,"fit"))
+        if small: check_stop_positive_and_negatives(empty,"fit")
         m.key("a")
         typed = sample("typed",lambda rgb: form(rgb,"fit") and editor(rgb,"fit") != editor(empty,"fit"))
+        if small: check_stop_positive_and_negatives(typed,"fit")
         m.key("f6")
         compact = sample("compact",lambda rgb: form(rgb,"compact") and
                          badge(rgb,"compact") != badge(typed,"fit") and
                          len(set(editor(rgb,"compact")[::3])) > 1)
+        check_stop_positive_and_negatives(compact,"compact")
         if small:
             assert editor(compact,"compact") == editor(typed,"fit")
         for mode, rgb in [("fit",typed),("compact",compact)]:
@@ -114,7 +188,10 @@ def check(kernel, app, measurement, folder, small):
                 f"{mode}: erased title with one teal pixel was accepted"
             )
         m.key("f6")
-        sample("fit_again",lambda rgb: rgb == typed)
+        fit_again = sample("fit_again",lambda rgb: rgb == typed)
+        if small: check_stop_positive_and_negatives(fit_again,"fit")
+        report["disabled_stop_source_rgb"] = {"native_frames": 4 if small else 1,
+                                               "erased_letter_negatives": 8 if small else 2}
         m.key("esc")
         wait_serial(f"{app.name} ended DONE: exit 0")
         sample("returned",lambda rgb: menu(rgb) and crop(rgb,w,(0,0,520,150)) == selection)
