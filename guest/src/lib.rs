@@ -215,6 +215,9 @@ pub struct PendingSubmit {
 pub struct Ui {
     /// This launch’s display preference. The desktop mode stays owned by the kernel.
     pub compact_view: bool,
+    /// Local presentation revision for F6 pointer-capture invalidation.
+    /// Not a trusted OS display-geometry or input-device generation.
+    pub(crate) view_epoch: u64,
     pub input: Text<INPUT_LIMIT>,
     /// A Submit intent has been emitted but no matching admission/refusal
     /// readback has arrived. Preserve it across service loss/reconnect.
@@ -257,7 +260,7 @@ pub struct Ui {
 impl Ui {
     pub const fn new() -> Self {
         Self {
-            compact_view: false,
+            compact_view: false, view_epoch: 0,
             input: Text::new(), pending_submit: None, next_submit_key: 1,
             mode: Mode::Single, mode_pending: None,
             model: Model::Unknown, connected: false, service_epoch: 0,
