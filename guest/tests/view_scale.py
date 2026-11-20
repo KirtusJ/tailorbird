@@ -60,6 +60,32 @@ def stop_cell_rgb(glyphs, ch, width, height):
     return bytes(result)
 
 
+def require_stop_receipts(receipts, small):
+    """Refuse success if any source-RGB frame or erased-letter check was skipped."""
+    expected = {"native_frames": 4 if small else 1,
+                "erased_letter_negatives": 8 if small else 2}
+    if receipts != expected:
+        raise AssertionError(f"disabled Stop oracle checks incomplete: {receipts!r} != {expected!r}")
+
+
+def selftest_stop_receipts():
+    """Host-only missing-check controls, independent of actual QEMU frames."""
+    for small in (False, True):
+        expected = {"native_frames": 4 if small else 1,
+                    "erased_letter_negatives": 8 if small else 2}
+        require_stop_receipts(dict(expected), small)
+        for key in expected:
+            missing = dict(expected)
+            missing[key] -= 1
+            try:
+                require_stop_receipts(missing, small)
+            except AssertionError:
+                pass
+            else:
+                raise AssertionError(f"missing {key} not refused at small={small}")
+    print("Stop receipt gate: 2 valid and 4 skipped-check adverse controls PASS", flush=True)
+
+
 def check(kernel, app, measurement, folder, small):
     folder.mkdir(parents=True, exist_ok=False)
     w, h = (800, 600) if small else (1920, 1080)
@@ -126,6 +152,7 @@ def check(kernel, app, measurement, folder, small):
 
     glyphs = kernel_glyphs()
     caption = "NO TASK"
+    stop_receipts = {"native_frames": 0, "erased_letter_negatives": 0}
 
     def stop_caption_ok(rgb, mode):
         # 800px uses 5/6 source scaling in either F6 preference; 1080p
@@ -152,10 +179,15 @@ def check(kernel, app, measurement, folder, small):
 
     def check_stop_positive_and_negatives(rgb, mode):
         assert stop_caption_ok(rgb,mode), "original native disabled Stop caption differs from source glyphs"
+        checked_negatives = 0
         for i in (1,5):  # O and S, the faint characters missed by threshold-only masks
             mutated = erased_stop_letter(rgb,mode,i)
             assert mutated != rgb, "Stop adverse control did not alter actual ink"
             assert not stop_caption_ok(mutated,mode), "missing Stop caption letter was accepted"
+            checked_negatives += 1
+        # Counters advance only after every comparison for this captured frame succeeds.
+        stop_receipts["native_frames"] += 1
+        stop_receipts["erased_letter_negatives"] += checked_negatives
 
     def editor(rgb, mode):
         return area(rgb,mode,140,460,10,20)
@@ -190,8 +222,8 @@ def check(kernel, app, measurement, folder, small):
         m.key("f6")
         fit_again = sample("fit_again",lambda rgb: rgb == typed)
         if small: check_stop_positive_and_negatives(fit_again,"fit")
-        report["disabled_stop_source_rgb"] = {"native_frames": 4 if small else 1,
-                                               "erased_letter_negatives": 8 if small else 2}
+        require_stop_receipts(stop_receipts, small)
+        report["disabled_stop_source_rgb"] = dict(stop_receipts)
         m.key("esc")
         wait_serial(f"{app.name} ended DONE: exit 0")
         sample("returned",lambda rgb: menu(rgb) and crop(rgb,w,(0,0,520,150)) == selection)
@@ -208,6 +240,7 @@ def check(kernel, app, measurement, folder, small):
 
 
 if __name__ == "__main__":
+    selftest_stop_receipts()
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("kernel","app","output"):
         parser.add_argument(name,type=Path)
