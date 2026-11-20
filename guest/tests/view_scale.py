@@ -23,9 +23,9 @@ PANEL = bytes.fromhex("18364f")
 TEXT = bytes.fromhex("f2f7fc")
 
 
-# Independent source-font oracle for the disabled Stop caption. Checking the
-# full original RGB glyph cells catches missing faint letters that a contrast
-# threshold or a single-color-presence assertion would silently accept.
+# Independent source-font oracles for the entire disabled STOP heading and
+# NO TASK caption in every captured native view, including 1920px Fit.
+# These check exact RGB glyph identity, not just contrast or ink presence.
 FONT = Path(__file__).resolve().parents[4] / "PCP_OS_Rust/crates/pcpos-kernel/src/font.rs"
 GROUND = bytes.fromhex("10283f")
 SOFT = bytes.fromhex("9fb4c8")
@@ -43,27 +43,38 @@ def kernel_glyphs():
     return [values[i:i+200] for i in range(0, len(values), 200)]
 
 
-def stop_cell_rgb(glyphs, ch, width, height):
-    """Separate Python replay of Frame::glyph's exact 10x20 box filter/blend."""
-    if width < 1 or height < 1 or width > 10 or height > 20:
-        raise AssertionError("outside original single-size font regime")
-    mask = glyphs[ord(ch) - 32]
+def double_glyphs():
+    """Read the pinned guest's actual independently rasterized 20x40 font."""
+    raw = FONT.with_name("font-2x.bin").read_bytes()
+    if len(raw) != 95 * 20 * 40:
+        raise AssertionError("kernel double-font byte length changed")
+    return [raw[i:i+800] for i in range(0, len(raw), 800)]
+
+
+def stop_cell_rgb(glyphs, doubled, ch, width, height, ink):
+    """Separate source-exact replay of Frame::glyph's font choice and RGB blend."""
+    if width < 1 or height < 1 or width > 40 or height > 60:
+        raise AssertionError("outside pinned native Stop font regime")
+    sw, sh = (20,40) if width > 10 or height > 20 else (10,20)
+    mask = (doubled if sw == 20 else glyphs)[ord(ch) - 32]
     result = bytearray()
     for y in range(height):
-        y0, y1 = y*20//height, max((y+1)*20//height, y*20//height+1)
+        y0, y1 = y*sh//height, max((y+1)*sh//height, y*sh//height+1)
         for x in range(width):
-            x0, x1 = x*10//width, max((x+1)*10//width, x*10//width+1)
-            alpha = sum(mask[yy*10+xx] for yy in range(y0,y1)
+            x0, x1 = x*sw//width, max((x+1)*sw//width, x*sw//width+1)
+            alpha = sum(mask[yy*sw+xx] for yy in range(y0,y1)
                         for xx in range(x0,x1)) // ((x1-x0)*(y1-y0))
-            result.extend((base*(255-alpha)+ink*alpha+127)//255
-                          for base,ink in zip(GROUND,SOFT))
+            result.extend((base*(255-alpha)+channel*alpha+127)//255
+                          for base,channel in zip(GROUND,ink))
     return bytes(result)
 
 
 def require_stop_receipts(receipts, small):
     """Refuse success if any source-RGB frame or erased-letter check was skipped."""
-    expected = {"native_frames": 4 if small else 1,
-                "erased_letter_negatives": 8 if small else 2}
+    # Four actual captured states at each size: Fit, typed, Compact, Fit-again.
+    expected = {"native_frames": 4, "erased_letter_negatives": 8,
+                "heading_frames": 4, "erased_heading_negatives": 4,
+                "erased_caption_negatives": 4}
     if receipts != expected:
         raise AssertionError(f"disabled Stop oracle checks incomplete: {receipts!r} != {expected!r}")
 
@@ -71,8 +82,9 @@ def require_stop_receipts(receipts, small):
 def selftest_stop_receipts():
     """Host-only missing-check controls, independent of actual QEMU frames."""
     for small in (False, True):
-        expected = {"native_frames": 4 if small else 1,
-                    "erased_letter_negatives": 8 if small else 2}
+        expected = {"native_frames": 4, "erased_letter_negatives": 8,
+                    "heading_frames": 4, "erased_heading_negatives": 4,
+                    "erased_caption_negatives": 4}
         require_stop_receipts(dict(expected), small)
         for key in expected:
             missing = dict(expected)
@@ -83,7 +95,7 @@ def selftest_stop_receipts():
                 pass
             else:
                 raise AssertionError(f"missing {key} not refused at small={small}")
-    print("Stop receipt gate: 2 valid and 4 skipped-check adverse controls PASS", flush=True)
+    print("Stop receipt gate: 2 valid and 10 skipped-check adverse controls PASS", flush=True)
 
 
 def check(kernel, app, measurement, folder, small):
@@ -151,25 +163,32 @@ def check(kernel, app, measurement, folder, small):
 
 
     glyphs = kernel_glyphs()
+    doubled = double_glyphs()
     caption = "NO TASK"
-    stop_receipts = {"native_frames": 0, "erased_letter_negatives": 0}
+    stop_receipts = {"native_frames": 0, "erased_letter_negatives": 0,
+                     "heading_frames": 0, "erased_heading_negatives": 0,
+                     "erased_caption_negatives": 0}
 
-    def stop_caption_ok(rgb, mode):
-        # 800px uses 5/6 source scaling in either F6 preference; 1080p
-        # Compact uses 1x. 1080p Fit uses the separate 2x font, so it is
-        # intentionally excluded from this 10x20-source-only oracle.
-        if not (small or mode == "compact"):
-            raise AssertionError("unsupported font size for Stop oracle")
-        for i, ch in enumerate(caption):
-            bounds = box(mode,48+i*6,361,6,10)
+    def stop_text_ok(rgb, mode, text, x, y, step, cell_width, cell_height, ink):
+        for i, ch in enumerate(text):
+            bounds = box(mode,x+i*step,y,cell_width,cell_height)
             left, top, right, bottom = bounds
-            if crop(rgb,w,bounds) != stop_cell_rgb(glyphs,ch,right-left,bottom-top):
+            expected = stop_cell_rgb(glyphs,doubled,ch,right-left,bottom-top,ink)
+            if crop(rgb,w,bounds) != expected:
                 return False
         return True
 
-    def erased_stop_letter(rgb, mode, i):
-        # Deliberately damage a HOST COPY of an actually captured P6 frame,
-        # leaving the original capture and other six cells unchanged.
+    def stop_caption_ok(rgb, mode):
+        # Includes the 1920px Fit 2x font; old tests only checked Compact.
+        return stop_text_ok(rgb,mode,caption,48,361,6,6,10,SOFT)
+
+    def stop_heading_ok(rgb, mode):
+        # The STOP heading uses the independent double-size source font at
+        # 800px, 1080p Fit and 1080p Compact, with exact per-cell bounds.
+        return stop_text_ok(rgb,mode,"STOP",48,331,18,18,30,TEXT)
+
+    def erased_stop_cell(rgb, mode, i):
+        # Deliberately damage only a HOST COPY of an original captured P6.
         left, top, right, bottom = box(mode,48+i*6,361,6,10)
         damaged = bytearray(rgb)
         for y in range(top,bottom):
@@ -177,17 +196,38 @@ def check(kernel, app, measurement, folder, small):
             damaged[offset:offset+(right-left)*3] = GROUND*(right-left)
         return bytes(damaged)
 
+    def erased_stop_text(rgb, mode, heading):
+        text, y, step, cw, ch = (("STOP",331,18,18,30) if heading
+                                 else (caption,361,6,6,10))
+        damaged = bytearray(rgb)
+        for i in range(len(text)):
+            left, top, right, bottom = box(mode,48+i*step,y,cw,ch)
+            for row in range(top,bottom):
+                offset = (row*w+left)*3
+                damaged[offset:offset+(right-left)*3] = GROUND*(right-left)
+        return bytes(damaged)
+
     def check_stop_positive_and_negatives(rgb, mode):
-        assert stop_caption_ok(rgb,mode), "original native disabled Stop caption differs from source glyphs"
+        assert stop_caption_ok(rgb,mode), "native disabled Stop caption differs from source glyphs"
+        assert stop_heading_ok(rgb,mode), "native STOP heading differs from source glyphs"
         checked_negatives = 0
         for i in (1,5):  # O and S, the faint characters missed by threshold-only masks
-            mutated = erased_stop_letter(rgb,mode,i)
-            assert mutated != rgb, "Stop adverse control did not alter actual ink"
+            mutated = erased_stop_cell(rgb,mode,i)
+            assert mutated != rgb, "Stop caption adverse control did not alter actual ink"
             assert not stop_caption_ok(mutated,mode), "missing Stop caption letter was accepted"
             checked_negatives += 1
-        # Counters advance only after every comparison for this captured frame succeeds.
+        erased_caption = erased_stop_text(rgb,mode,False)
+        assert erased_caption != rgb, "erased Stop caption control was empty"
+        assert not stop_caption_ok(erased_caption,mode), "missing whole Stop caption accepted"
+        erased_heading = erased_stop_text(rgb,mode,True)
+        assert erased_heading != rgb, "erased STOP heading control was empty"
+        assert not stop_heading_ok(erased_heading,mode), "missing STOP heading accepted"
+        # Only record a check after its original and all host-negative comparisons pass.
         stop_receipts["native_frames"] += 1
         stop_receipts["erased_letter_negatives"] += checked_negatives
+        stop_receipts["heading_frames"] += 1
+        stop_receipts["erased_heading_negatives"] += 1
+        stop_receipts["erased_caption_negatives"] += 1
 
     def editor(rgb, mode):
         return area(rgb,mode,140,460,10,20)
@@ -203,10 +243,10 @@ def check(kernel, app, measurement, folder, small):
         wait_serial(f"starting {app.name} ({app.stat().st_size} bytes, SHA-256 {report['app_sha256']})")
         wait_serial("Tailorbird first frame presented")
         empty = sample("fit",lambda rgb: form(rgb,"fit"))
-        if small: check_stop_positive_and_negatives(empty,"fit")
+        check_stop_positive_and_negatives(empty,"fit")
         m.key("a")
         typed = sample("typed",lambda rgb: form(rgb,"fit") and editor(rgb,"fit") != editor(empty,"fit"))
-        if small: check_stop_positive_and_negatives(typed,"fit")
+        check_stop_positive_and_negatives(typed,"fit")
         m.key("f6")
         compact = sample("compact",lambda rgb: form(rgb,"compact") and
                          badge(rgb,"compact") != badge(typed,"fit") and
@@ -221,7 +261,7 @@ def check(kernel, app, measurement, folder, small):
             )
         m.key("f6")
         fit_again = sample("fit_again",lambda rgb: rgb == typed)
-        if small: check_stop_positive_and_negatives(fit_again,"fit")
+        check_stop_positive_and_negatives(fit_again,"fit")
         require_stop_receipts(stop_receipts, small)
         report["disabled_stop_source_rgb"] = dict(stop_receipts)
         m.key("esc")
