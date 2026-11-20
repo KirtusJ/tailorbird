@@ -14,6 +14,10 @@ TITLE = {
     "fit": "a35240f2eea7b8ccc7536d9d8e8402659126f5dc8862590605fbb60544fb0322",
     "compact": "a68f1e7a3d3da0f769d39c88478ab179460ca11b4b0def00437561838a995b2f",
 }
+# Source-bound to the fixed model-free 800x600 scale kernel and Tailorbird
+# renderer. Measured from all four original native title crops in #262 CI.
+# Unlike a one-pixel color presence test, this guards the entire title.
+SMALL_TITLE = "56fe7c0141736d9bb2a83328588454cc773da555d7038c6935c09b6df7d2420b"
 TEAL = bytes.fromhex("41bad7")
 PANEL = bytes.fromhex("18364f")
 TEXT = bytes.fromhex("f2f7fc")
@@ -64,10 +68,23 @@ def check(kernel, app, measurement, folder, small):
 
     def form(rgb, mode):
         title = area(rgb,mode,22,16,180,30)
-        if small:
-            return (area(rgb,mode,3,5,1,1) == PANEL
-                    and TEAL in title)
-        return hashlib.sha256(title).hexdigest() == TITLE[mode]
+        expected = SMALL_TITLE if small else TITLE[mode]
+        if small and area(rgb,mode,3,5,1,1) != PANEL:
+            return False
+        return hashlib.sha256(title).hexdigest() == expected
+
+    def erased_title_with_one_teal_pixel(rgb, mode):
+        """Host-only negative: nearly empty headline that passed the old oracle."""
+        left, top, right, bottom = box(mode,22,16,180,30)
+        damaged = bytearray(rgb)
+        row = PANEL * (right-left)
+        for y in range(top,bottom):
+            start = (y*w + left)*3
+            damaged[start:start+len(row)] = row
+        # Preserve one TEAL pixel: the previous 800px check accepted this.
+        start = (top*w + left)*3
+        damaged[start:start+3] = TEAL
+        return bytes(damaged)
 
     def editor(rgb, mode):
         return area(rgb,mode,140,460,10,20)
@@ -93,6 +110,9 @@ def check(kernel, app, measurement, folder, small):
             assert editor(compact,"compact") == editor(typed,"fit")
         for mode, rgb in [("fit",typed),("compact",compact)]:
             report[mode+"_title_rgb_sha256"] = hashlib.sha256(area(rgb,mode,22,16,180,30)).hexdigest()
+            assert not form(erased_title_with_one_teal_pixel(rgb,mode),mode), (
+                f"{mode}: erased title with one teal pixel was accepted"
+            )
         m.key("f6")
         sample("fit_again",lambda rgb: rgb == typed)
         m.key("esc")
