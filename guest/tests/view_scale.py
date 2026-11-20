@@ -188,6 +188,32 @@ def selftest_editor_receipts():
     print("Editor receipt gate: 1 valid and 3 missing-check controls PASS", flush=True)
 
 
+def require_shortcut_legend_receipts(receipts):
+    expected = {"native_frames": 4, "erased_stop_negatives": 4,
+                "erased_exit_negatives": 4}
+    if receipts != expected:
+        raise AssertionError(
+            f"native keyboard legend oracle incomplete: {receipts!r} != {expected!r}"
+        )
+
+
+def selftest_shortcut_legend_receipts():
+    complete = {"native_frames": 4, "erased_stop_negatives": 4,
+                "erased_exit_negatives": 4}
+    require_shortcut_legend_receipts(dict(complete))
+    for key in complete:
+        missing = dict(complete)
+        missing[key] -= 1
+        try:
+            require_shortcut_legend_receipts(missing)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError(f"missing keyboard legend check accepted: {key}")
+    print("Keyboard legend receipt gate: 1 valid and 3 missing-check controls PASS",
+          flush=True)
+
+
 def check(kernel, app, measurement, folder, small):
     folder.mkdir(parents=True, exist_ok=False)
     w, h = (800, 600) if small else (1920, 1080)
@@ -264,6 +290,8 @@ def check(kernel, app, measurement, folder, small):
     offline_receipts = {"native_frames": 0, "erased_label_negatives": 0}
     editor_receipts = {"native_frames": 0, "case_negatives": 0,
                        "count_negatives": 0}
+    shortcut_receipts = {"native_frames": 0, "erased_stop_negatives": 0,
+                         "erased_exit_negatives": 0}
 
     def stop_text_ok(rgb, mode, text, x, y, step, cell_width, cell_height, ink, background=GROUND):
         for i, ch in enumerate(text):
@@ -468,6 +496,44 @@ def check(kernel, app, measurement, folder, small):
             editor_receipts["count_negatives"] += 1
         editor_receipts["native_frames"] += 1
 
+    # This keyboard legend describes the visible normal-mode Stop and
+    # launcher-return shortcuts. Full source RGB proves the displayed words,
+    # NOT whether trusted service or kernel actually admits those commands.
+    shortcut_legend = (
+        "ENTER SUBMIT   ALT R RETRY   ALT M MODE   ALT S STOP   ESC EXIT"
+    )
+
+    def shortcut_legend_ok(rgb, mode):
+        return stop_text_ok(rgb, mode, shortcut_legend, 22, 513,
+                            6, 6, 10, SOFT)
+
+    def erased_shortcut(rgb, mode, token):
+        # Host-only negative: erase one entire safety-relevant shortcut while
+        # preserving the original QEMU capture and all neighboring badges.
+        assert shortcut_legend.count(token) == 1
+        start = shortcut_legend.index(token)
+        altered = bytearray(rgb)
+        for i in range(len(token)):
+            left, top, right, bottom = box(mode, 22+(start+i)*6, 513, 6, 10)
+            for yy in range(top, bottom):
+                offset = (yy*w+left)*3
+                altered[offset:offset+(right-left)*3] = GROUND*(right-left)
+        return bytes(altered)
+
+    def check_shortcut_legend(rgb, mode):
+        assert shortcut_legend_ok(rgb, mode), (
+            "native footer Stop/Exit keyboard legend differs from exact source RGB"
+        )
+        for token, key in (("ALT S STOP", "erased_stop_negatives"),
+                           ("ESC EXIT", "erased_exit_negatives")):
+            changed = erased_shortcut(rgb, mode, token)
+            assert changed != rgb, f"{token} erasure removed no real native ink"
+            assert not shortcut_legend_ok(changed, mode), (
+                f"missing {token} legend incorrectly accepted"
+            )
+            shortcut_receipts[key] += 1
+        shortcut_receipts["native_frames"] += 1
+
     def editor(rgb, mode):
         return area(rgb,mode,140,460,10,20)
 
@@ -487,6 +553,7 @@ def check(kernel, app, measurement, folder, small):
         check_f6_positive_and_negative(empty,"fit")
         check_offline_positive_and_negatives(empty,"fit")
         check_editor_positive_and_negatives(empty,"fit"," ","0")
+        check_shortcut_legend(empty,"fit")
         m.key("a")
         typed = sample("typed",lambda rgb: form(rgb,"fit") and editor(rgb,"fit") != editor(empty,"fit"))
         check_stop_positive_and_negatives(typed,"fit")
@@ -494,6 +561,7 @@ def check(kernel, app, measurement, folder, small):
         check_f6_positive_and_negative(typed,"fit")
         check_offline_positive_and_negatives(typed,"fit")
         check_editor_positive_and_negatives(typed,"fit","a","1")
+        check_shortcut_legend(typed,"fit")
         m.key("f6")
         compact = sample("compact",lambda rgb: form(rgb,"compact") and
                          badge(rgb,"compact") != badge(typed,"fit") and
@@ -503,6 +571,7 @@ def check(kernel, app, measurement, folder, small):
         check_f6_positive_and_negative(compact,"compact")
         check_offline_positive_and_negatives(compact,"compact")
         check_editor_positive_and_negatives(compact,"compact","a","1")
+        check_shortcut_legend(compact,"compact")
         if small:
             assert editor(compact,"compact") == editor(typed,"fit")
         for mode, rgb in [("fit",typed),("compact",compact)]:
@@ -517,14 +586,17 @@ def check(kernel, app, measurement, folder, small):
         check_f6_positive_and_negative(fit_again,"fit")
         check_offline_positive_and_negatives(fit_again,"fit")
         check_editor_positive_and_negatives(fit_again,"fit","a","1")
+        check_shortcut_legend(fit_again,"fit")
         require_stop_receipts(stop_receipts, small)
         require_mode_receipts(mode_receipts)
         require_f6_receipts(f6_receipts)
         require_offline_status_receipts(offline_receipts)
         require_editor_receipts(editor_receipts)
+        require_shortcut_legend_receipts(shortcut_receipts)
         report["f6_badge_source_rgb"] = dict(f6_receipts)
         report["offline_status_source_rgb"] = dict(offline_receipts)
         report["editor_source_rgb"] = dict(editor_receipts)
+        report["keyboard_shortcut_legend_source_rgb"] = dict(shortcut_receipts)
         report["disabled_stop_source_rgb"] = dict(stop_receipts)
         report["mode_source_rgb"] = dict(mode_receipts)
         m.key("esc")
@@ -548,6 +620,7 @@ if __name__ == "__main__":
     selftest_f6_receipts()
     selftest_offline_status_receipts()
     selftest_editor_receipts()
+    selftest_shortcut_legend_receipts()
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("kernel","app","output"):
         parser.add_argument(name,type=Path)
