@@ -30,6 +30,7 @@ FONT = Path(__file__).resolve().parents[4] / "PCP_OS_Rust/crates/pcpos-kernel/sr
 GROUND = bytes.fromhex("10283f")
 SOFT = bytes.fromhex("9fb4c8")
 BAD = bytes.fromhex("f08a72")
+GOOD = bytes.fromhex("8fe0c2")
 AMBER = bytes.fromhex("e3a24b")
 
 
@@ -214,6 +215,31 @@ def selftest_shortcut_legend_receipts():
           flush=True)
 
 
+
+def require_empty_output_receipts(receipts):
+    # The local offline preview must disclose its empty event feed and keep
+    # manual OS / Escape navigation legible at both tested resolutions.
+    expected = {"native_frames": 4, "erased_guidance_negatives": 12}
+    if receipts != expected:
+        raise AssertionError(f"empty-output guidance checks incomplete: {receipts!r} != {expected!r}")
+
+
+def selftest_empty_output_receipts():
+    complete = {"native_frames": 4, "erased_guidance_negatives": 12}
+    require_empty_output_receipts(dict(complete))
+    for key in complete:
+        missing = dict(complete)
+        missing[key] -= 1
+        try:
+            require_empty_output_receipts(missing)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError(f"missing empty-output check accepted: {key}")
+    print("Empty-output guidance receipts: 1 valid, 2 skipped-check refusals PASS",
+          flush=True)
+
+
 def check(kernel, app, measurement, folder, small):
     folder.mkdir(parents=True, exist_ok=False)
     w, h = (800, 600) if small else (1920, 1080)
@@ -292,6 +318,7 @@ def check(kernel, app, measurement, folder, small):
                        "count_negatives": 0}
     shortcut_receipts = {"native_frames": 0, "erased_stop_negatives": 0,
                          "erased_exit_negatives": 0}
+    empty_output_receipts = {"native_frames": 0, "erased_guidance_negatives": 0}
 
     def stop_text_ok(rgb, mode, text, x, y, step, cell_width, cell_height, ink, background=GROUND):
         for i, ch in enumerate(text):
@@ -534,6 +561,45 @@ def check(kernel, app, measurement, folder, small):
             shortcut_receipts[key] += 1
         shortcut_receipts["native_frames"] += 1
 
+
+    # The native model-free Ui::new() has no task-event rows. The three
+    # genuinely painted guidance lines live inside the x=316..940 PANEL,
+    # with no permission inspector. An empty/misleading output pane used
+    # to pass even with valid title, Stop, F6 and editor pixels.
+    empty_output_labels = (
+        ("NO TASK EVENTS RECEIVED", 339, 205, 12, 20, SOFT),
+        ("MANUAL OS USE REMAINS AVAILABLE", 339, 246, 6, 10, GOOD),
+        ("ESC RETURNS TO THE PCP OS LAUNCHER", 339, 270, 6, 10, SOFT),
+    )
+
+    def empty_output_label_ok(rgb, mode, text, x, y, cell_w, cell_h, ink):
+        return stop_text_ok(rgb, mode, text, x, y,
+                            cell_w, cell_w, cell_h, ink, PANEL)
+
+    def erased_empty_output_label(rgb, mode, text, x, y, cell_w, cell_h):
+        # Deliberate host-only adverse copy, never alter a native P6 capture.
+        damaged = bytearray(rgb)
+        for i in range(len(text)):
+            left, top, right, bottom = box(mode, x+i*cell_w, y,
+                                           cell_w, cell_h)
+            for yy in range(top, bottom):
+                offset = (yy*w+left)*3
+                damaged[offset:offset+(right-left)*3] = PANEL*(right-left)
+        return bytes(damaged)
+
+    def check_empty_output_positive_and_negatives(rgb, mode):
+        for text, x, y, cw, ch, ink in empty_output_labels:
+            assert empty_output_label_ok(rgb, mode, text, x, y, cw, ch, ink), (
+                f"native empty-output guidance {text!r} differs from source RGB"
+            )
+            erased = erased_empty_output_label(rgb, mode, text, x, y, cw, ch)
+            assert erased != rgb, f"no actual native ink removed for {text!r}"
+            assert not empty_output_label_ok(erased, mode, text, x, y, cw, ch, ink), (
+                f"erased empty-output guidance {text!r} was accepted"
+            )
+            empty_output_receipts["erased_guidance_negatives"] += 1
+        empty_output_receipts["native_frames"] += 1
+
     def editor(rgb, mode):
         return area(rgb,mode,140,460,10,20)
 
@@ -554,6 +620,7 @@ def check(kernel, app, measurement, folder, small):
         check_offline_positive_and_negatives(empty,"fit")
         check_editor_positive_and_negatives(empty,"fit"," ","0")
         check_shortcut_legend(empty,"fit")
+        check_empty_output_positive_and_negatives(empty,"fit")
         m.key("a")
         typed = sample("typed",lambda rgb: form(rgb,"fit") and editor(rgb,"fit") != editor(empty,"fit"))
         check_stop_positive_and_negatives(typed,"fit")
@@ -562,6 +629,7 @@ def check(kernel, app, measurement, folder, small):
         check_offline_positive_and_negatives(typed,"fit")
         check_editor_positive_and_negatives(typed,"fit","a","1")
         check_shortcut_legend(typed,"fit")
+        check_empty_output_positive_and_negatives(typed,"fit")
         m.key("f6")
         compact = sample("compact",lambda rgb: form(rgb,"compact") and
                          badge(rgb,"compact") != badge(typed,"fit") and
@@ -572,6 +640,7 @@ def check(kernel, app, measurement, folder, small):
         check_offline_positive_and_negatives(compact,"compact")
         check_editor_positive_and_negatives(compact,"compact","a","1")
         check_shortcut_legend(compact,"compact")
+        check_empty_output_positive_and_negatives(compact,"compact")
         if small:
             assert editor(compact,"compact") == editor(typed,"fit")
         for mode, rgb in [("fit",typed),("compact",compact)]:
@@ -587,16 +656,19 @@ def check(kernel, app, measurement, folder, small):
         check_offline_positive_and_negatives(fit_again,"fit")
         check_editor_positive_and_negatives(fit_again,"fit","a","1")
         check_shortcut_legend(fit_again,"fit")
+        check_empty_output_positive_and_negatives(fit_again,"fit")
         require_stop_receipts(stop_receipts, small)
         require_mode_receipts(mode_receipts)
         require_f6_receipts(f6_receipts)
         require_offline_status_receipts(offline_receipts)
         require_editor_receipts(editor_receipts)
         require_shortcut_legend_receipts(shortcut_receipts)
+        require_empty_output_receipts(empty_output_receipts)
         report["f6_badge_source_rgb"] = dict(f6_receipts)
         report["offline_status_source_rgb"] = dict(offline_receipts)
         report["editor_source_rgb"] = dict(editor_receipts)
         report["keyboard_shortcut_legend_source_rgb"] = dict(shortcut_receipts)
+        report["empty_output_guidance_source_rgb"] = dict(empty_output_receipts)
         report["disabled_stop_source_rgb"] = dict(stop_receipts)
         report["mode_source_rgb"] = dict(mode_receipts)
         m.key("esc")
@@ -621,6 +693,7 @@ if __name__ == "__main__":
     selftest_offline_status_receipts()
     selftest_editor_receipts()
     selftest_shortcut_legend_receipts()
+    selftest_empty_output_receipts()
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("kernel","app","output"):
         parser.add_argument(name,type=Path)
