@@ -290,6 +290,31 @@ def selftest_affordance_receipts():
           flush=True)
 
 
+
+def require_offline_refusal_receipts(receipts):
+    expected = {"native_frames": 3, "erased_notice_negatives": 3,
+                "unchanged_other_pixels": 3}
+    if receipts != expected:
+        raise AssertionError(f"offline action/refusal checks incomplete: {receipts!r}")
+
+
+def selftest_offline_refusal_receipts():
+    complete = {"native_frames": 3, "erased_notice_negatives": 3,
+                "unchanged_other_pixels": 3}
+    require_offline_refusal_receipts(dict(complete))
+    for key in complete:
+        missing = dict(complete)
+        missing[key] -= 1
+        try:
+            require_offline_refusal_receipts(missing)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError(f"skipped offline refusal check accepted: {key}")
+    print("Offline refusal receipts: 1 valid, 3 skipped-check refusals PASS",
+          flush=True)
+
+
 def check(kernel, app, measurement, folder, small):
     folder.mkdir(parents=True, exist_ok=False)
     w, h = (800, 600) if small else (1920, 1080)
@@ -357,6 +382,8 @@ def check(kernel, app, measurement, folder, small):
     glyphs = kernel_glyphs()
     doubled = double_glyphs()
     caption = "NO TASK"
+    offline_refusal_receipts = {"native_frames": 0, "erased_notice_negatives": 0,
+                               "unchanged_other_pixels": 0}
     stop_receipts = {"native_frames": 0, "erased_letter_negatives": 0,
                      "heading_frames": 0, "erased_heading_negatives": 0,
                      "erased_caption_negatives": 0}
@@ -380,6 +407,25 @@ def check(kernel, app, measurement, folder, small):
             if crop(rgb,w,bounds) != expected:
                 return False
         return True
+
+
+    # The public native preview has no service. These are real keyboard
+    # refusal/availability notices, not trusted service acknowledgements.
+    # The remaining 70-cell footer lane is x=535..955, on GROUND.
+    def offline_notice_ok(rgb, mode, value):
+        if len(value) > 70 or value != value.upper():
+            raise AssertionError("outside pinned notice-font admission")
+        return stop_text_ok(rgb, mode, value.ljust(70), 535, 513,
+                            6, 6, 10, AMBER, GROUND)
+
+    def blank_notice_region(rgb, mode):
+        # Make only a disposable host copy with the entire notice lane blank.
+        left, top, right, bottom = box(mode, 535, 513, 420, 10)
+        damaged = bytearray(rgb)
+        for yy in range(top, bottom):
+            offset = (yy*w+left)*3
+            damaged[offset:offset+(right-left)*3] = GROUND*(right-left)
+        return bytes(damaged)
 
     def stop_caption_ok(rgb, mode):
         # Includes the 1920px Fit 2x font; old tests only checked Compact.
@@ -791,6 +837,39 @@ def check(kernel, app, measurement, folder, small):
         report["mode_request_affordance_source_rgb"] = dict(affordance_receipts)
         report["disabled_stop_source_rgb"] = dict(stop_receipts)
         report["mode_source_rgb"] = dict(mode_receipts)
+
+        # A new, distinct native Q35 negative/positive family. Exercise the
+        # *real* disconnected guest's Enter, Alt+M and Alt+S, then demand
+        # source-exact complete notice glyphs and unchanged other pixels.
+        # These are refusal notices, never evidence of authorized effects.
+        original_without_notice = blank_notice_region(fit_again, "fit")
+        for tag, chord, value in (
+            ("offline_submit_refusal", ("ret",),
+             "NO MODEL SERVICE - OS STILL USABLE"),
+            ("offline_mode_refusal", ("alt", "m"),
+             "MODE CHANGE UNAVAILABLE"),
+            ("offline_stop_refusal", ("alt", "s"),
+             "NO STOPPABLE TASK - USE OS STOP KEY"),
+        ):
+            m.key(*chord)
+            observed = sample(tag, lambda rgb: offline_notice_ok(rgb, "fit", value))
+            assert form(observed, "fit"), f"{tag}: title changed after refused action"
+            assert editor(observed, "fit") == editor(typed, "fit"), (
+                f"{tag}: unsent request editor changed after refused action"
+            )
+            assert blank_notice_region(observed, "fit") == original_without_notice, (
+                f"{tag}: pixels outside notice changed in disconnected native guest"
+            )
+            erased = blank_notice_region(observed, "fit")
+            assert erased != observed, f"{tag}: no real notice glyph ink"
+            assert not offline_notice_ok(erased, "fit", value), (
+                f"{tag}: erased refusal notice incorrectly accepted"
+            )
+            offline_refusal_receipts["native_frames"] += 1
+            offline_refusal_receipts["erased_notice_negatives"] += 1
+            offline_refusal_receipts["unchanged_other_pixels"] += 1
+        require_offline_refusal_receipts(offline_refusal_receipts)
+        report["offline_refusal_notice_source_rgb"] = dict(offline_refusal_receipts)
         m.key("esc")
         wait_serial(f"{app.name} ended DONE: exit 0")
         sample("returned",lambda rgb: menu(rgb) and crop(rgb,w,(0,0,520,150)) == selection)
@@ -815,6 +894,7 @@ if __name__ == "__main__":
     selftest_shortcut_legend_receipts()
     selftest_empty_output_receipts()
     selftest_task_section_receipts()
+    selftest_offline_refusal_receipts()
     selftest_affordance_receipts()
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("kernel","app","output"):
