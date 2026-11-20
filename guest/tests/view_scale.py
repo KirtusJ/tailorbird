@@ -120,6 +120,27 @@ def selftest_mode_receipts():
     print("MODE receipt gate: 1 valid and 3 missing-check controls PASS", flush=True)
 
 
+def require_f6_receipts(receipts):
+    expected = {"native_frames": 4, "erased_badge_negatives": 4}
+    if receipts != expected:
+        raise AssertionError(f"native F6 badge checks incomplete: {receipts!r} != {expected!r}")
+
+
+def selftest_f6_receipts():
+    expected = {"native_frames": 4, "erased_badge_negatives": 4}
+    require_f6_receipts(dict(expected))
+    for key in expected:
+        missing = dict(expected)
+        missing[key] -= 1
+        try:
+            require_f6_receipts(missing)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError(f"missing F6 check not refused: {key}")
+    print("F6 receipt gate: 1 valid and 2 missing-check controls PASS", flush=True)
+
+
 def check(kernel, app, measurement, folder, small):
     folder.mkdir(parents=True, exist_ok=False)
     w, h = (800, 600) if small else (1920, 1080)
@@ -192,6 +213,7 @@ def check(kernel, app, measurement, folder, small):
                      "erased_caption_negatives": 0}
     mode_receipts = {"native_frames": 0, "erased_heading_negatives": 0,
                      "erased_state_negatives": 0}
+    f6_receipts = {"native_frames": 0, "erased_badge_negatives": 0}
 
     def stop_text_ok(rgb, mode, text, x, y, step, cell_width, cell_height, ink, background=GROUND):
         for i, ch in enumerate(text):
@@ -286,6 +308,32 @@ def check(kernel, app, measurement, folder, small):
         mode_receipts["erased_heading_negatives"] += 1
         mode_receipts["erased_state_negatives"] += 1
 
+    def f6_badge_ok(rgb, mode):
+        # Source: guest/main.rs paints exact F6: FIT or F6: COMPACT in TEAL
+        # at logical (418, 513), using Frame::text's 6x10 single-scale glyphs.
+        label = "F6: COMPACT" if mode == "compact" else "F6: FIT"
+        return stop_text_ok(rgb, mode, label, 418, 513, 6, 6, 10, TEAL)
+
+    def erased_f6_badge(rgb, mode):
+        # Damage a HOST COPY. Existing cross-view badge inequality remains
+        # satisfied by an entirely erased Compact badge in original frames.
+        label = "F6: COMPACT" if mode == "compact" else "F6: FIT"
+        damaged = bytearray(rgb)
+        for i in range(len(label)):
+            left, top, right, bottom = box(mode, 418+i*6, 513, 6, 10)
+            for row in range(top, bottom):
+                offset = (row*w + left)*3
+                damaged[offset:offset+(right-left)*3] = GROUND*(right-left)
+        return bytes(damaged)
+
+    def check_f6_positive_and_negative(rgb, mode):
+        assert f6_badge_ok(rgb, mode), "native F6 badge differs from source glyphs"
+        erased = erased_f6_badge(rgb, mode)
+        assert erased != rgb, "erased F6 badge did not alter native ink"
+        assert not f6_badge_ok(erased, mode), "missing F6 badge was accepted"
+        f6_receipts["native_frames"] += 1
+        f6_receipts["erased_badge_negatives"] += 1
+
     def editor(rgb, mode):
         return area(rgb,mode,140,460,10,20)
 
@@ -302,16 +350,19 @@ def check(kernel, app, measurement, folder, small):
         empty = sample("fit",lambda rgb: form(rgb,"fit"))
         check_stop_positive_and_negatives(empty,"fit")
         check_mode_positive_and_negatives(empty,"fit")
+        check_f6_positive_and_negative(empty,"fit")
         m.key("a")
         typed = sample("typed",lambda rgb: form(rgb,"fit") and editor(rgb,"fit") != editor(empty,"fit"))
         check_stop_positive_and_negatives(typed,"fit")
         check_mode_positive_and_negatives(typed,"fit")
+        check_f6_positive_and_negative(typed,"fit")
         m.key("f6")
         compact = sample("compact",lambda rgb: form(rgb,"compact") and
                          badge(rgb,"compact") != badge(typed,"fit") and
                          len(set(editor(rgb,"compact")[::3])) > 1)
         check_stop_positive_and_negatives(compact,"compact")
         check_mode_positive_and_negatives(compact,"compact")
+        check_f6_positive_and_negative(compact,"compact")
         if small:
             assert editor(compact,"compact") == editor(typed,"fit")
         for mode, rgb in [("fit",typed),("compact",compact)]:
@@ -323,8 +374,11 @@ def check(kernel, app, measurement, folder, small):
         fit_again = sample("fit_again",lambda rgb: rgb == typed)
         check_stop_positive_and_negatives(fit_again,"fit")
         check_mode_positive_and_negatives(fit_again,"fit")
+        check_f6_positive_and_negative(fit_again,"fit")
         require_stop_receipts(stop_receipts, small)
         require_mode_receipts(mode_receipts)
+        require_f6_receipts(f6_receipts)
+        report["f6_badge_source_rgb"] = dict(f6_receipts)
         report["disabled_stop_source_rgb"] = dict(stop_receipts)
         report["mode_source_rgb"] = dict(mode_receipts)
         m.key("esc")
@@ -345,6 +399,7 @@ def check(kernel, app, measurement, folder, small):
 if __name__ == "__main__":
     selftest_stop_receipts()
     selftest_mode_receipts()
+    selftest_f6_receipts()
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("kernel","app","output"):
         parser.add_argument(name,type=Path)
