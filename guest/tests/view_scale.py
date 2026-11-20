@@ -36,7 +36,7 @@ def kernel_glyphs():
     marker = "pub static GLYPHS: [[u8; 200]; 95] = ["
     if source.count(marker) != 1:
         raise AssertionError("kernel font table declaration changed")
-    values = [int(x) for x in re.findall(r"\\b\\d+\\b",
+    values = [int(x) for x in re.findall(r"\b\d+\b",
               source.split(marker, 1)[1].split("];", 1)[0])]
     if len(values) != 95 * 200 or any(x > 255 for x in values):
         raise AssertionError("kernel font coverage table malformed")
