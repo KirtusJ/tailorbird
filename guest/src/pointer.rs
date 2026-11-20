@@ -48,8 +48,8 @@ pub struct PointerEvent {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Capture {
-    Mode { original: Mode, service_epoch: u64 },
-    Stop { task_id: u64, original_state: TaskState, service_epoch: u64 },
+    Mode { original: Mode, service_epoch: u64, view_epoch: u64 },
+    Stop { task_id: u64, original_state: TaskState, service_epoch: u64, view_epoch: u64 },
 }
 
 impl Capture {
@@ -63,6 +63,12 @@ impl Capture {
         match self {
             Self::Mode { service_epoch, .. } |
             Self::Stop { service_epoch, .. } => service_epoch,
+        }
+    }
+    fn view_epoch(self) -> u64 {
+        match self {
+            Self::Mode { view_epoch, .. } |
+            Self::Stop { view_epoch, .. } => view_epoch,
         }
     }
 }
@@ -106,6 +112,7 @@ impl PointerUi {
                 if self.captured.is_none()
                     && !self.nonprimary_held[0] && !self.nonprimary_held[1]
                     && ui.service_epoch != u64::MAX
+                    && ui.view_epoch != u64::MAX
                 {
                     self.captured = if MODE_RECT.contains(e.x, e.y)
                         && ui.connected && ui.mode_pending.is_none()
@@ -113,6 +120,7 @@ impl PointerUi {
                     {
                         Some(Capture::Mode {
                             original: ui.mode, service_epoch: ui.service_epoch,
+                            view_epoch: ui.view_epoch,
                         })
                     } else if STOP_RECT.contains(e.x, e.y)
                         && ui.controls().stop_enabled
@@ -120,6 +128,7 @@ impl PointerUi {
                         Some(Capture::Stop {
                             task_id: ui.task.id, original_state: ui.task.state,
                             service_epoch: ui.service_epoch,
+                            view_epoch: ui.view_epoch,
                         })
                     } else {
                         None
@@ -164,10 +173,11 @@ impl PointerUi {
                 }
                 let capture = self.captured.take()?;
                 if !capture.rect().contains(e.x, e.y)
-                    || capture.service_epoch() != ui.service_epoch {
-                    // A disconnect/reconnect or service-status refresh can
-                    // occur without an input device's focus-loss Cancel.
-                    // Never resume a gesture across those state boundaries.
+                    || capture.service_epoch() != ui.service_epoch
+                    || capture.view_epoch() != ui.view_epoch {
+                    // Service-status changes and F6 presentation revisions
+                    // invalidate held targets without relying on OS Cancel.
+                    // PT must still cancel on real compositor geometry changes.
                     return None;
                 }
                 match capture {
@@ -530,4 +540,64 @@ mod tests {
         pointer.input(event(60, 340, PointerPhase::Down), &mut ui);
         assert_eq!(pointer.input(event(60, 340, PointerPhase::Up), &mut ui), None);
     }
+
+    #[test]
+    fn f6_mode_capture_cannot_survive_fit_compact_fit_aba() {
+        use crate::ordered_keys::{KeyOutcome, OrderedKeyboard};
+        let mut ui = connected();
+        let mut pointer = PointerUi::new();
+        let mut keys = OrderedKeyboard::new();
+        assert_eq!(pointer.input(event(50, 234, PointerPhase::Down), &mut ui), None);
+        for _ in 0..2 {
+            assert_eq!(keys.event(64, true, &mut ui), KeyOutcome::Redraw);
+            assert_eq!(keys.event(64, false, &mut ui), KeyOutcome::Unchanged);
+        }
+        assert!(!ui.compact_view);
+        assert_eq!(ui.view_epoch, 2);
+        assert_eq!(pointer.input(event(50, 234, PointerPhase::Up), &mut ui), None);
+        assert_eq!(ui.mode_pending, None);
+        // A genuinely new release/press is still permitted.
+        assert_eq!(pointer.input(event(50, 234, PointerPhase::Down), &mut ui), None);
+        assert_eq!(pointer.input(event(50, 234, PointerPhase::Up), &mut ui),
+                   Some(Intent::SetMode(Mode::Ongoing)));
+    }
+
+    #[test]
+    fn f6_held_stop_is_rejected_but_fresh_press_remains_available() {
+        use crate::ordered_keys::{KeyOutcome, OrderedKeyboard};
+        let mut ui = connected();
+        let mut pointer = PointerUi::new();
+        let mut keys = OrderedKeyboard::new();
+        assert!(ui.observe(BackendEvent::Started { task_id: 7, seq: 1 }));
+        assert_eq!(pointer.input(event(60, 340, PointerPhase::Down), &mut ui), None);
+        assert_eq!(keys.event(64, true, &mut ui), KeyOutcome::Redraw);
+        assert_eq!(keys.event(64, false, &mut ui), KeyOutcome::Unchanged);
+        assert!(ui.compact_view);
+        assert_eq!(pointer.input(event(60, 340, PointerPhase::Up), &mut ui), None);
+        assert_eq!(ui.task.state, TaskState::Running);
+        assert_eq!(pointer.input(event(60, 340, PointerPhase::Down), &mut ui), None);
+        assert_eq!(pointer.input(event(60, 340, PointerPhase::Up), &mut ui),
+                   Some(Intent::Stop { task_id: 7 }));
+        assert_eq!(ui.task.state, TaskState::Running); // local intent, not a stop
+    }
+
+    #[test]
+    fn exhausted_view_epoch_does_not_wrap_to_approve_stale_pointer() {
+        use crate::ordered_keys::{KeyOutcome, OrderedKeyboard};
+        let mut ui = connected();
+        let mut pointer = PointerUi::new();
+        let mut keys = OrderedKeyboard::new();
+        ui.view_epoch = u64::MAX - 1;
+        assert_eq!(pointer.input(event(50, 234, PointerPhase::Down), &mut ui), None);
+        assert_eq!(keys.event(64, true, &mut ui), KeyOutcome::Redraw);
+        assert_eq!(keys.event(64, false, &mut ui), KeyOutcome::Unchanged);
+        assert_eq!(ui.view_epoch, u64::MAX);
+        assert_eq!(pointer.input(event(50, 234, PointerPhase::Up), &mut ui), None);
+        assert_eq!(pointer.input(event(50, 234, PointerPhase::Down), &mut ui), None);
+        assert_eq!(pointer.input(event(50, 234, PointerPhase::Up), &mut ui), None);
+        assert_eq!(ui.mode_pending, None);
+        assert_eq!(keys.event(64, true, &mut ui), KeyOutcome::Redraw);
+        assert_eq!(ui.view_epoch, u64::MAX);
+    }
+
 }
