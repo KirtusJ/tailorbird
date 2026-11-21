@@ -315,6 +315,116 @@ def selftest_offline_refusal_receipts():
           flush=True)
 
 
+
+def require_launcher_return_receipts(receipts):
+    expected = {"original_frames": 1, "stale_app_negatives": 1,
+                "tampered_status_negatives": 1, "tampered_selection_negatives": 1}
+    if receipts != expected:
+        raise AssertionError(f"full-launcher return checks incomplete: {receipts!r}")
+
+
+def selftest_launcher_return_receipts():
+    complete = {"original_frames": 1, "stale_app_negatives": 1,
+                "tampered_status_negatives": 1, "tampered_selection_negatives": 1}
+    require_launcher_return_receipts(dict(complete))
+    for key in complete:
+        wrong = dict(complete)
+        wrong[key] -= 1
+        try:
+            require_launcher_return_receipts(wrong)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError(f"skipped launcher return oracle accepted: {key}")
+    print("Full-launcher return receipts: 1 valid and 4 missing-check refusals PASS",
+          flush=True)
+
+
+def launcher_dynamic_row(y):
+    # session::draw_menu, one program and one supplied file:
+    # row 6 = the recorded head; rows 20..22 = the 3-line run result.
+    # All other pixels, including the full launcher and fixed footer, must
+    # return to their same-launch pre-entry pixels.
+    return 120 <= y < 140 or 400 <= y < 460
+
+
+def launcher_static_same(first, returned, width, height):
+    if len(first) != width * height * 3 or len(returned) != len(first):
+        return False
+    stride = width * 3
+    return all(first[y*stride:(y+1)*stride] ==
+               returned[y*stride:(y+1)*stride]
+               for y in range(height) if not launcher_dynamic_row(y))
+
+
+def launcher_status_lines(serial, name):
+    # Read the current *same guest launch* kernel serial; no golden
+    # screenshot, stale run or precommitted timer may authenticate these.
+    pattern = (re.escape(name) +
+               r" ended DONE: exit 0 after (\d+) s; \d+ system calls; "
+               r"(\d+) frames shown \((\d+)\.(\d+) a second\); "
+               r"the processor idled (\d+)% of the time;[^\n]*?"
+               r"(\d+) frames given back")
+    result = re.search(pattern, serial)
+    if not result:
+        return None
+    seconds, shown, whole, tenth, idle, released = result.groups()
+    return (f"{name} ended DONE: exit 0 after {seconds} s.",
+            f"{shown} pictures shown, {whole}.{tenth} a second; "
+            f"the processor idled {idle}% of the time.",
+            f"All {released} frames of its memory were given back.")
+
+
+def launcher_status_source_ok(rgb, width, glyphs, doubled, lines):
+    if lines is None:
+        return False
+    # ui::at(2,row) uses the kernel 10x20 font, AMBER on GROUND.
+    # It truncates each line to grid width minus four columns.
+    for index, line in enumerate(lines):
+        for j, ch in enumerate(line[:width//10-4]):
+            expected = stop_cell_rgb(glyphs, doubled, ch, 10, 20,
+                                     AMBER, GROUND)
+            if crop(rgb, width, (20+j*10, 400+index*20,
+                                 30+j*10, 420+index*20)) != expected:
+                return False
+    return True
+
+
+def full_launcher_return_ok(before, after, width, height,
+                            serial, name, glyphs, doubled):
+    return (launcher_static_same(before, after, width, height) and
+            launcher_status_source_ok(after, width, glyphs, doubled,
+                                      launcher_status_lines(serial, name)))
+
+
+def transplanted_stale_app(returned, app_frame, width, height):
+    # Disposable host-only adverse image. Preserve genuine dynamic footer
+    # while putting the stale application everywhere the launcher must be.
+    changed = bytearray(returned)
+    stride = width * 3
+    for y in range(height):
+        if not launcher_dynamic_row(y):
+            start = y*stride
+            changed[start:start+stride] = app_frame[start:start+stride]
+    return bytes(changed)
+
+
+def erased_return_status(returned, width):
+    # Remove the first 10x20 output glyph from the real result notice.
+    changed = bytearray(returned)
+    for y in range(400, 420):
+        start = (y*width+20)*3
+        changed[start:start+30] = GROUND*10
+    return bytes(changed)
+
+
+def damaged_launcher_selection(returned, width):
+    changed = bytearray(returned)
+    start = (110*width+21)*3
+    changed[start:start+3] = GROUND
+    return bytes(changed)
+
+
 def check(kernel, app, measurement, folder, small):
     folder.mkdir(parents=True, exist_ok=False)
     w, h = (800, 600) if small else (1920, 1080)
@@ -872,7 +982,42 @@ def check(kernel, app, measurement, folder, small):
         report["offline_refusal_notice_source_rgb"] = dict(offline_refusal_receipts)
         m.key("esc")
         wait_serial(f"{app.name} ended DONE: exit 0")
-        sample("returned",lambda rgb: menu(rgb) and crop(rgb,w,(0,0,520,150)) == selection)
+        # Require the entire same-launch launcher, except two source-defined
+        # dynamic text bands, plus source-font rendering of the exact three
+        # result lines computed from this launch's kernel serial receipt.
+        returned = sample("returned", lambda rgb: menu(rgb) and
+                          crop(rgb,w,(0,0,520,150)) == selection and
+                          full_launcher_return_ok(first, rgb, w, h,
+                                                  m.serial(), app.name,
+                                                  glyphs, doubled))
+        return_receipts = {"original_frames": 0, "stale_app_negatives": 0,
+                           "tampered_status_negatives": 0,
+                           "tampered_selection_negatives": 0}
+        return_receipts["original_frames"] += 1
+        stale = transplanted_stale_app(returned, fit_again, w, h)
+        assert stale != returned, "stale app transplant changed no actual pixels"
+        assert not full_launcher_return_ok(first, stale, w, h, m.serial(),
+                                           app.name, glyphs, doubled), (
+            "stale app outside old launcher crop was accepted"
+        )
+        return_receipts["stale_app_negatives"] += 1
+        damaged_status = erased_return_status(returned, w)
+        assert damaged_status != returned, "no status glyph ink to erase"
+        assert not full_launcher_return_ok(first, damaged_status, w, h,
+                                           m.serial(), app.name, glyphs, doubled), (
+            "missing real native result glyph was accepted"
+        )
+        return_receipts["tampered_status_negatives"] += 1
+        damaged_selection = damaged_launcher_selection(returned, w)
+        assert damaged_selection != returned, "no selection pixel to alter"
+        assert not (menu(damaged_selection) and
+                    full_launcher_return_ok(first, damaged_selection, w, h,
+                                            m.serial(), app.name, glyphs, doubled)), (
+            "changed native launcher selection pixel was accepted"
+        )
+        return_receipts["tampered_selection_negatives"] += 1
+        require_launcher_return_receipts(return_receipts)
+        report["full_launcher_return_source_rgb"] = dict(return_receipts)
         m.key("p")
         assert m.proc.wait(timeout=50) == 33
         log=m.serial()
@@ -895,6 +1040,7 @@ if __name__ == "__main__":
     selftest_empty_output_receipts()
     selftest_task_section_receipts()
     selftest_offline_refusal_receipts()
+    selftest_launcher_return_receipts()
     selftest_affordance_receipts()
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("kernel","app","output"):
