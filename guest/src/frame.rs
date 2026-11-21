@@ -1,8 +1,8 @@
 //! Draw Tailorbird's logical 960 by 540 layout on the current guest scanout.
-#[path = "../../../../PCP_OS_Rust/crates/pcpos-kernel/src/font.rs"]
+#[path = "../../pcp-os/PCP_OS_Rust/crates/pcpos-kernel/src/font.rs"]
 mod font;
 const DOUBLE: &[u8; 95 * 20 * 40] =
-    include_bytes!("../../../../PCP_OS_Rust/crates/pcpos-kernel/src/font-2x.bin");
+    include_bytes!("../../pcp-os/PCP_OS_Rust/crates/pcpos-kernel/src/font-2x.bin");
 
 pub struct Frame<'a> {
     pixels: &'a mut [u32],

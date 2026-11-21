@@ -9,7 +9,7 @@
 //! The 960x540 Tailorbird guest reserves a 780-pixel-wide two-line editor.
 //! At ten by twenty pixels per ASCII cell, it exposes the complete 120-byte
 //! request (78 cells on the first row and 42 on the second).
-#[path = "../../../../PCP_OS_Rust/crates/pcpos-kernel/src/font.rs"]
+#[path = "../../pcp-os/PCP_OS_Rust/crates/pcpos-kernel/src/font.rs"]
 mod kernel_font;
 
 pub const CELL_WIDTH: usize = kernel_font::CELL_WIDTH;
