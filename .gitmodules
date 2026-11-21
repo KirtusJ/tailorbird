@@ -1,0 +1,3 @@
+[submodule "pcp-os"]
+	path = pcp-os
+	url = ../pcp-os.git

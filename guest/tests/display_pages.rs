@@ -2,7 +2,7 @@
 #![allow(dead_code)]
 use std::cell::RefCell;
 
-#[path = "../../../../store/native/guest/src/device.rs"]
+#[path = "../../pcp-os/store/native/guest/src/device.rs"]
 mod device;
 fn paint_reference(pixels: &mut [u32], w: usize, h: usize, pitch: usize, color: u32) {
     // Draw edge pixels on every visible row, leaving the interior and padding intact.

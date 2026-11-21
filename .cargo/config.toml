@@ -2,7 +2,7 @@
 rustflags = [
   "-C", "relocation-model=static",
   "-C", "code-model=large",
-  "-C", "link-arg=-T../../../store/games/flux-rink/guest.ld",
+  "-C", "link-arg=-Tpcp-os/store/games/flux-rink/guest.ld",
   "-C", "link-arg=--build-id=none",
   "-C", "link-arg=-z",
   "-C", "link-arg=max-page-size=4096",
