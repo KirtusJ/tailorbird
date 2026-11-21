@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Exercise Tailorbird's display preference on a measured public desktop."""
+"""Exercise Tailorbird on the historical 8f59928 desktop's pixel layout.
+
+The launcher/return oracle is specific to that kernel, not the current submodule.
+"""
 import argparse
 import hashlib
 import json
@@ -1085,7 +1088,10 @@ if __name__ == "__main__":
     for name in ("kernel","app","output"):
         parser.add_argument(name,type=Path)
     parser.add_argument("measurement")
+    parser.add_argument("--size", choices=("1080p", "800x600", "both"), default="both")
     args=parser.parse_args()
     for name, small in [("1080p",False),("800x600",True)]:
+        if args.size not in ("both", name):
+            continue
         check(args.kernel.resolve(), args.app.resolve(), args.measurement,
               args.output.resolve()/name, small)

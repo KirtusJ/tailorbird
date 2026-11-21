@@ -7,16 +7,31 @@ This is NOT a test of the proprietary PT integrated service, approval,
 physical hardware, EDID or full runtime authorization.
 """
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import pathlib
 import re
 import select
 import subprocess
+import sys
 import tempfile
 import time
 
 DEFAULT_TIMEOUT = 100.0
+
+if sys.flags.optimize:
+    raise SystemExit("Refuse optimized Python: native checks require assertions")
+
+
+@contextmanager
+def capture_folder(output):
+    if output is None:
+        with tempfile.TemporaryDirectory(prefix="tailorbird-qmp-") as scratch:
+            yield pathlib.Path(scratch)
+    else:
+        output.mkdir(parents=True, exist_ok=False)
+        yield output
 
 
 class Qemu:
@@ -102,11 +117,13 @@ def crop(pixels: bytes, width: int, box):
     )
 
 
-def run(kernel, guest, timeout, machine):
+def run(kernel, guest, timeout, machine, output=None):
     assert kernel.is_file() and kernel.stat().st_size > 10000
     assert guest.is_file() and guest.stat().st_size > 10000
-    with tempfile.TemporaryDirectory(prefix="tailorbird-qmp-") as scratch:
-        folder = pathlib.Path(scratch)
+    with capture_folder(output) as folder:
+        report = {"machine": machine, "passed": False,
+                  "guest_sha256": hashlib.sha256(guest.read_bytes()).hexdigest(),
+                  "kernel_sha256": hashlib.sha256(kernel.read_bytes()).hexdigest()}
         m = Qemu(kernel, guest, folder, machine)
         try:
             deadline = time.monotonic() + timeout
@@ -383,8 +400,10 @@ def run(kernel, guest, timeout, machine):
             assert "  FAIL" not in log, "Kernel reported failing self-checks"
             print("PASS: QEMU scanout/input contrast, offline refusal and clean kernel return",
                   flush=True)
+            report["passed"] = True
         finally:
             m.stop()
+            (folder / "result.json").write_text(json.dumps(report, indent=2) + "\n")
 
 
 if __name__ == "__main__":
@@ -393,5 +412,8 @@ if __name__ == "__main__":
     parser.add_argument("guest", type=pathlib.Path)
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
     parser.add_argument("--machine", choices=("pc", "q35"), default="pc")
+    parser.add_argument("--output", type=pathlib.Path,
+                        help="retain original frames, serial and verdict in a new directory")
     args = parser.parse_args()
-    run(args.kernel.resolve(), args.guest.resolve(), args.timeout, args.machine)
+    run(args.kernel.resolve(), args.guest.resolve(), args.timeout, args.machine,
+        args.output.resolve() if args.output else None)

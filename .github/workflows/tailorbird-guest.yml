@@ -1,0 +1,288 @@
+name: Tailorbird native guest
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  RUSTUP_TOOLCHAIN: '1.97.0'
+  CARGO_PROFILE_RELEASE_LTO: 'off'
+
+jobs:
+  rust-ui-and-native-link:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      verified_guest_sha256: ${{ steps.guest_elf.outputs.sha256 }}
+    steps:
+      - name: Checkout exact proposed source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: true
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.97.0 --profile minimal --component rust-src --target x86_64-unknown-none
+      - name: Record source and toolchain identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD
+          git submodule status
+          rustc --version --verbose
+          cargo --version
+      - name: Execute unit and adverse UI reducer tests in debug
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked --offline --lib --manifest-path guest/Cargo.toml -- --nocapture
+      - name: Execute unit and adverse UI reducer tests in release
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked --offline --release --lib --manifest-path guest/Cargo.toml -- --nocapture
+      - name: Verify guest framebuffer padding and page flips
+        run: |
+          rustc --edition 2021 --test guest/tests/display_pages.rs -o "$RUNNER_TEMP/display-pages"
+          "$RUNNER_TEMP/display-pages"
+      - name: Install official x86_64 freestanding Rust target
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup target add x86_64-unknown-none
+      - name: Provision documented linker and ELF inspection
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v ld.lld >/dev/null 2>&1 || ! command -v readelf >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends lld binutils
+          fi
+          ld.lld --version
+          readelf --version | head -1
+      - name: Compile native no_std guest ELF64 without launching it
+        shell: bash
+        env:
+          CARGO_PROFILE_RELEASE_LTO: 'off'
+        run: |
+          set -euo pipefail
+          sh build.sh --offline
+      - name: Inspect exact ELF64 output and hash
+        id: guest_elf
+        shell: bash
+        run: |
+          set -euo pipefail
+          ELF="target/x86_64-unknown-none/release/tailorbird"
+          test -s "$ELF"
+          readelf -h "$ELF"
+          readelf -l "$ELF"
+          readelf -r "$ELF"
+          # Reject default PIE/low-address layouts that are ELF64 but do not
+          # match PCP OS' guest linker script or loader expectations.
+          python3 - "$ELF" <<'PY'
+          import pathlib
+          import struct
+          import sys
+
+          # The structural gate below relies on assert statements.
+          # PYTHONOPTIMIZE (or -O) would delete them silently.
+          if sys.flags.optimize:
+              raise SystemExit("Refuse optimized Python for ELF admission checks")
+
+          data = pathlib.Path(sys.argv[1]).read_bytes()
+          assert data[:6] == b"\x7fELF\x02\x01", "expected ELF64 little endian"
+          (
+              e_type, machine, version, entry, phoff, shoff, flags,
+              ehsize, phentsize, phnum, shentsize, shnum, shstrndx
+          ) = struct.unpack_from("<HHIQQQIHHHHHH", data, 16)
+          assert e_type == 2, f"expected ET_EXEC (2), got {e_type}"
+          assert machine == 62, f"expected x86_64, got {machine}"
+          assert entry == 0x8000400000, f"unexpected entry {entry:#x}"
+          assert phentsize == 56 and 0 < phnum <= 64
+          assert phoff + phentsize * phnum <= len(data)
+          loads = []
+          entry_executable = False
+          for i in range(phnum):
+              (kind, permissions, offset, vaddr, paddr,
+               filesz, memsz, align) = struct.unpack_from(
+                  "<IIQQQQQQ", data, phoff + i * phentsize
+              )
+              assert kind not in (2, 3), "dynamic segment / interpreter not allowed"
+              if kind != 1:
+                  continue
+              assert filesz <= memsz and offset + filesz <= len(data)
+              assert not (permissions & 3 == 3), "writable-and-executable segment"
+              assert vaddr >= 0x8000400000
+              if permissions & 1 and vaddr <= entry < vaddr + memsz:
+                  entry_executable = True
+              loads.append((hex(vaddr), hex(memsz), permissions))
+          assert loads and entry_executable, "entry not in executable PT_LOAD"
+          if shoff and shnum:
+              assert shentsize == 64 and shoff + shentsize * shnum <= len(data)
+              for i in range(shnum):
+                  sh_type = struct.unpack_from("<I", data, shoff + i * shentsize + 4)[0]
+                  sh_size = struct.unpack_from("<Q", data, shoff + i * shentsize + 32)[0]
+                  assert not (sh_type in (4, 9) and sh_size), (
+                      "unprocessed runtime relocations are not supported by PCP OS"
+                  )
+          print("PASS: intended static high-address ELF64 guest layout", loads)
+          PY
+          sha256sum "$ELF"
+          echo "sha256=$(sha256sum "$ELF" | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+          git rev-parse HEAD
+      - name: Retain structurally verified ELF for the QEMU job
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tailorbird-verified-elf
+          path: target/x86_64-unknown-none/release/tailorbird
+          if-no-files-found: error
+          retention-days: 14
+
+  qemu-current-os:
+    name: Current OS / ${{ matrix.machine }}
+    needs: rust-ui-and-native-link
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        machine: [pc, q35]
+    steps:
+      - name: Checkout proposed guest and its exact OS submodule
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          submodules: true
+          persist-credentials: false
+      - name: Install pinned compiler and native test prerequisites
+        run: |
+          rustup toolchain install 1.97.0 --profile minimal --component rust-src --target x86_64-unknown-none
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 lld binutils
+      - name: Record current source and executor identities
+        run: |
+          mkdir native-captures
+          {
+            git rev-parse HEAD
+            git submodule status
+            rustc --version --verbose
+            cargo --version
+            python3 --version
+            qemu-system-x86_64 --version
+            ld.lld --version
+          } | tee native-captures/provenance.txt
+      - name: Build current pinned PCP OS kernel
+        env:
+          PCPOS_KERNEL_STAGE: ${{ runner.temp }}/current-kernel
+        run: |
+          sh pcp-os/PCP_OS_Rust/crates/pcpos-kernel/run.sh build
+          sha256sum pcp-os/PCP_OS_Rust/crates/pcpos-kernel/target/pcpos-kernel.elf32 | tee -a native-captures/provenance.txt
+      - name: Download structurally verified guest
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: tailorbird-verified-elf
+          path: target/x86_64-unknown-none/release
+      - name: Require producer bytes and run native keyboard and return checks
+        env:
+          VERIFIED_GUEST_SHA256: ${{ needs.rust-ui-and-native-link.outputs.verified_guest_sha256 }}
+          MACHINE: ${{ matrix.machine }}
+        run: |
+          set -euo pipefail
+          GUEST=target/x86_64-unknown-none/release/tailorbird
+          test -n "$VERIFIED_GUEST_SHA256"
+          printf '%s  %s\n' "$VERIFIED_GUEST_SHA256" "$GUEST" | sha256sum --check
+          python3 guest/tests/qemu_smoke.py \
+            pcp-os/PCP_OS_Rust/crates/pcpos-kernel/target/pcpos-kernel.elf32 \
+            "$GUEST" --machine "$MACHINE" --timeout 100 \
+            --output "native-captures/$MACHINE" 2>&1 | tee native-captures/check.log
+      - name: Retain current-pin native evidence, including failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tailorbird-current-os-${{ matrix.machine }}
+          path: native-captures/
+          if-no-files-found: warn
+          retention-days: 14
+
+  qemu-historical-scale:
+    name: Historical 8f59928 desktop / ${{ matrix.size }}
+    needs: rust-ui-and-native-link
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        size: [1080p, 800x600]
+    steps:
+      - name: Checkout proposed guest and font sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          submodules: true
+          persist-credentials: false
+      - name: Checkout historical kernel required by the launcher pixel oracle
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: KirtusJ/pcp-os
+          ref: 8f5992807e9b9c0bb8ce64e366c85ee4add31599
+          path: scale-desktop
+          persist-credentials: false
+      - name: Install pinned compiler and native test prerequisites
+        run: |
+          rustup toolchain install 1.97.0 --profile minimal --component rust-src --target x86_64-unknown-none
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 lld binutils
+      - name: Record historical scope and require identical oracle fonts
+        run: |
+          mkdir scale-captures
+          {
+            echo 'Historical desktop compatibility only; not current-desktop acceptance.'
+            git rev-parse HEAD
+            git submodule status
+            git -C scale-desktop rev-parse HEAD
+            rustc --version --verbose
+            cargo --version
+            python3 --version
+            qemu-system-x86_64 --version
+            ld.lld --version
+          } | tee scale-captures/provenance.txt
+          for font in font.rs font-2x.bin; do
+            cmp "pcp-os/PCP_OS_Rust/crates/pcpos-kernel/src/$font" \
+                "scale-desktop/PCP_OS_Rust/crates/pcpos-kernel/src/$font"
+          done
+      - name: Build historical desktop kernel
+        env:
+          PCPOS_KERNEL_STAGE: ${{ runner.temp }}/historical-scale-kernel
+        run: |
+          sh scale-desktop/PCP_OS_Rust/crates/pcpos-kernel/run.sh build
+          sha256sum scale-desktop/PCP_OS_Rust/crates/pcpos-kernel/target/pcpos-kernel.elf32 | tee -a scale-captures/provenance.txt
+      - name: Download structurally verified guest
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: tailorbird-verified-elf
+          path: target/x86_64-unknown-none/release
+      - name: Require producer bytes and check scale and complete launcher return
+        env:
+          VERIFIED_GUEST_SHA256: ${{ needs.rust-ui-and-native-link.outputs.verified_guest_sha256 }}
+          SIZE: ${{ matrix.size }}
+        run: |
+          set -euo pipefail
+          GUEST=target/x86_64-unknown-none/release/tailorbird
+          test -n "$VERIFIED_GUEST_SHA256"
+          printf '%s  %s\n' "$VERIFIED_GUEST_SHA256" "$GUEST" | sha256sum --check
+          kernel=scale-desktop/PCP_OS_Rust/crates/pcpos-kernel
+          image="$kernel/target/pcpos-kernel.elf32"
+          measurement=$(python3 "$kernel/tools/measure.py" "$image")
+          python3 guest/tests/view_scale.py "$image" "$GUEST" \
+            scale-captures "$measurement" --size "$SIZE" 2>&1 | tee scale-captures/check.log
+      - name: Retain historical native frames, serial and results, including failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tailorbird-historical-scale-${{ matrix.size }}
+          path: scale-captures/
+          if-no-files-found: warn
+          retention-days: 14
+
