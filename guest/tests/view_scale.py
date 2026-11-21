@@ -340,12 +340,13 @@ def selftest_launcher_return_receipts():
           flush=True)
 
 
-def launcher_dynamic_row(y):
-    # session::draw_menu, one program and one supplied file:
-    # row 6 = the recorded head; rows 20..22 = the 3-line run result.
-    # All other pixels, including the full launcher and fixed footer, must
-    # return to their same-launch pre-entry pixels.
-    return 120 <= y < 140 or 400 <= y < 460
+def launcher_dynamic_row(y, height):
+    # #289 CI builds the desktop kernel pinned in the workflow at
+    # 8f5992807e9b9c0bb8ce64e366c85ee4add31599, not the main repo's
+    # old text-mode menu. draw_desktop paints ONLY the first result line
+    # at ui::at(2, rows-4), with 10x20 glyph cells.
+    row = height // 20 - 4
+    return row * 20 <= y < (row + 1) * 20
 
 
 def launcher_static_same(first, returned, width, height):
@@ -354,66 +355,61 @@ def launcher_static_same(first, returned, width, height):
     stride = width * 3
     return all(first[y*stride:(y+1)*stride] ==
                returned[y*stride:(y+1)*stride]
-               for y in range(height) if not launcher_dynamic_row(y))
+               for y in range(height) if not launcher_dynamic_row(y, height))
 
 
-def launcher_status_lines(serial, name):
-    # Read the current *same guest launch* kernel serial; no golden
-    # screenshot, stale run or precommitted timer may authenticate these.
-    pattern = (re.escape(name) +
-               r" ended DONE: exit 0 after (\d+) s; \d+ system calls; "
-               r"(\d+) frames shown \((\d+)\.(\d+) a second\); "
-               r"the processor idled (\d+)% of the time;[^\n]*?"
-               r"(\d+) frames given back")
-    result = re.search(pattern, serial)
-    if not result:
+def launcher_status_line(serial, name):
+    # Pinned desktop kernel's run_entry message, authenticated to this
+    # launch by its serial log, not to a screenshot from another attempt.
+    # draw_desktop displays only message.lines().next().
+    result = re.search(re.escape(name) +
+                       r" ended DONE: exit 0 after (\d+) s;", serial)
+    if result is None:
         return None
-    seconds, shown, whole, tenth, idle, released = result.groups()
-    return (f"{name} ended DONE: exit 0 after {seconds} s.",
-            f"{shown} pictures shown, {whole}.{tenth} a second; "
-            f"the processor idled {idle}% of the time.",
-            f"All {released} frames of its memory were given back.")
+    return f"{name} ended DONE: exit 0 after {result.group(1)} s."
 
 
-def launcher_status_source_ok(rgb, width, glyphs, doubled, lines):
-    if lines is None:
+def launcher_status_source_ok(rgb, width, height, glyphs, doubled, line):
+    if line is None:
         return False
-    # ui::at(2,row) uses the kernel 10x20 font, AMBER on GROUND.
-    # It truncates each line to grid width minus four columns.
-    for index, line in enumerate(lines):
-        for j, ch in enumerate(line[:width//10-4]):
-            expected = stop_cell_rgb(glyphs, doubled, ch, 10, 20,
-                                     AMBER, GROUND)
-            if crop(rgb, width, (20+j*10, 400+index*20,
-                                 30+j*10, 420+index*20)) != expected:
-                return False
+    # draw_desktop's ui::at(2, rows-4), AMBER on GROUND, 10x20 cells.
+    # The status text fits both native tested widths without clipping.
+    y = (height // 20 - 4) * 20
+    if len(line) * 10 + 20 > width:
+        return False
+    for j, ch in enumerate(line):
+        expected = stop_cell_rgb(glyphs, doubled, ch, 10, 20,
+                                 AMBER, GROUND)
+        if crop(rgb, width, (20 + j*10, y, 30 + j*10, y + 20)) != expected:
+            return False
     return True
 
 
 def full_launcher_return_ok(before, after, width, height,
                             serial, name, glyphs, doubled):
     return (launcher_static_same(before, after, width, height) and
-            launcher_status_source_ok(after, width, glyphs, doubled,
-                                      launcher_status_lines(serial, name)))
+            launcher_status_source_ok(after, width, height, glyphs, doubled,
+                                      launcher_status_line(serial, name)))
 
 
 def transplanted_stale_app(returned, app_frame, width, height):
-    # Disposable host-only adverse image. Preserve genuine dynamic footer
-    # while putting the stale application everywhere the launcher must be.
+    # Disposable host-only adverse image. Preserve genuine dynamic status
+    # while transplanting stale Tailorbird into the rest of the launcher.
     changed = bytearray(returned)
     stride = width * 3
     for y in range(height):
-        if not launcher_dynamic_row(y):
+        if not launcher_dynamic_row(y, height):
             start = y*stride
             changed[start:start+stride] = app_frame[start:start+stride]
     return bytes(changed)
 
 
-def erased_return_status(returned, width):
-    # Remove the first 10x20 output glyph from the real result notice.
+def erased_return_status(returned, width, height):
+    # Remove the first 10x20 glyph from the genuine returned result line.
     changed = bytearray(returned)
-    for y in range(400, 420):
-        start = (y*width+20)*3
+    row_y = (height // 20 - 4) * 20
+    for y in range(row_y, row_y + 20):
+        start = (y*width + 20)*3
         changed[start:start+30] = GROUND*10
     return bytes(changed)
 
@@ -1001,7 +997,7 @@ def check(kernel, app, measurement, folder, small):
             "stale app outside old launcher crop was accepted"
         )
         return_receipts["stale_app_negatives"] += 1
-        damaged_status = erased_return_status(returned, w)
+        damaged_status = erased_return_status(returned, w, h)
         assert damaged_status != returned, "no status glyph ink to erase"
         assert not full_launcher_return_ok(first, damaged_status, w, h,
                                            m.serial(), app.name, glyphs, doubled), (
