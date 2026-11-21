@@ -36,7 +36,7 @@ def capture_folder(output):
 
 class Qemu:
     def __init__(self, kernel: pathlib.Path, guest: pathlib.Path, folder: pathlib.Path, machine: str,
-                 boot_line: str = "auto=tailorbird then=off", display_args=None):
+                 boot_line: str = "auto=tailorbird then=off desktop=1024x768 ui_scale=1", display_args=None):
         self.folder = folder
         self.serial_path = folder / "serial.log"
         cmd = [
@@ -132,7 +132,8 @@ def run(kernel, guest, timeout, machine, output=None):
                     raise RuntimeError("QEMU exited before guest display: " + m.serial()[-1800:])
                 try:
                     dims, baseline, first_hash = m.screenshot("initial")
-                    # The public kernel selects 1024x768 at default VGA memory.
+                    # Explicitly request the 1024x768 scanout this pixel oracle
+                    # describes; newer kernels default to 1920x1080.
                     # Wait for actual Tailorbird pixels: the launcher uses this mode too.
                     sample = ((114 + 110) * dims[0] + 32 + 22) * 3
                     if (dims == (1024, 768) and "Tailorbird first frame presented" in m.serial()
@@ -143,7 +144,7 @@ def run(kernel, guest, timeout, machine, output=None):
                     print("SCREEN_PENDING", str(e)[:160], flush=True)
                 time.sleep(0.3)
             else:
-                raise TimeoutError("No Tailorbird frame at the inherited 1024x768 scanout. last_screen=" + str(dims)
+                raise TimeoutError("No Tailorbird frame at the requested 1024x768 scanout. last_screen=" + str(dims)
                                    + " serial=" + m.serial()[-1800:])
 
             left, top = (dims[0] - 960) // 2, (dims[1] - 540) // 2

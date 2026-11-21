@@ -39,7 +39,8 @@ and manual dispatch, using Rust 1.97.0 and the exact proposed commit with its su
 
 - Debug and release library tests, the framebuffer padding/page-flip test, and static high-address
   ELF64 inspection. `build.sh --offline` produces the guest once.
-- Separate PC and Q35 keyboard/scanout/offline-refusal/exit tests against the **current OS submodule**.
+- Separate PC and Q35 keyboard/scanout/offline-refusal/exit tests at an explicitly requested
+  1024x768 against the **current OS submodule**.
 - Separate 1920x1080 and 800x600 scale, glyph, refusal and complete launcher-return tests against
   **historical kernel `8f5992807e9b9c0bb8ce64e366c85ee4add31599`**. `view_scale.py`'s exact launcher
   pixels and power key describe that desktop. These jobs do not qualify the current desktop's
