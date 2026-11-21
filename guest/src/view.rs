@@ -60,8 +60,8 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
     let mut name = [0u8; 40];
     f.panel(0, 0, 960, 72, PANEL);
     label(f, 22, 12, "Tailorbird", 3, TEAL);
-    // Where this is: a program of PCP OS that has the whole display, not the desktop itself.
-    label(f, 22, 52, "PCP OS > Tailorbird (a program; Esc returns to the desktop)", 1, SOFT);
+    // Where this is and where Esc leads: Programs, from which this was started (A3 pressed it and saw).
+    label(f, 22, 52, "PCP OS > Programs > Tailorbird (Esc returns to Programs)", 1, SOFT);
     label(f, 202, 27, "builds and fixes on this computer", 2, SOFT);
     // What is behind it, said once, where the eye lands last: a lamp and two words.
     let (lamp, link) = if ui.connected { (GOOD, "Service linked") } else { (BAD, "No service") };
@@ -133,7 +133,7 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
             label(f, 339, 340, "cannot build yet.", 2, AMBER);
         }
         label(f, 339, 384, "The rest of PCP OS works without it.", 2, GOOD);
-        key(f, 339, 420, "Esc", "returns to the PCP OS launcher");
+        key(f, 339, 420, "Esc", "returns to Programs");
     } else {
         for (i, event) in ui.lines().iter().enumerate() {
             let y = 190 + i as i32 * 28;

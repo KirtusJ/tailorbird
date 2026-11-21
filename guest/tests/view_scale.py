@@ -803,7 +803,7 @@ def check(kernel, app, measurement, folder, small):
         ("No model service is connected, so Tailorbird", 339, 316, 10, 20, AMBER),
         ("cannot build yet.", 339, 340, 10, 20, AMBER),
         ("The rest of PCP OS works without it.", 339, 384, 10, 20, GOOD),
-        ("returns to the PCP OS launcher", 370, 420, 6, 12, SOFT),
+        ("returns to Programs", 370, 420, 6, 12, SOFT),
     )
 
     def empty_output_label_ok(rgb, mode, text, x, y, cell_w, cell_h, ink):
@@ -838,7 +838,7 @@ def check(kernel, app, measurement, folder, small):
     # typeface and exact positions are pinned to guest/main.rs.
     task_section_labels = (
         ("builds and fixes on this computer", 202, 27, 10, 20, SOFT),
-        ("PCP OS > Tailorbird (a program; Esc returns to the desktop)", 22, 52, 6, 12, SOFT),
+        ("PCP OS > Programs > Tailorbird (Esc returns to Programs)", 22, 52, 6, 12, SOFT),
         ("Work", 335, 116, 10, 20, TEAL),
         ("No task", 337, 150, 6, 12, SOFT),
         ("stops the task", 97, 410, 6, 12, SOFT),
