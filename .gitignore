@@ -3,3 +3,5 @@ native-captures/
 scale-captures/
 scale-desktop/
 __pycache__/
+render-output/
+demo-captures/
