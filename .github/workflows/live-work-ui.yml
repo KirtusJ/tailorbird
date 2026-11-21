@@ -1,0 +1,105 @@
+name: Live work UI sample events
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  RUSTUP_TOOLCHAIN: '1.97.0'
+  CARGO_PROFILE_RELEASE_LTO: 'off'
+jobs:
+  render-and-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      demo_sha256: ${{ steps.demo.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          submodules: true
+          persist-credentials: false
+      - name: Install pinned tools
+        run: |
+          rustup toolchain install 1.97.0 --profile minimal --component rust-src --target x86_64-unknown-none
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends lld binutils
+      - name: Render real Rust UI at four sizes
+        run: cargo run --locked --offline --example live_work_frames -- render-output
+      - name: Build the separate sample-event guest
+        id: demo
+        run: |
+          sh build.sh --offline --features live-work-demo --bin tailorbird-work-demo
+          ELF=target/x86_64-unknown-none/release/tailorbird-work-demo
+          readelf -h "$ELF"
+          echo "sha256=$(sha256sum "$ELF" | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+          {
+            git rev-parse HEAD
+            git submodule status
+            rustc --version --verbose
+            sha256sum "$ELF"
+          } > render-output/provenance.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: live-work-ui-render-and-guest
+          path: |
+            render-output/
+            target/x86_64-unknown-none/release/tailorbird-work-demo
+          if-no-files-found: error
+          retention-days: 14
+  native-demo:
+    name: Sample UI / ${{ matrix.machine }}
+    needs: render-and-build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        machine: [pc, q35]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          submodules: true
+          persist-credentials: false
+      - name: Install pinned tools and emulator
+        run: |
+          rustup toolchain install 1.97.0 --profile minimal --component rust-src --target x86_64-unknown-none
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 lld binutils
+      - name: Build the pinned OS
+        env:
+          PCPOS_KERNEL_STAGE: ${{ runner.temp }}/live-work-kernel
+        run: sh pcp-os/PCP_OS_Rust/crates/pcpos-kernel/run.sh build
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: live-work-ui-render-and-guest
+      - name: Verify guest and observe twelve real native sample states
+        env:
+          DEMO_SHA256: ${{ needs.render-and-build.outputs.demo_sha256 }}
+          MACHINE: ${{ matrix.machine }}
+        run: |
+          set -euo pipefail
+          mkdir demo-captures
+          {
+            git rev-parse HEAD
+            git submodule status
+            rustc --version --verbose
+            qemu-system-x86_64 --version
+          } > demo-captures/provenance.txt
+          ELF=target/x86_64-unknown-none/release/tailorbird-work-demo
+          test -n "$DEMO_SHA256"
+          printf '%s  %s\n' "$DEMO_SHA256" "$ELF" | sha256sum --check
+          python3 guest/tests/live_work_native.py \
+            pcp-os/PCP_OS_Rust/crates/pcpos-kernel/target/pcpos-kernel.elf32 \
+            "$ELF" render-output "demo-captures/$MACHINE" --machine "$MACHINE" \
+            2>&1 | tee demo-captures/check.log
+      - name: Retain native captures and failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: live-work-ui-native-${{ matrix.machine }}
+          path: demo-captures/
+          if-no-files-found: warn
+          retention-days: 14
+

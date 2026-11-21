@@ -6,6 +6,9 @@ rust-version = "1.91"
 publish = false
 description = "Native PCP OS Tailorbird UI prototype; no model or tool backend"
 
+[features]
+live-work-demo = []
+
 [lib]
 name = "tailorbird_ui"
 path = "src/lib.rs"
@@ -15,6 +18,13 @@ name = "tailorbird"
 path = "src/main.rs"
 test = false
 bench = false
+
+[[bin]]
+name = "tailorbird-work-demo"
+path = "src/work_demo_main.rs"
+test = false
+bench = false
+required-features = ["live-work-demo"]
 
 [target.'cfg(target_os = "none")'.dependencies]
 pcp-game-guest = { path = "../pcp-os/store/native/guest" }

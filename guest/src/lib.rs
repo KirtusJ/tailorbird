@@ -34,6 +34,10 @@ pub mod ordered_keys;
 /// Future OS-delivered pointer events can drive bounded GUI controls only;
 /// the pinned kernel has no /dev/mouse or equivalent input source.
 pub mod pointer;
+/// In-process live-work presentation; no transport or execution authority.
+pub mod live_work;
+pub mod live_view;
+pub mod live_demo;
 pub const LOG_LIMIT: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
