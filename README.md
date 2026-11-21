@@ -21,12 +21,15 @@ home. The kernel and the guest library stay in `pcp-os`, pinned here as a submod
 Rust 1.97.0 with `rust-src` and the `x86_64-unknown-none` target, and `lld`.
 
     git submodule update --init
-    cd guest
     cargo test --lib
-    CARGO_PROFILE_RELEASE_LTO=off cargo build --release --target x86_64-unknown-none
+    sh build.sh
 
-The build must be run from `guest/` (its linker settings are in `guest/.cargo/config.toml`). Checked on
-21 November 2026 at this pin: 99 library tests pass; the ELF is 149,304 bytes.
+`build.sh` records this folder as `/tailorbird`, so the program is the same file wherever the
+repository is checked out. Checked on 21 November 2026 at this pin, offline, in two folders, the second
+holding only the four pieces of `pcp-os` the build reads (guest library, `font.rs`, `font-2x.bin`,
+`guest.ld`): 99 library tests pass; the ELF is 149,304 bytes, SHA-256
+`0704d9893f696700e59be45441f7737c70f3a6a9760c83a88b22dfa069f05ec7`. Another compiler version or linker
+may give another file.
 
 ## Next
 

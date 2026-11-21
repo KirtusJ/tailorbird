@@ -18,10 +18,3 @@ bench = false
 
 [target.'cfg(target_os = "none")'.dependencies]
 pcp-game-guest = { path = "../pcp-os/store/native/guest" }
-
-[profile.release]
-panic = "abort"
-opt-level = "s"
-lto = "off" # matches PT's successful CARGO_PROFILE_RELEASE_LTO=off link
-codegen-units = 1
-overflow-checks = true
