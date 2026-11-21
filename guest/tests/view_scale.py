@@ -26,7 +26,7 @@ TEXT = bytes.fromhex("f2f7fc")
 # Independent source-font oracles for the entire disabled STOP heading and
 # NO TASK caption in every captured native view, including 1920px Fit.
 # These check exact RGB glyph identity, not just contrast or ink presence.
-FONT = Path(__file__).resolve().parents[4] / "PCP_OS_Rust/crates/pcpos-kernel/src/font.rs"
+FONT = Path(__file__).resolve().parents[2] / "pcp-os/PCP_OS_Rust/crates/pcpos-kernel/src/font.rs"
 GROUND = bytes.fromhex("10283f")
 SOFT = bytes.fromhex("9fb4c8")
 BAD = bytes.fromhex("f08a72")
