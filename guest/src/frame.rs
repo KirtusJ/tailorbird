@@ -87,6 +87,19 @@ impl<'a> Frame<'a> {
         self.surface(x, y, w, h, color, false);
     }
 
+    /// A key's cap: raised, but one flat colour under its letters.
+    pub fn cap(&mut self, x: i32, y: i32, w: i32, h: i32, color: u32) {
+        self.surface(x, y, w, h, color, true);
+        let (left, right) = (self.x(x.max(0) as usize), self.x((x + w).max(0) as usize));
+        let (top, bottom) = (self.y(y.max(0) as usize), self.y((y + h).max(0) as usize));
+        if right > left + 2 && bottom > top + 2 {
+            for row in top + 1..bottom - 1 {
+                let offset = row * self.pitch;
+                self.pixels[offset + left + 1..offset + right - 1].fill(color);
+            }
+        }
+    }
+
     fn surface(&mut self, x: i32, y: i32, w: i32, h: i32, color: u32, raised: bool) {
         if w <= 0 || h <= 0 {
             return;
@@ -98,7 +111,9 @@ impl<'a> Frame<'a> {
         }
         let rows = bottom - top;
         // The light falls over at most twelve rows of the layout: a sheen at the edge, not a wash.
-        let fall = (rows * 2 / 5).min(self.y((y.max(0) + 12) as usize).saturating_sub(top)).max(1);
+        // (six for a sunken one), so that words set a little below the edge stand on one flat colour.
+        let reach = if raised { 12 } else { 6 };
+        let fall = (rows * 2 / 5).min(self.y((y.max(0) + reach) as usize).saturating_sub(top)).max(1);
         let (light, dark) = (0xFFFFFF, 0x000000);
         let outline = mix(color, light, if raised { 30 } else { 18 });
         for row in top..bottom {

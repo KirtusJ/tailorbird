@@ -20,7 +20,7 @@ fn cell(size: i32) -> (usize, usize) {
     match size {
         1 => (6, 12),
         2 => (10, 20),
-        _ => (16, 32),
+        _ => (15, 30),
     }
 }
 
@@ -37,7 +37,7 @@ fn sentence<'a>(value: &str, buf: &'a mut [u8; 40]) -> &'a str {
 /// A key's name on a small raised cap, and what it does after it. Returns where the next one starts.
 fn key(f: &mut Frame<'_>, x: i32, y: i32, name: &str, does: &str) -> i32 {
     let cap = name.len() as i32 * 6 + 8;
-    f.panel(x, y - 3, cap, 17, PANEL);
+    f.cap(x, y - 3, cap, 17, PANEL);
     label(f, x + 4, y, name, 1, TEXT);
     label(f, x + cap + 5, y, does, 1, SOFT);
     x + cap + 5 + does.len() as i32 * 6 + 14
@@ -59,7 +59,9 @@ fn decimal_u64<'a>(mut value: u64, buf: &'a mut [u8; 20]) -> &'a str {
 pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
     let mut name = [0u8; 40];
     f.panel(0, 0, 960, 72, PANEL);
-    label(f, 22, 16, "Tailorbird", 3, TEAL);
+    label(f, 22, 12, "Tailorbird", 3, TEAL);
+    // Where this is: a program of PCP OS that has the whole display, not the desktop itself.
+    label(f, 22, 52, "PCP OS > Tailorbird (a program; Esc returns to the desktop)", 1, SOFT);
     label(f, 202, 27, "builds and fixes on this computer", 2, SOFT);
     // What is behind it, said once, where the eye lands last: a lamp and two words.
     let (lamp, link) = if ui.connected { (GOOD, "Service linked") } else { (BAD, "No service") };
@@ -177,7 +179,7 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
     }
 
     f.panel(20, 458, 920, 48, PANEL);
-    label(f, 32, 469, "REQUEST", 1, TEAL);
+    label(f, 32, 472, "REQUEST", 1, TEAL);
     // Trailing ASCII spaces have blank font cells. Display the exact byte
     // count alongside the editor so foo and foo-space are distinguishable.
     // These count glyphs are in the x<140 margin, outside the text raster.
