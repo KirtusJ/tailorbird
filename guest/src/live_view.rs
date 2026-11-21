@@ -27,13 +27,15 @@ pub fn paint(f: &mut Frame<'_>, work: &Work) {
     let color = phase_color(work.phase());
     f.rect(24, 82, 6, 16, color);
     text(f, 40, 81, work.phase().label(), color, false);
-    if let Some(i) = work.current() {
+    if let Some(i) = work.current().filter(|_| work.phase() == Phase::Running) {
         let step = &work.steps()[i];
-        let n = number(f, 300, 81, step.done, SOFT);
-        if let Some(total) = step.total {
-            text(f, 300+n, 81, " / ", SOFT, false);
-            number(f, 324+n, 81, total, TEXT);
-        } else { text(f, 308+n, 81, "units / total unknown", SOFT, false); }
+        if step.reported {
+            let n = number(f, 300, 81, step.done, SOFT);
+            if let Some(total) = step.total {
+                text(f, 300+n, 81, " / ", SOFT, false);
+                number(f, 324+n, 81, total, TEXT);
+            } else { text(f, 308+n, 81, "units / total unknown", SOFT, false); }
+        } else { text(f, 300, 81, "Progress not yet reported", SOFT, false); }
     }
     text(f, 700, 81, "Steps", SOFT, false);
     let done = work.steps().iter().filter(|s| s.state == StepState::Done).count() as u64;
@@ -45,14 +47,18 @@ pub fn paint(f: &mut Frame<'_>, work: &Work) {
     text(f, 40, 129, "WORK STEPS", SOFT, false);
     for (i, step) in work.steps().iter().enumerate() {
         let y = 158 + i*50;
-        let ink = match step.state { StepState::Done => GOOD, StepState::Active => TEAL,
+        let interrupted = matches!(work.phase(), Phase::Disconnected | Phase::StopRequested)
+            && matches!(step.state, StepState::Active | StepState::Waiting);
+        let ink = if interrupted { AMBER } else { match step.state { StepState::Done => GOOD, StepState::Active => TEAL,
             StepState::Waiting => AMBER, StepState::Failed => BAD, StepState::Stopped => AMBER,
-            StepState::Queued => SOFT };
+            StepState::Queued => SOFT }};
         f.rect(40, y as i32 + 3, 12, 12, ink);
         if step.state == StepState::Done { text(f, 40, y, "+", GROUND, false); }
         text(f, 62, y, step.label.as_str(), if step.state == StepState::Queued { SOFT } else { TEXT }, false);
-        text(f, 62, y+20, step.state.label(), ink, false);
-        if step.state == StepState::Active {
+        let status = if interrupted { if work.phase() == Phase::Disconnected { "Unknown" } else { "Stopping" } }
+                     else { step.state.label() };
+        text(f, 62, y+20, status, ink, false);
+        if step.state == StepState::Active && work.phase() == Phase::Running {
             if let Some(percent) = step.percent() {
                 f.rect(160, y as i32+25, 88, 5, GROUND);
                 f.rect(160, y as i32+25, (88*percent as i32)/100, 5, TEAL);
@@ -70,7 +76,7 @@ pub fn paint(f: &mut Frame<'_>, work: &Work) {
             Phase::StopRequested => "Partial preview / stopping",
             Phase::Failed | Phase::Stopped => "Partial preview retained",
             Phase::Completed => "Result preview",
-            _ => "Preview updating",
+            _ => "Preview so far",
         };
         text(f, 308, 150, status, color, false);
         // Bounded overview bitmap; caller retains original full artifact.

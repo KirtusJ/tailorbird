@@ -36,10 +36,10 @@ impl StepState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Step {
     pub label: Text<24>, pub state: StepState,
-    pub done: u64, pub total: Option<u64>,
+    pub done: u64, pub total: Option<u64>, pub reported: bool,
 }
 impl Step {
-    const EMPTY: Self = Self { label: Text::new(), state: StepState::Queued, done: 0, total: None };
+    const EMPTY: Self = Self { label: Text::new(), state: StepState::Queued, done: 0, total: None, reported: false };
     /// None means no denominator was reported; never infer a percentage.
     pub fn percent(&self) -> Option<u8> {
         self.total.map(|total| ((self.done as u128 * 100) / total as u128) as u8)
@@ -139,7 +139,7 @@ impl Work {
                 if item.state != StepState::Active || done < item.done
                     || total.is_some_and(|n| n == 0 || done > n)
                     || (item.total.is_some() && item.total != total) { return false; }
-                item.done = done; item.total = total;
+                item.done = done; item.total = total; item.reported = true;
             }
             Update::Wait { step, reason } if self.phase == Phase::Running && self.current() == Some(step) => {
                 let Some(detail) = exact(reason) else { return false; };
@@ -196,8 +196,10 @@ mod tests {
     #[test]
     fn progress_is_measured_and_completion_is_explicit() {
         let mut w = started(); assert_eq!(w.steps()[0].percent(), None);
+        assert!(!w.steps()[0].reported);
         assert!(w.observe(7, 3, Update::Progress { step: 0, done: 1, total: Some(2) }));
         assert_eq!(w.steps()[0].percent(), Some(50));
+        assert!(w.steps()[0].reported);
         assert!(!w.observe(7, 4, Update::Completed));
         assert!(!w.observe(7, 4, Update::Finish { step: 0 }));
         assert!(w.observe(7, 4, Update::Progress { step: 0, done: 2, total: Some(2) }));
