@@ -53,8 +53,12 @@ class Qemu:
         self.proc = subprocess.Popen(
             cmd, cwd=folder, stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0
         )
-        self._response()
-        self.qmp("qmp_capabilities")
+        try:
+            self._response()
+            self.qmp("qmp_capabilities")
+        except BaseException:
+            self.stop()
+            raise
 
     def _response(self):
         for _ in range(30):
@@ -105,6 +109,7 @@ class Qemu:
         self.proc.stdin.close()
         if self.proc.stdout:
             extra = self.proc.stdout.read().decode(errors="replace")
+            self.proc.stdout.close()
             if extra:
                 print("QEMU_STDOUT", extra[-4000:], flush=True)
 
@@ -124,8 +129,9 @@ def run(kernel, guest, timeout, machine, output=None):
         report = {"machine": machine, "passed": False,
                   "guest_sha256": hashlib.sha256(guest.read_bytes()).hexdigest(),
                   "kernel_sha256": hashlib.sha256(kernel.read_bytes()).hexdigest()}
-        m = Qemu(kernel, guest, folder, machine)
+        m = None
         try:
+            m = Qemu(kernel, guest, folder, machine)
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
                 if m.proc.poll() is not None:
@@ -402,9 +408,15 @@ def run(kernel, guest, timeout, machine, output=None):
             print("PASS: QEMU scanout/input contrast, offline refusal and clean kernel return",
                   flush=True)
             report["passed"] = True
+        except BaseException as exc:
+            report["error"] = f"{type(exc).__name__}: {exc}"
+            raise
         finally:
-            m.stop()
-            (folder / "result.json").write_text(json.dumps(report, indent=2) + "\n")
+            try:
+                if m is not None:
+                    m.stop()
+            finally:
+                (folder / "result.json").write_text(json.dumps(report, indent=2) + "\n")
 
 
 if __name__ == "__main__":

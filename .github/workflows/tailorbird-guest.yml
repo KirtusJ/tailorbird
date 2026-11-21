@@ -47,6 +47,8 @@ jobs:
         run: |
           rustc --edition 2021 --test guest/tests/display_pages.rs -o "$RUNNER_TEMP/display-pages"
           "$RUNNER_TEMP/display-pages"
+      - name: Verify host-only capture failure receipts and QMP cleanup
+        run: python3 guest/tests/test_capture_failures.py
       - name: Install official x86_64 freestanding Rust target
         shell: bash
         run: |

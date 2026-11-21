@@ -458,11 +458,10 @@ def tampered_status_margin(returned, width, height, at_right):
 def check(kernel, app, measurement, folder, small):
     folder.mkdir(parents=True, exist_ok=False)
     w, h = (800, 600) if small else (1920, 1080)
-    report = {"size": [w,h], "measurement": measurement, "frames": {},
+    report = {"size": [w,h], "measurement": measurement, "frames": {}, "passed": False,
               "app_sha256": hashlib.sha256(app.read_bytes()).hexdigest(),
               "kernel_sha256": hashlib.sha256(kernel.read_bytes()).hexdigest()}
-    m = Qemu(kernel, app, folder, "q35", f"image={measurement} desktop={w}x{h} ui_scale=1",
-             ["-accel", "tcg", "-icount", "shift=3", "-vga", "none", "-device", "VGA,vgamem_mb=32"])
+    m = None
     def wait_serial(marker):
         deadline = time.monotonic() + 90
         while time.monotonic() < deadline:
@@ -901,6 +900,8 @@ def check(kernel, app, measurement, folder, small):
         return area(rgb,mode,418,513,72,10)
 
     try:
+        m = Qemu(kernel, app, folder, "q35", f"image={measurement} desktop={w}x{h} ui_scale=1",
+                 ["-accel", "tcg", "-icount", "shift=3", "-vga", "none", "-device", "VGA,vgamem_mb=32"])
         wait_serial(f"desktop: {w}x{h} at 1x UI scale")
         first = sample("launcher",menu)
         selection = crop(first,w,(0,0,520,150))
@@ -1066,9 +1067,15 @@ def check(kernel, app, measurement, folder, small):
         assert re.search(re.escape(measurement) + r" \(measured; equal",log)
         assert "ALL SELF-TESTS PASS" in log and "  FAIL" not in log
         report["passed"] = True
+    except BaseException as exc:
+        report["error"] = f"{type(exc).__name__}: {exc}"
+        raise
     finally:
-        m.stop()
-        (folder/"result.json").write_text(json.dumps(report,indent=2)+"\n")
+        try:
+            if m is not None:
+                m.stop()
+        finally:
+            (folder/"result.json").write_text(json.dumps(report,indent=2)+"\n")
     print(json.dumps(report),flush=True)
 
 
