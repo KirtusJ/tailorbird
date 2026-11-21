@@ -117,14 +117,58 @@ impl<'a> Frame<'a> {
         }
     }
 
+
+    /// Label only rows actually removed from the bounded local GUI feed.
+    /// First/last values are retained-row sequence labels, not a guarantee
+    /// that the service delivered contiguous events or stored a transcript.
+    pub fn feed_window(&mut self, hidden: u64, first_seq: u64, last_seq: u64, colour: u32) {
+        if hidden == 0 { return; }
+        self.text(505, 116, "OLDER UI ROWS HIDDEN", 1, colour);
+        let mut count = [0u8; 20];
+        self.text(650, 116, Self::decimal(hidden, &mut count), 1, colour);
+        self.text(340, 161, "FIRST SEQ", 1, colour);
+        let mut first = [0u8; 20];
+        self.text(410, 161, Self::decimal(first_seq, &mut first), 1, colour);
+        self.text(550, 161, "LAST SEQ", 1, colour);
+        let mut last = [0u8; 20];
+        self.text(615, 161, Self::decimal(last_seq, &mut last), 1, colour);
+    }
+
+    fn decimal<'b>(mut value: u64, output: &'b mut [u8; 20]) -> &'b str {
+        let mut i = output.len();
+        loop {
+            i -= 1;
+            output[i] = b'0' + (value % 10) as u8;
+            value /= 10;
+            if value == 0 { break; }
+        }
+        core::str::from_utf8(&output[i..]).unwrap_or("")
+    }
+
     /// The event message is printable ASCII already retained by the reducer.
     /// Starting at 422 leaves room in the panel for all 84 six-unit cells.
+    /// For OUTPUT/TOOL rows the UI-owned "NNB" at x386..404 reports the
+    /// *retained preview* byte length, so a trailing space remains observable.
     /// The separate (!) glyph at x=404 is *derived* from reducer metadata,
     /// not from service-supplied content (which starts only at x=422).
-    /// A literal "[LOSSY]" from a model must not counterfeit this flag.
+    /// Neither the count nor loss flag is a trusted service/effect receipt.
     pub fn task_output(&mut self, y: i32, kind: &str, message: &str,
                        preview_lossy: bool, kind_color: u32, text_color: u32) {
         self.text(336, y, kind, 1, kind_color);
+        if kind == "OUTPUT" || kind == "TOOL" {
+            // Ui::log retains <= 84 printable ASCII bytes. Do not silently
+            // display a false numeric length if a different caller violates
+            // the contract. Metadata is outside the model-controlled text.
+            let n = message.len();
+            let (tens, units) = if n <= 99 {
+                (b'0' + (n / 10) as u8, b'0' + (n % 10) as u8)
+            } else {
+                (b'?', b'?')
+            };
+            self.glyph(386, y.max(0) as usize, 6, 10, tens, kind_color);
+            self.glyph(392, y.max(0) as usize, 6, 10, units, kind_color);
+            self.glyph(398, y.max(0) as usize, 6, 10, b'B', kind_color);
+        }
         if preview_lossy {
             self.glyph(404, y.max(0) as usize, 6, 10, b'!', kind_color);
         }
@@ -153,7 +197,42 @@ impl<'a> Frame<'a> {
 mod tests {
     extern crate std;
     use super::*;
-    use std::vec;
+    use std::{format, vec};
+
+    #[test]
+    fn local_feed_window_badge_is_visible_and_confined_to_header() {
+        for (width, height) in [(960usize, 540usize), (800, 600), (1024, 768)] {
+            let render = |hidden: u64, first: u64, last: u64| {
+                let mut pixels = vec![0x18364f; width * height];
+                let mut f = Frame::new(&mut pixels, width, height, width, 0x18364f, false);
+                f.feed_window(hidden, first, last, 0xe3a24b);
+                pixels
+            };
+            let empty = render(0, 1, 8);
+            let a = render(1, 2, 9);
+            let b = render(2, 3, 9);
+            assert_ne!(empty, a, "missing window marker at {width}x{height}");
+            assert_ne!(a, b, "different local evictions same pixels at {width}x{height}");
+            let mut sample = vec![0u32; width * height];
+            let f = Frame::new(&mut sample, width, height, width, 0, false);
+            let (x0, x1, y0, y1) = (f.x(340), f.x(780), f.y(116), f.y(171));
+            let mut changed = 0usize;
+            for y in 0..height {
+                for x in 0..width {
+                    let i = y * width + x;
+                    if a[i] != b[i] {
+                        changed += 1;
+                        assert!(x >= x0 && x < x1 && y >= y0 && y < y1,
+                            "UI metadata escaped header at {width}x{height}");
+                    }
+                }
+            }
+            assert!(changed > 0);
+            let maximum = render(u64::MAX, u64::MAX, u64::MAX);
+            assert_ne!(empty, maximum, "20-digit status not painted");
+        }
+    }
+
     #[test]
     fn compact_view_fits_the_screen_and_preserves_visible_bounds() {
         for (w, h, geometry) in [
@@ -219,6 +298,60 @@ mod tests {
             case_difference |= a[offset+920..offset+926] != b[offset+920..offset+926];
         }
         assert!(case_difference);
+    }
+
+    #[test]
+    fn output_and_tool_trailing_space_length_is_visible_at_native_scales() {
+        // The retained preview differs, but an ASCII space has no ink.
+        // The byte count must distinguish both cases without modifying
+        // model-controlled message pixels or the independent lossy flag.
+        let prefix = "Z".repeat(83);
+        let trailing = format!("{prefix} ");
+        let period = format!("{prefix}.");
+        for kind in ["OUTPUT", "TOOL"] {
+            for (width, height) in [(960usize, 540usize), (800, 600), (1024, 768)] {
+                let render = |message: &str| {
+                    let mut pixels = vec![0x18364f; width * height];
+                    let mut f = Frame::new(
+                        &mut pixels, width, height, width, 0x18364f, false,
+                    );
+                    f.task_output(190, kind, message, false, 0x00ff00, 0xffffff);
+                    pixels
+                };
+                let a = render(&prefix);
+                let b = render(&trailing);
+                let c = render(&period);
+                let mut scratch = vec![0u32; width * height];
+                let f = Frame::new(
+                    &mut scratch, width, height, width, 0x18364f, false,
+                );
+                let (left, right) = (f.x(386), f.x(404));
+                let (body_left, body_right) = (f.x(422), f.x(926));
+                let (top, bottom) = (f.y(190), f.y(200));
+                let mut count_difference = 0usize;
+                let mut printable_control_difference = 0usize;
+                for y in 0..height {
+                    for x in 0..width {
+                        let i = y * width + x;
+                        if a[i] != b[i] {
+                            assert!(x >= left && x < right && y >= top && y < bottom,
+                                "retained count must not alter message/body or other UI");
+                            count_difference += 1;
+                        }
+                        if b[i] != c[i] {
+                            assert!(x >= body_left && x < body_right
+                                && y >= top && y < bottom,
+                                "equal-length content control changed metadata");
+                            printable_control_difference += 1;
+                        }
+                    }
+                }
+                assert!(count_difference > 0,
+                    "83 vs 84 bytes invisible at {width}x{height}, {kind}");
+                assert!(printable_control_difference > 0,
+                    "space vs period glyph invisible at {width}x{height}, {kind}");
+            }
+        }
     }
 
     #[test]

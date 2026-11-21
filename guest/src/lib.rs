@@ -215,6 +215,9 @@ pub struct PendingSubmit {
 pub struct Ui {
     /// This launch’s display preference. The desktop mode stays owned by the kernel.
     pub compact_view: bool,
+    /// Local presentation revision for F6 pointer-capture invalidation.
+    /// Not a trusted OS display-geometry or input-device generation.
+    pub(crate) view_epoch: u64,
     pub input: Text<INPUT_LIMIT>,
     /// A Submit intent has been emitted but no matching admission/refusal
     /// readback has arrived. Preserve it across service loss/reconnect.
@@ -250,18 +253,21 @@ pub struct Ui {
     pub notice: Text<84>,
     lines: [Line; LOG_LIMIT],
     count: usize,
+    /// Rows actually evicted from this launch's local eight-line UI window.
+    /// Neither remote event gaps nor durable service history are inferred.
+    feed_hidden_rows: u64,
 }
 impl Ui {
     pub const fn new() -> Self {
         Self {
-            compact_view: false,
+            compact_view: false, view_epoch: 0,
             input: Text::new(), pending_submit: None, next_submit_key: 1,
             mode: Mode::Single, mode_pending: None,
             model: Model::Unknown, connected: false, service_epoch: 0,
             task: Task { id: 0, seq: 0, state: TaskState::Idle },
             stop_intent_task: None, permission: None, decision_pending: None, decision_choice: None,
             effect_uncertain: false, notice: Text::new(),
-            lines: [Line::empty(); LOG_LIMIT], count: 0,
+            lines: [Line::empty(); LOG_LIMIT], count: 0, feed_hidden_rows: 0,
         }
     }
     pub fn controls(&self) -> Controls {
@@ -287,6 +293,13 @@ impl Ui {
         }
     }
     pub fn lines(&self) -> &[Line] { &self.lines[..self.count] }
+    /// Local UI row eviction only; not an authenticated transcript counter.
+    pub fn hidden_feed_rows(&self) -> u64 { self.feed_hidden_rows }
+    /// First and last retained *row* sequences, without continuity claims.
+    pub fn retained_feed_bounds(&self) -> Option<(u64, u64)> {
+        if self.count == 0 { None }
+        else { Some((self.lines[0].seq, self.lines[self.count - 1].seq)) }
+    }
     fn notice(&mut self, s: &str) {
         // A later STOPPED/COMPLETED receipt, mode update, new task or
         // service reconnect does not retroactively establish when an
@@ -341,6 +354,7 @@ impl Ui {
             self.lines[self.count] = line;
             self.count += 1;
         } else {
+            self.feed_hidden_rows = self.feed_hidden_rows.saturating_add(1);
             for i in 1..LOG_LIMIT { self.lines[i - 1] = self.lines[i]; }
             self.lines[LOG_LIMIT - 1] = line;
         }
@@ -389,7 +403,7 @@ impl Ui {
         self.decision_choice = None;
     }
 
-    fn start_task(&mut self, task_id: u64, seq: u64) {
+    fn start_task(&mut self, task_id: u64, seq: u64, consumes_local_submission: bool) {
         self.task = Task { id: task_id, seq, state: TaskState::Running };
         self.pending_submit = None;
         self.stop_intent_task = None;
@@ -397,9 +411,16 @@ impl Ui {
         self.decision_pending = None;
         self.decision_choice = None;
         self.count = 0;
-        self.input.clear();
+        self.feed_hidden_rows = 0;
+        // An unsolicited/status-only Started must not erase a local editor
+        // draft. Only a matching keyed local admission consumes this input.
+        if consumes_local_submission { self.input.clear(); }
         self.log(seq, "START", "TASK START REPORTED");
-        self.notice("RUNNING - SERVICE REPORTED");
+        self.notice(if !consumes_local_submission && !self.input.is_empty() {
+            "TASK STARTED - UNSENT DRAFT RETAINED"
+        } else {
+            "RUNNING - SERVICE REPORTED"
+        });
     }
 
     pub fn intent(&mut self, action: Action) -> Option<Intent> {
@@ -541,7 +562,7 @@ impl Ui {
                     && task_id != self.task.id
                     && !self.task.state.is_active() =>
             {
-                self.start_task(task_id, seq);
+                self.start_task(task_id, seq, false);
                 true
             }
             BackendEvent::SubmissionStarted { idempotency_key, task_id, seq }
@@ -550,7 +571,7 @@ impl Ui {
                     && self.pending_submit.map(|p| p.idempotency_key)
                         == Some(idempotency_key) =>
             {
-                self.start_task(task_id, seq);
+                self.start_task(task_id, seq, true);
                 true
             }
             BackendEvent::SubmissionRejected { idempotency_key }
@@ -709,6 +730,115 @@ mod tests {
     fn running(u: &mut Ui) {
         connected(u);
         assert!(u.observe(BackendEvent::Started { task_id: 7, seq: 1 }));
+    }
+
+
+    #[test]
+    fn local_feed_eviction_is_ui_only_and_resets_with_a_new_task() {
+        let mut u = Ui::new();
+        running(&mut u);
+        assert_eq!(u.hidden_feed_rows(), 0);
+        assert_eq!(u.retained_feed_bounds(), Some((1, 1)));
+        for seq in 2..=8 {
+            assert!(u.observe(BackendEvent::Output { task_id: 7, seq, text: "same" }));
+        }
+        assert_eq!(u.lines().len(), LOG_LIMIT);
+        assert_eq!(u.hidden_feed_rows(), 0);
+        assert_eq!(u.retained_feed_bounds(), Some((1, 8)));
+        assert!(u.observe(BackendEvent::Output { task_id: 7, seq: 9, text: "same" }));
+        assert_eq!(u.hidden_feed_rows(), 1);
+        assert_eq!(u.retained_feed_bounds(), Some((2, 9)));
+        assert!(u.observe(BackendEvent::Output { task_id: 7, seq: 10, text: "same" }));
+        assert_eq!(u.hidden_feed_rows(), 2);
+        assert_eq!(u.retained_feed_bounds(), Some((3, 10)));
+        assert!(u.observe(BackendEvent::Completed { task_id: 7, seq: 11 }));
+        assert!(u.observe(BackendEvent::Started { task_id: 8, seq: 1 }));
+        assert_eq!(u.hidden_feed_rows(), 0);
+        assert_eq!(u.retained_feed_bounds(), Some((1, 1)));
+    }
+
+    #[test]
+    fn same_retained_feed_rows_can_have_different_local_eviction_counts() {
+        let run = |seqs: &[u64]| {
+            let mut u = Ui::new();
+            running(&mut u);
+            for &seq in seqs {
+                assert!(u.observe(BackendEvent::Output { task_id: 7, seq, text: "same" }));
+            }
+            u
+        };
+        let a = run(&[2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        let b = run(&[3, 4, 5, 6, 7, 8, 9, 10]);
+        assert_eq!(a.lines(), b.lines());
+        assert_eq!(a.task.seq, b.task.seq);
+        assert_eq!(a.notice, b.notice);
+        assert_eq!(a.retained_feed_bounds(), Some((3, 10)));
+        assert_eq!(b.retained_feed_bounds(), Some((3, 10)));
+        assert_eq!(a.hidden_feed_rows(), 2);
+        assert_eq!(b.hidden_feed_rows(), 1);
+        // A skipped service seq was not a locally received/dropped UI row.
+    }
+
+    #[test]
+    fn local_feed_eviction_counter_saturates_without_wrapping() {
+        let mut u = Ui::new();
+        running(&mut u);
+        for seq in 2..=8 {
+            assert!(u.observe(BackendEvent::Output { task_id: 7, seq, text: "x" }));
+        }
+        u.feed_hidden_rows = u64::MAX;
+        assert!(u.observe(BackendEvent::Output { task_id: 7, seq: 9, text: "x" }));
+        assert_eq!(u.hidden_feed_rows(), u64::MAX);
+    }
+
+    #[test]
+    fn status_only_start_retains_unsent_editor_and_resets_feed_window() {
+        let mut u = Ui::new();
+        connected(&mut u);
+        for b in b"draft_A/case.rs" { assert!(u.input.push_ascii(*b)); }
+        let original = u.input;
+        assert!(u.observe(BackendEvent::Started { task_id: 7, seq: 1 }));
+        for seq in 2..=10 {
+            assert!(u.observe(BackendEvent::Output { task_id: 7, seq, text: "old" }));
+        }
+        assert_eq!(u.hidden_feed_rows(), 2);
+        assert!(u.observe(BackendEvent::Completed { task_id: 7, seq: 11 }));
+        assert_eq!(u.input, original);
+        assert!(u.observe(BackendEvent::Started { task_id: 8, seq: 1 }));
+        assert_eq!(u.input, original);
+        assert_eq!(u.hidden_feed_rows(), 0);
+        assert_eq!(u.retained_feed_bounds(), Some((1, 1)));
+        assert_eq!(u.notice.as_str(), "TASK STARTED - UNSENT DRAFT RETAINED");
+        assert!(!u.controls().submit_enabled);
+        assert!(u.observe(BackendEvent::Completed { task_id: 8, seq: 2 }));
+        assert_eq!(u.input, original);
+        assert!(u.controls().submit_enabled);
+    }
+
+    #[test]
+    fn keyed_local_start_consumes_editor_and_resets_feed_window() {
+        let mut u = Ui::new();
+        connected(&mut u);
+        assert!(u.observe(BackendEvent::Started { task_id: 7, seq: 1 }));
+        for seq in 2..=9 {
+            assert!(u.observe(BackendEvent::Output { task_id: 7, seq, text: "old" }));
+        }
+        assert_eq!(u.hidden_feed_rows(), 1);
+        assert!(u.observe(BackendEvent::Completed { task_id: 7, seq: 10 }));
+        for b in b"draft_A/case.rs" { assert!(u.input.push_ascii(*b)); }
+        let snapshot = u.input;
+        assert_eq!(u.intent(Action::Submit), Some(Intent::Submit {
+            idempotency_key: 1, prompt: snapshot, mode: Mode::Single
+        }));
+        assert!(!u.observe(BackendEvent::Started { task_id: 8, seq: 1 }));
+        assert_eq!(u.input, snapshot);
+        assert!(u.observe(BackendEvent::SubmissionStarted {
+            idempotency_key: 1, task_id: 8, seq: 1
+        }));
+        assert!(u.input.is_empty());
+        assert!(u.pending_submit.is_none());
+        assert_eq!(u.hidden_feed_rows(), 0);
+        assert_eq!(u.retained_feed_bounds(), Some((1, 1)));
     }
 
     #[test]

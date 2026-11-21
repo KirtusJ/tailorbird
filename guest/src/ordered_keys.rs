@@ -43,6 +43,9 @@ impl OrderedKeyboard {
             if already_down {
                 return KeyOutcome::Unchanged;
             }
+            // Even Fit -> Compact -> Fit must invalidate a held click.
+            // At saturation, pointer capture stays disabled until a new Ui.
+            ui.view_epoch = ui.view_epoch.saturating_add(1);
             ui.compact_view = !ui.compact_view;
             return KeyOutcome::Redraw;
         }

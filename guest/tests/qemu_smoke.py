@@ -258,8 +258,8 @@ def run(kernel, guest, timeout, machine):
             # oracle was invalid: its fifth cell was actually blank.
             # Every colour/pixel below comes from the same table and blend
             # algorithm used by Tailorbird's exact_ascii.rs renderer.
-            font_path = (pathlib.Path(__file__).resolve().parents[4]
-                         / "PCP_OS_Rust/crates/pcpos-kernel/src/font.rs")
+            font_path = (pathlib.Path(__file__).resolve().parents[2]
+                         / "pcp-os/PCP_OS_Rust/crates/pcpos-kernel/src/font.rs")
             font_source = font_path.read_text()
             glyph_rows = re.findall(r"^\s*\[([0-9,\s]+)\],?\s*$",
                                     font_source, flags=re.MULTILINE)
