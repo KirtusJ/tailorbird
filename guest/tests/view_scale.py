@@ -318,14 +318,16 @@ def selftest_offline_refusal_receipts():
 
 def require_launcher_return_receipts(receipts):
     expected = {"original_frames": 1, "stale_app_negatives": 1,
-                "tampered_status_negatives": 1, "tampered_selection_negatives": 1}
+                "tampered_status_negatives": 1, "tampered_selection_negatives": 1,
+                "tampered_status_margin_negatives": 2}
     if receipts != expected:
         raise AssertionError(f"full-launcher return checks incomplete: {receipts!r}")
 
 
 def selftest_launcher_return_receipts():
     complete = {"original_frames": 1, "stale_app_negatives": 1,
-                "tampered_status_negatives": 1, "tampered_selection_negatives": 1}
+                "tampered_status_negatives": 1, "tampered_selection_negatives": 1,
+                "tampered_status_margin_negatives": 2}
     require_launcher_return_receipts(dict(complete))
     for key in complete:
         wrong = dict(complete)
@@ -336,7 +338,7 @@ def selftest_launcher_return_receipts():
             pass
         else:
             raise AssertionError(f"skipped launcher return oracle accepted: {key}")
-    print("Full-launcher return receipts: 1 valid and 4 missing-check refusals PASS",
+    print("Full-launcher return receipts: 1 valid and 5 missing-check refusals PASS",
           flush=True)
 
 
@@ -349,13 +351,32 @@ def launcher_dynamic_row(y, height):
     return row * 20 <= y < (row + 1) * 20
 
 
-def launcher_static_same(first, returned, width, height):
-    if len(first) != width * height * 3 or len(returned) != len(first):
+def launcher_static_same(first, returned, width, height, line):
+    """Only the exact status-glyph cells may differ from the initial desktop.
+
+    The pinned draw_desktop uses ui::at(2, rows-4) with 10x20 glyph
+    cells. Every *other* pixel, including both margins of that same
+    text row, must be byte-identical to this launch's original frame.
+    """
+    if (line is None or len(first) != width * height * 3 or
+            len(returned) != len(first)):
+        return False
+    x0, x1 = 20, 20 + len(line) * 10
+    y0 = (height // 20 - 4) * 20
+    if x1 > width or y0 < 0 or y0 + 20 > height:
         return False
     stride = width * 3
-    return all(first[y*stride:(y+1)*stride] ==
-               returned[y*stride:(y+1)*stride]
-               for y in range(height) if not launcher_dynamic_row(y, height))
+    left, right = x0 * 3, x1 * 3
+    for y in range(height):
+        start = y * stride
+        if y0 <= y < y0 + 20:
+            if (first[start:start+left] != returned[start:start+left] or
+                    first[start+right:start+stride] !=
+                    returned[start+right:start+stride]):
+                return False
+        elif first[start:start+stride] != returned[start:start+stride]:
+            return False
+    return True
 
 
 def launcher_status_line(serial, name):
@@ -387,9 +408,10 @@ def launcher_status_source_ok(rgb, width, height, glyphs, doubled, line):
 
 def full_launcher_return_ok(before, after, width, height,
                             serial, name, glyphs, doubled):
-    return (launcher_static_same(before, after, width, height) and
+    line = launcher_status_line(serial, name)
+    return (launcher_static_same(before, after, width, height, line) and
             launcher_status_source_ok(after, width, height, glyphs, doubled,
-                                      launcher_status_line(serial, name)))
+                                      line))
 
 
 def transplanted_stale_app(returned, app_frame, width, height):
@@ -418,6 +440,15 @@ def damaged_launcher_selection(returned, width):
     changed = bytearray(returned)
     start = (110*width+21)*3
     changed[start:start+3] = GROUND
+    return bytes(changed)
+
+
+def tampered_status_margin(returned, width, height, at_right):
+    """Flip one channel in the exempt row *outside* all status glyph cells."""
+    x = width - 1 if at_right else 0
+    y = (height // 20 - 4) * 20 + 10
+    changed = bytearray(returned)
+    changed[(y * width + x) * 3] ^= 0xff
     return bytes(changed)
 
 
@@ -978,9 +1009,9 @@ def check(kernel, app, measurement, folder, small):
         report["offline_refusal_notice_source_rgb"] = dict(offline_refusal_receipts)
         m.key("esc")
         wait_serial(f"{app.name} ended DONE: exit 0")
-        # Require the entire same-launch launcher, except two source-defined
-        # dynamic text bands, plus source-font rendering of the exact three
-        # result lines computed from this launch's kernel serial receipt.
+        # Require byte-identical same-launch launcher pixels outside the
+        # exact source-defined first status-line glyph cells, and source-RGB
+        # rendering of the serial-derived actual result inside those cells.
         returned = sample("returned", lambda rgb: menu(rgb) and
                           crop(rgb,w,(0,0,520,150)) == selection and
                           full_launcher_return_ok(first, rgb, w, h,
@@ -988,7 +1019,8 @@ def check(kernel, app, measurement, folder, small):
                                                   glyphs, doubled))
         return_receipts = {"original_frames": 0, "stale_app_negatives": 0,
                            "tampered_status_negatives": 0,
-                           "tampered_selection_negatives": 0}
+                           "tampered_selection_negatives": 0,
+                           "tampered_status_margin_negatives": 0}
         return_receipts["original_frames"] += 1
         stale = transplanted_stale_app(returned, fit_again, w, h)
         assert stale != returned, "stale app transplant changed no actual pixels"
@@ -1012,6 +1044,17 @@ def check(kernel, app, measurement, folder, small):
             "changed native launcher selection pixel was accepted"
         )
         return_receipts["tampered_selection_negatives"] += 1
+        # Actual Q35 frame adverse controls for the same result row's
+        # previously unchecked margins; neither belongs to a glyph cell.
+        for at_right in (False, True):
+            damaged_margin = tampered_status_margin(returned, w, h, at_right)
+            assert damaged_margin != returned, "status margin damage ineffective"
+            assert not full_launcher_return_ok(first, damaged_margin, w, h,
+                                               m.serial(), app.name,
+                                               glyphs, doubled), (
+                f"corrupt status-row {'right' if at_right else 'left'} margin accepted"
+            )
+            return_receipts["tampered_status_margin_negatives"] += 1
         require_launcher_return_receipts(return_receipts)
         report["full_launcher_return_source_rgb"] = dict(return_receipts)
         m.key("p")
