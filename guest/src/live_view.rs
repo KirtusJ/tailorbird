@@ -21,8 +21,8 @@ fn phase_color(phase: Phase) -> u32 {
 pub fn paint(f: &mut Frame<'_>, work: &Work) {
     f.rect(0, 0, 960, 540, GROUND);
     f.rect(0, 0, 960, 30, if work.is_demo() { AMBER } else { PANEL });
-    text(f, 20, 7, if work.is_demo() { "UI DEMO / sample events / no files are written" }
-         else { "TAILORBIRD / work activity" }, if work.is_demo() { GROUND } else { TEXT }, false);
+    text(f, 20, 7, if work.is_demo() { "PCP OS > TAILORBIRD > UI DEMO / sample events / no files written" }
+         else { "PCP OS > TAILORBIRD > Work activity" }, if work.is_demo() { GROUND } else { TEXT }, false);
     text(f, 24, 47, work.title(), TEXT, true);
     let color = phase_color(work.phase());
     f.rect(24, 82, 6, 16, color);
@@ -67,7 +67,7 @@ pub fn paint(f: &mut Frame<'_>, work: &Work) {
     }
 
     f.rect(288, 116, 648, 358, PANEL);
-    text(f, 308, 129, "PREVIEW", SOFT, false);
+    text(f, 308, 129, if work.is_demo() { "GREETING CARD / SAMPLE PREVIEW" } else { "ARTIFACT PREVIEW" }, SOFT, false);
     if let Some(preview) = work.preview() {
         let state = match preview.change { ChangeState::Proposed => "Proposed", ChangeState::Applied => "Applied" };
         text(f, 720, 129, state, if preview.change == ChangeState::Proposed { AMBER } else { GOOD }, false);

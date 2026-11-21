@@ -19,7 +19,7 @@ pub extern "C" fn work_demo_main() -> ! {
             log(b"Live work demo frame: "); log(demo.work.phase().label().as_bytes()); log(b"\n");
             dirty = false;
         }
-        let mut event = [0; 2];
+        let mut event = [0u8; 2];
         while call(0, keyboard as usize, event.as_mut_ptr() as usize, 2, 0, 0, 0) == 2 {
             let code = (event[0] & 127) as usize; let pressed = event[1] & 1 == 0;
             let fresh = pressed && !down[code]; down[code] = pressed;

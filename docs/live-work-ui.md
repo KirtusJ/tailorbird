@@ -14,7 +14,9 @@ Build with the same pinned tools as the regular guest:
 Load `target/x86_64-unknown-none/release/tailorbird-work-demo` into the pinned
 kernel. Space advances sample work. W waits, Space resumes, S requests stop,
 C confirms stop, D disconnects, F fails, R replays and Esc exits. Every screen
-has a permanent **UI DEMO / sample events / no files are written** banner.
+has a permanent **PCP OS > TAILORBIRD > UI DEMO** context banner and says that
+events are samples and no files are written. The inset names the greeting card
+as a sample preview, so it cannot be mistaken for the desktop itself.
 The sample image develops before completion. The demo's Applied label is a
 sample event; it never writes `demo/greeting.card` or executes a build.
 
@@ -26,6 +28,9 @@ This writes twelve states at 640x480, 800x600, 1024x768 and 1920x1080. Hosted
 native checks compare every pixel of all twelve states on emulated PC and Q35
 at 1024x768, then require the kernel's clean exit. Smaller host renders are not
 evidence that the current single-page UEFI framebuffer mapping works.
+Native evidence includes the full PCP OS desktop and Programs screens before
+launch and after return, as well as the full guest display at every checkpoint.
+Isolated preview crops must be explicitly identified as such when shared.
 
 ## Integration boundary
 

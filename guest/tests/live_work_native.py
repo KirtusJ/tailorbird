@@ -29,7 +29,19 @@ def run(kernel, guest, expected, output, machine):
     m = None
     try:
         m = Qemu(kernel, guest, output, machine,
-                 "auto=tailorbird-work-demo then=off desktop=1024x768 ui_scale=1")
+                 "desktop=1024x768 ui_scale=1")
+        deadline = time.monotonic() + 100
+        while "desktop: 1024x768 at 1x UI scale" not in m.serial():
+            if m.proc.poll() is not None or time.monotonic() >= deadline:
+                raise AssertionError("PCP OS desktop did not become ready: " + m.serial()[-1200:])
+            time.sleep(.15)
+        # Preserve the whole OS desktop and Programs screen around the app.
+        # These are context captures, not another launcher pixel acceptance.
+        time.sleep(.5)
+        m.screenshot("desktop_before")
+        m.key("spc")
+        m.screenshot("programs_before")
+        m.key("ret")
         for case in cases:
             if case["name"] != "idle":
                 m.key("r")
@@ -50,6 +62,17 @@ def run(kernel, guest, expected, output, machine):
         assert ppm(output/"stop_requested.ppm")[1] != ppm(output/"stopped.ppm")[1]
         assert ppm(output/"disconnected.ppm")[1] == ppm(output/"late_after_disconnect.ppm")[1]
         m.key("esc")
+        deadline = time.monotonic() + 35
+        while "tailorbird-work-demo ended DONE: exit 0" not in m.serial():
+            if m.proc.poll() is not None or time.monotonic() >= deadline:
+                raise AssertionError("Sample UI did not return to Programs: " + m.serial()[-1200:])
+            time.sleep(.15)
+        m.screenshot("programs_after")
+        m.key("esc")
+        m.screenshot("desktop_after")
+        m.key("f10")
+        m.screenshot("power_confirmation")
+        m.key("ret")
         assert m.proc.wait(timeout=35) == 33
         serial = m.serial()
         assert "Live work demo frame: Work complete" in serial
