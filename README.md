@@ -24,11 +24,11 @@ Rust 1.97.0 with `rust-src` and the `x86_64-unknown-none` target, and `lld`.
     cargo test --lib
     sh build.sh
 
-`build.sh` records this folder as `/tailorbird`, so the program is the same file wherever the
-repository is checked out. Checked on 21 November 2026 at this pin, offline, in two folders, the second
+`build.sh` records this folder as `/tailorbird` and the compiler's sources as `/rustc/<commit>`, so the program is the same file wherever the
+repository and the compiler are installed. Checked on 21 November 2026 at this pin, offline, in two folders, the second
 holding only the four pieces of `pcp-os` the build reads (guest library, `font.rs`, `font-2x.bin`,
 `guest.ld`): 99 library tests pass; the ELF is 149,304 bytes, SHA-256
-`0704d9893f696700e59be45441f7737c70f3a6a9760c83a88b22dfa069f05ec7`. Another compiler version or linker
+`f67d41ab467690545f1fc53760503c3ca399f68557760d433775e7da7b6e60b7`. Another compiler version or linker
 may give another file.
 
 ## Next
