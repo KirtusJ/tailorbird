@@ -33,9 +33,34 @@ repository and the compiler are installed. Measured on 21 November 2026, offline
 | pull request 134 only (this repository's #1) | 99 pass | 149,304 | `f67d41ab467690545f1fc53760503c3ca399f68557760d433775e7da7b6e60b7` |
 | with the stack to 293 (this tree) | 111 pass | 149,384 | `c1e79cee1b5a645062d15dc2cd9de2cf2d4306d9de34edc395052a7c2b727b00` |
 
-Another compiler version or linker may give another file. `guest/tests/qemu_smoke.py` and
-`view_scale.py` read the font from the submodule; they have not been run from this repository yet, and
-the workflow that ran them in `pcp-os` is not ported. Earlier runs there do not qualify this build.
+Another compiler version or linker may give another file. The
+[`Tailorbird native guest` workflow](.github/workflows/tailorbird-guest.yml) runs on pull requests
+and manual dispatch, using Rust 1.97.0 and the exact proposed commit with its submodule:
+
+- Debug and release library tests, the framebuffer padding/page-flip test, and static high-address
+  ELF64 inspection. `build.sh --offline` produces the guest once.
+- Separate PC and Q35 keyboard/scanout/offline-refusal/exit tests at an explicitly requested
+  1024x768 against the **current OS submodule**.
+- Separate 1920x1080 and 800x600 scale, glyph, refusal and complete launcher-return tests against
+  **historical kernel `8f5992807e9b9c0bb8ce64e366c85ee4add31599`**. `view_scale.py`'s exact launcher
+  pixels and power key describe that desktop. These jobs do not qualify the current desktop's
+  launcher or power flow. The workflow requires its font sources to match the guest's.
+
+Every QEMU job downloads the producer's ELF and verifies its SHA-256 before use. Native jobs run
+independently and retain original PPM frames, serial logs, source/compiler identities and result
+records for 14 days, including failures. A pass applies only to the source and bytes recorded in
+that run; earlier `pcp-os` runs do not qualify this build. These are model-free emulation checks.
+
+On Linux with QEMU, after building the guest and the pinned kernel:
+
+    sh pcp-os/PCP_OS_Rust/crates/pcpos-kernel/run.sh build
+    python3 guest/tests/qemu_smoke.py \
+      pcp-os/PCP_OS_Rust/crates/pcpos-kernel/target/pcpos-kernel.elf32 \
+      target/x86_64-unknown-none/release/tailorbird --machine pc --output native-captures/pc
+
+Repeat with `--machine q35 --output native-captures/q35`. Output directories must be new. The
+historical scale commands and exact kernel checkout are recorded in the workflow. Both Python
+runners refuse optimized Python, which would otherwise remove their assertions.
 
 ## Next
 

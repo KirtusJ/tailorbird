@@ -7,21 +7,36 @@ This is NOT a test of the proprietary PT integrated service, approval,
 physical hardware, EDID or full runtime authorization.
 """
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import pathlib
 import re
 import select
 import subprocess
+import sys
 import tempfile
 import time
 
 DEFAULT_TIMEOUT = 100.0
 
+if sys.flags.optimize:
+    raise SystemExit("Refuse optimized Python: native checks require assertions")
+
+
+@contextmanager
+def capture_folder(output):
+    if output is None:
+        with tempfile.TemporaryDirectory(prefix="tailorbird-qmp-") as scratch:
+            yield pathlib.Path(scratch)
+    else:
+        output.mkdir(parents=True, exist_ok=False)
+        yield output
+
 
 class Qemu:
     def __init__(self, kernel: pathlib.Path, guest: pathlib.Path, folder: pathlib.Path, machine: str,
-                 boot_line: str = "auto=tailorbird then=off", display_args=None):
+                 boot_line: str = "auto=tailorbird then=off desktop=1024x768 ui_scale=1", display_args=None):
         self.folder = folder
         self.serial_path = folder / "serial.log"
         cmd = [
@@ -38,8 +53,12 @@ class Qemu:
         self.proc = subprocess.Popen(
             cmd, cwd=folder, stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0
         )
-        self._response()
-        self.qmp("qmp_capabilities")
+        try:
+            self._response()
+            self.qmp("qmp_capabilities")
+        except BaseException:
+            self.stop()
+            raise
 
     def _response(self):
         for _ in range(30):
@@ -90,6 +109,7 @@ class Qemu:
         self.proc.stdin.close()
         if self.proc.stdout:
             extra = self.proc.stdout.read().decode(errors="replace")
+            self.proc.stdout.close()
             if extra:
                 print("QEMU_STDOUT", extra[-4000:], flush=True)
 
@@ -102,20 +122,24 @@ def crop(pixels: bytes, width: int, box):
     )
 
 
-def run(kernel, guest, timeout, machine):
+def run(kernel, guest, timeout, machine, output=None):
     assert kernel.is_file() and kernel.stat().st_size > 10000
     assert guest.is_file() and guest.stat().st_size > 10000
-    with tempfile.TemporaryDirectory(prefix="tailorbird-qmp-") as scratch:
-        folder = pathlib.Path(scratch)
-        m = Qemu(kernel, guest, folder, machine)
+    with capture_folder(output) as folder:
+        report = {"machine": machine, "passed": False,
+                  "guest_sha256": hashlib.sha256(guest.read_bytes()).hexdigest(),
+                  "kernel_sha256": hashlib.sha256(kernel.read_bytes()).hexdigest()}
+        m = None
         try:
+            m = Qemu(kernel, guest, folder, machine)
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
                 if m.proc.poll() is not None:
                     raise RuntimeError("QEMU exited before guest display: " + m.serial()[-1800:])
                 try:
                     dims, baseline, first_hash = m.screenshot("initial")
-                    # The public kernel selects 1024x768 at default VGA memory.
+                    # Explicitly request the 1024x768 scanout this pixel oracle
+                    # describes; newer kernels default to 1920x1080.
                     # Wait for actual Tailorbird pixels: the launcher uses this mode too.
                     sample = ((114 + 110) * dims[0] + 32 + 22) * 3
                     if (dims == (1024, 768) and "Tailorbird first frame presented" in m.serial()
@@ -126,7 +150,7 @@ def run(kernel, guest, timeout, machine):
                     print("SCREEN_PENDING", str(e)[:160], flush=True)
                 time.sleep(0.3)
             else:
-                raise TimeoutError("No Tailorbird frame at the inherited 1024x768 scanout. last_screen=" + str(dims)
+                raise TimeoutError("No Tailorbird frame at the requested 1024x768 scanout. last_screen=" + str(dims)
                                    + " serial=" + m.serial()[-1800:])
 
             left, top = (dims[0] - 960) // 2, (dims[1] - 540) // 2
@@ -383,8 +407,16 @@ def run(kernel, guest, timeout, machine):
             assert "  FAIL" not in log, "Kernel reported failing self-checks"
             print("PASS: QEMU scanout/input contrast, offline refusal and clean kernel return",
                   flush=True)
+            report["passed"] = True
+        except BaseException as exc:
+            report["error"] = f"{type(exc).__name__}: {exc}"
+            raise
         finally:
-            m.stop()
+            try:
+                if m is not None:
+                    m.stop()
+            finally:
+                (folder / "result.json").write_text(json.dumps(report, indent=2) + "\n")
 
 
 if __name__ == "__main__":
@@ -393,5 +425,8 @@ if __name__ == "__main__":
     parser.add_argument("guest", type=pathlib.Path)
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
     parser.add_argument("--machine", choices=("pc", "q35"), default="pc")
+    parser.add_argument("--output", type=pathlib.Path,
+                        help="retain original frames, serial and verdict in a new directory")
     args = parser.parse_args()
-    run(args.kernel.resolve(), args.guest.resolve(), args.timeout, args.machine)
+    run(args.kernel.resolve(), args.guest.resolve(), args.timeout, args.machine,
+        args.output.resolve() if args.output else None)

@@ -1,1 +1,5 @@
 target/
+native-captures/
+scale-captures/
+scale-desktop/
+__pycache__/
