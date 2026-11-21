@@ -1887,7 +1887,7 @@ mod tests {
         assert_eq!(u.lines().last().unwrap().kind, "STOP");
         // The actual guest paint_frame consumes this gate. This test checks
         // source wiring, NOT pixels from an injected QEMU service event.
-        let renderer = include_str!("main.rs");
+        let renderer = include_str!("view.rs");
         assert!(
             renderer.contains("if ui.controls().permission_visible {"),
             "native renderer still paints stale permission inspector after StopAck"
@@ -2046,5 +2046,7 @@ mod tests {
 
 }
 
-#[cfg(test)]
-mod frame;
+/// Drawing on the guest's display: rectangles and the kernel's own typeface.
+pub mod frame;
+/// The picture drawn from the state.
+pub mod view;
