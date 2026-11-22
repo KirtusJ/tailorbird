@@ -213,7 +213,13 @@ impl Talk {
         // Reading is said before anything of the answer. Once some of it is here, or for another
         // reply, it is a stray like anything late.
         if let Incoming::Reading { read, of, .. } = incoming {
-            if !self.begun && self.pending_turn(conversation, reply).is_some() {
+            // Within one reply the count never goes back and the total never changes: a record
+            // that says otherwise is not shown (Director 2). The first one fixes the total.
+            let in_step = match self.reading {
+                Some((before, total)) => read >= before && of == total,
+                None => true,
+            };
+            if !self.begun && in_step && self.pending_turn(conversation, reply).is_some() {
                 self.reading = Some((read, of));
                 return Taken::Shown;
             }
@@ -312,6 +318,14 @@ mod tests {
         assert_eq!(talk.receive(Incoming::Reading { conversation: c, reply: r + 1, read: 9, of: 40 }), Taken::Stray);
         assert_eq!(talk.receive(Incoming::Reading { conversation: c + 1, reply: r, read: 9, of: 40 }), Taken::Stray);
         assert_eq!(talk.reading, Some((3, 40)));
+        // Going back, or another total, is not shown: what was shown stays. The same count again is.
+        for (read, of) in [(2u64, 40u64), (3, 41), (5, 39), (0, 40)] {
+            assert_eq!(talk.receive(Incoming::Reading { conversation: c, reply: r, read, of }), Taken::Stray, "{read} of {of}");
+            assert_eq!(talk.reading, Some((3, 40)));
+        }
+        assert_eq!(talk.receive(Incoming::Reading { conversation: c, reply: r, read: 3, of: 40 }), Taken::Shown);
+        assert_eq!(talk.receive(Incoming::Reading { conversation: c, reply: r, read: 9, of: 40 }), Taken::Shown);
+        assert_eq!(talk.reading, Some((9, 40)));
         // The first of the answer ends it, and reading that arrives afterwards is a stray.
         assert_eq!(talk.receive(Incoming::Chunk { conversation: c, reply: r, text: "Hi" }), Taken::Shown);
         assert_eq!(talk.reading, None);

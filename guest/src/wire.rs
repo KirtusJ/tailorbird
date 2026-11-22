@@ -34,6 +34,9 @@
 //! a reply whose SAY had bit 1 of the flags set, and only before that reply's first CHUNK. A reader
 //! that does not know READING refuses it like any unknown kind, and one that does not know bit 1
 //! refuses that SAY: the two ends of a channel are built from one revision.
+//! Each READING is checked by itself here. What holds across the READINGs of one reply (the count
+//! never goes back, the total never changes) is kept by the conversation: one that breaks it is not
+//! shown, and is counted with what arrived late.
 //!
 //! What the service is expected to do, which this module cannot enforce: send a CHUNK only at the
 //! boundary of whole UTF-8 characters, holding back the bytes of an unfinished one (an answer is as
