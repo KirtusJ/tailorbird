@@ -65,3 +65,13 @@ runners refuse optimized Python, which would otherwise remove their assertions.
 ## Next
 
 The look is to be redrawn to match the PCP OS desktop (`pcp-os` issue 334), then the model worker.
+
+The isolated `guest/src/project_location.rs` module supplies exact project destinations for the
+fresh backend: a configurable build-folder value (default `taylor`), a selected project beneath
+it, and a single filename beneath that project. A selected project and its pending destinations
+retain their original folder when the default changes. Unsupported names fail without repair or
+truncation. The first prototype accepts lowercase ASCII paths within the kernel's current limits.
+This is tested location data, not a connected setting or filesystem feature: it creates nothing,
+checks no availability or collisions, and supplies no permission or durability guarantee. Z3 owns
+the settings, project list, kernel namespace and Files integration; C3 owns this destination-binding
+logic. Preview, kernel request and result opening must eventually use the same exact destination.
