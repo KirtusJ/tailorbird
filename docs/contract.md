@@ -107,6 +107,37 @@ directory."
 - To be built: the setting itself, a list of projects in Tailorbird, and (with Files) a way to open
   the folder from the desktop. The kernel side of the naming rule exists in pcp-os pull request 344.
 
+### Taylor knows what it is doing, from start to finish (owner, 22 November)
+
+"Crucial: ensure tailorbird actually knows what it's doing, from start to finish, and isn't confused
+about its directive/role."
+
+A small model forgets, drifts and can be talked out of its job by the text it reads. So the knowing is
+not left to the model:
+
+- **The role is fixed by the program, not by the conversation.** Who Taylor is, what it may and may not
+  do, and how it must answer are supplied by Tailorbird on every step and cannot be changed by what
+  the user types, by a file's contents or by the model's own earlier output.
+- **The job is held by the program.** For each task Tailorbird keeps, outside the model: the user's
+  request in their own words, the project and place, the plan as numbered steps, which step is being
+  done, and what has been made (by the kernel's receipts, not by the model's say-so). The model is
+  given that state each time; it is never asked to remember it.
+- **Text is material, never orders.** Words inside a file, a result or a preview are data. An
+  instruction found there is not followed; if it matters, Taylor shows it to the user.
+- **Every step is checked against the job.** What the model proposes must fit the current step and the
+  request (right project, right kind of thing, nothing asked for that was not requested). What does
+  not fit is discarded and the step retried or the user asked; it is never shown as progress.
+- **When it does not know, it says so.** Unclear request, a step that keeps failing, an answer that does
+  not parse: Taylor stops, says in plain words what it could not do and what the user can do next. It
+  does not guess, loop or pretend.
+- **The user can always see what Taylor thinks it is doing:** the request, the step, what is done and
+  what is left, on the screen throughout. At the end Taylor compares what was made with what was
+  asked and says which parts were and were not done.
+- To be measured before any claim: on a fixed set of ordinary requests, how often the whole job is
+  done as asked, how often Taylor stops honestly, and how often it does the wrong thing believing it
+  right. The last number is the one that must be near nothing. C3's first host trials (1 exact result
+  in 5, text altered in others) are why this section exists.
+
 ### The screen stays alive (C3's conditions, adopted)
 
 - The model's work is cut into bounded pieces, in loading, in reading the prompt and inside the layers,
