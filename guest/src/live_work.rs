@@ -117,7 +117,8 @@ impl Work {
     pub fn disconnect(&mut self) -> bool {
         if !matches!(self.phase, Phase::Running | Phase::StopRequested) { return false; }
         self.phase = Phase::Disconnected;
-        self.detail = exact("Last received preview; work status unknown").unwrap();
+        self.detail = exact(if self.preview.is_some() { "Last received preview; work status unknown" }
+                            else { "No preview received; work status unknown" }).unwrap();
         true
     }
     pub fn observe(&mut self, task: u64, seq: u64, update: Update<'_>) -> bool {
@@ -165,7 +166,8 @@ impl Work {
                     if matches!(step.state, StepState::Active | StepState::Waiting) { step.state = StepState::Stopped; }
                 }
                 self.phase = Phase::Stopped;
-                self.detail = exact("Worker stopped; partial preview retained").unwrap();
+                self.detail = exact(if self.preview.is_some() { "Worker stopped; partial preview retained" }
+                                    else { "Worker stopped before any preview arrived" }).unwrap();
             }
             Update::Failed { reason } if self.phase != Phase::Ready => {
                 let Some(detail) = exact(reason) else { return false; };
