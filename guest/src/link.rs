@@ -114,7 +114,7 @@ impl Link {
                             Kind::Loading => ui.talk.loading(wire::progress(record.body)),
                             Kind::Ready => {
                                 self.was_ready = true;
-                                ui.talk.service_is(Service::Ready);
+                                ui.model_ready();
                             }
                             Kind::NotStarted => ui.talk.service_is(Service::Failed),
                             Kind::Chunk => {
