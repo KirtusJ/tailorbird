@@ -3,19 +3,12 @@
 Tailorbird is the PCP OS application for working with a local model worker. This repository is its
 home. The kernel and the guest library stay in `pcp-os`, pinned here as a submodule.
 
-## What is here, and what is not
+## Source and runtime
 
-- `guest/`: the native user-mode program, imported with its history from the public work in
-  `KirtusJ/pcp-os`: pull request 134 (Session A, head `3c762e6`) and the later stack up to pull
-  request 293 (head `fe8b67a`). It is a **disconnected shell**: it
-  draws, takes keys and reports NO SERVICE. No model, service, permission enforcement or installer is
-  in this repository.
-- `pcp-os/`: submodule at `070c9d5925a2c208c33c60db92e51156555407c8`, a commit of pcp-os `master`
-  (it has `Display::current()` since pcp-os pull request 337). The four files the build reads are
-  the same as at the earlier pin `745e883`, and the program built is the same file.
-- The connected implementation recorded in `pcp-os` issue 132 (private revisions `e725d56`,
-  `6cc9946`) is **not here** and has not been seen by the people filling this repository.
-- Nothing here has been run on hardware.
+- The [native foreground](guest/src/main.rs) opens the local model channel when PCP OS starts a companion. It displays Loading and Ready, sends messages, displays streamed or completed replies, and handles Stop. When no channel is available it reports that state. The [conversation test](guest/tests/talk_native.py) uses a controlled worker. Results with a real model identify the separate worker, firmware and medium. [0.5B worker trial](https://github.com/KirtusJ/tailorbird/pull/24#issuecomment-7078837787)
+- The foreground can request a note, browse projects and reopen files. PCP OS presents the approval screen and returns the result. The [native note test](guest/tests/note_roundtrip.py) checks refusal, approval and reopening.
+- `pcp-os/` supplies the kernel and guest library. The 22 November foreground measurement below used PCP OS submodule `070c9d5925a2c208c33c60db92e51156555407c8`. Check the gitlink of the Tailorbird revision being built.
+- The original import came from [PCP OS #134](https://github.com/KirtusJ/pcp-os/pull/134) and [#293](https://github.com/KirtusJ/pcp-os/pull/293). That foreground displayed NO SERVICE. The public [note](https://github.com/KirtusJ/tailorbird/pull/17) and [conversation](https://github.com/KirtusJ/tailorbird/pull/19) integrations followed it. The observed boots cited here ran in emulation.
 
 ## Build and test
 
@@ -26,12 +19,16 @@ Rust 1.97.0 with `rust-src` and the `x86_64-unknown-none` target, and `lld`.
     sh build.sh
 
 `build.sh` records this folder as `/tailorbird` and the compiler's sources as `/rustc/<commit>`, so the program is the same file wherever the
-repository and the compiler are installed. Measured on 21 November 2026, offline, Rust 1.97.0, pcp-os pin `745e883` (unchanged by the move to `070c9d5`):
+repository and the compiler are installed. The first two rows record the 21 November 2026 import measurements with Rust 1.97.0 and PCP OS pin `745e883`. The `ab12d96a` row was reproduced in two checkout paths with Rust 1.97.0 and PCP OS pin `070c9d5`, using `cargo test --locked --offline --release --lib` and `sh build.sh --offline`.
 
 | Source | Library tests | ELF bytes | SHA-256 |
 |---|---|---|---|
 | pull request 134 only (this repository's #1) | 99 pass | 149,304 | `f67d41ab467690545f1fc53760503c3ca399f68557760d433775e7da7b6e60b7` |
-| with the stack to 293 (this tree) | 111 pass | 149,384 | `c1e79cee1b5a645062d15dc2cd9de2cf2d4306d9de34edc395052a7c2b727b00` |
+| historical import through [PCP OS #293](https://github.com/KirtusJ/pcp-os/pull/293) | 111 pass | 149,384 | `c1e79cee1b5a645062d15dc2cd9de2cf2d4306d9de34edc395052a7c2b727b00` |
+| [22 November, `ab12d96a`](https://github.com/KirtusJ/tailorbird/tree/ab12d96a24c4d461971123dfb57b3f18f01ec103) | 149 pass | 147,880 | `afc5bc5ad9b94accaf915fe85366606668e1e2b03c8aeeee95f3b1c113d5e115` |
+| [22 November, merged conversation foreground `5492c0df`](https://github.com/KirtusJ/tailorbird/tree/5492c0df93e56aa08959c308ecb95f4d9f847738) | 209 pass | 212,352 | `076fd4812c7beaad28de2a28a1265c3640f754e126edf4e27de09f8b3c31488e` |
+
+The last row is one offline Linux build with the same Rust version and submodule pin, using the documented release test and build commands. Image receipts identify the foreground executable that their own builders produced.
 
 Another compiler version or linker may give another file. The
 [`Tailorbird native guest` workflow](.github/workflows/tailorbird-guest.yml) runs on pull requests
@@ -62,19 +59,14 @@ Repeat with `--machine q35 --output native-captures/q35`. Output directories mus
 historical scale commands and exact kernel checkout are recorded in the workflow. Both Python
 runners refuse optimized Python, which would otherwise remove their assertions.
 
-## Next
-
-The look is to be redrawn to match the PCP OS desktop (`pcp-os` issue 334), then the model worker.
+## Project and file components
 
 The isolated `guest/src/project_location.rs` module supplies exact project destinations for the
 fresh backend: a configurable build-folder value (default `taylor`), a selected project beneath
 it, and a single filename beneath that project. A selected project and its pending destinations
 retain their original folder when the default changes. Unsupported names fail without repair or
 truncation. The first prototype accepts lowercase ASCII paths within the kernel's current limits.
-This is tested location data, not a connected setting or filesystem feature: it creates nothing,
-checks no availability or collisions, and supplies no permission or durability guarantee. Z3 owns
-the settings, project list, kernel namespace and Files integration; C3 owns this destination-binding
-logic. Preview, kernel request and result opening must eventually use the same exact destination.
+The location type binds the destination used by the note proposal and project browser. The guest requests creation through the kernel and reports the receipt for that request. [Foreground implementation](guest/src/main.rs)
 
 `guest/src/file_job.rs` holds the first single-file job outside model text: exact request, project,
 destination, ordered steps, immutable proposal binding, and kernel result. A successful write or a
@@ -83,8 +75,7 @@ kernel receipt, validate its wire form and supply matching identity/digests. A c
 enables that exact target; only a complete read with matching length, digest and EOF marks it verified.
 Stop and uncertain transport preserve already-known effects. The controller still owns the actual
 proposed bytes, hashing, device transport and viewer. This module does not authenticate caller-supplied
-events, enforce permissions or establish model correctness. Z3 is integrating the visible settings,
-confined project list and read-only text viewer separately. Build-folder changes apply on the next
+events, enforce permissions or establish model correctness. The foreground connects the project list and read-only text viewer through the [project browser](guest/src/projects.rs). Build-folder changes apply on the next
 launch; the current job retains its original destination. The live-work renderer can show all 120
 destination bytes across two rows; an independent pinned-font check covers all four supported sizes.
 

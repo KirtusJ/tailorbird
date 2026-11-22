@@ -355,6 +355,16 @@ impl Ui {
         if self.count == 0 { None }
         else { Some((self.lines[0].seq, self.lines[self.count - 1].seq)) }
     }
+    /// The model service has said it is ready. A notice that said a message was not sent because
+    /// the model was still loading is no longer true the moment it is ready, so it is replaced by
+    /// what is true now. (A3 saw the old words stay on the Ready screen until the next key.) No
+    /// other notice is touched.
+    pub fn model_ready(&mut self) {
+        self.talk.service_is(talk::Service::Ready);
+        if self.notice.as_str() == "MODEL STILL LOADING - NOT SENT" {
+            self.notice(if self.input.is_empty() { "MODEL READY" } else { "MODEL READY - ENTER SENDS WHAT YOU TYPED" });
+        }
+    }
     fn notice(&mut self, s: &str) {
         // A later STOPPED/COMPLETED receipt, mode update, new task or
         // service reconnect does not retroactively establish when an
@@ -1090,6 +1100,31 @@ mod tests {
         assert_eq!(u.talk.receive(talk::Incoming::Done { conversation: 1, reply: 1 }), talk::Taken::Shown);
         assert!(u.intent(Action::Submit).is_none());
         assert_eq!(u.notice.as_str(), "SENT TO TAYLOR'S MODEL ON THIS COMPUTER");
+    }
+    #[test]
+    fn a_notice_that_the_model_was_loading_does_not_outlive_the_loading() {
+        let mut u = Ui::new();
+        u.talk.service_is(talk::Service::Loading);
+        typed(&mut u, "hello");
+        assert!(u.intent(Action::Submit).is_none());
+        assert_eq!(u.notice.as_str(), "MODEL STILL LOADING - NOT SENT");
+        u.model_ready();
+        assert_eq!(u.notice.as_str(), "MODEL READY - ENTER SENDS WHAT YOU TYPED");
+        assert_eq!(u.input.as_str(), "hello");
+        // Nothing was sent by becoming ready: the person presses Enter.
+        assert!(u.for_service().is_none());
+        // With nothing typed it says only that it is ready; and no other notice is replaced.
+        let mut u = Ui::new();
+        u.talk.service_is(talk::Service::Loading);
+        typed(&mut u, "x");
+        let _ = u.intent(Action::Submit);
+        u.input = Text::new();
+        u.model_ready();
+        assert_eq!(u.notice.as_str(), "MODEL READY");
+        let mut u = Ui::new();
+        u.notice("SOMETHING ELSE");
+        u.model_ready();
+        assert_eq!(u.notice.as_str(), "SOMETHING ELSE");
     }
     #[test]
     fn a_new_conversation_leaves_the_projects_so_that_enter_sends() {

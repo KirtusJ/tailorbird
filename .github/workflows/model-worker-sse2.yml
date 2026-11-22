@@ -102,3 +102,45 @@ jobs:
           name: sse2-worker-qualification
           path: qualification/
           retention-days: 14
+
+  reading-display:
+    name: Native reading display and Stop
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      RUSTUP_TOOLCHAIN: 1.97.0
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          submodules: true
+          persist-credentials: false
+      - name: Install compiler and emulator
+        run: |
+          rustup toolchain install 1.97.0 --profile minimal --component rust-src --target x86_64-unknown-none
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends lld qemu-system-x86
+      - name: Boot the guest with its test worker and compare the full display
+        env:
+          PCPOS_KERNEL_FEATURES: companion
+          PCPOS_KERNEL_STAGE: ${{ runner.temp }}/reading-kernel
+        run: |
+          sh pcp-os/PCP_OS_Rust/crates/pcpos-kernel/run.sh build
+          sh build.sh --bin tailorbird
+          sh build.sh --features talk-test-worker --bin talk-test-worker
+          elf=target/x86_64-unknown-none/release
+          mkdir reading-evidence
+          kernel=pcp-os/PCP_OS_Rust/crates/pcpos-kernel/target/pcpos-kernel.elf32
+          { git rev-parse HEAD; git submodule status; sha256sum "$kernel" "$elf/tailorbird" "$elf/talk-test-worker"; } > reading-evidence/source.txt
+          python3 guest/tests/reading_native.py "$kernel" "$elf/tailorbird" "$elf/talk-test-worker" reading-evidence/guest
+      - name: Retain original full guest frames and serial
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-reading-display
+          path: |
+            reading-evidence/source.txt
+            reading-evidence/guest/*.ppm
+            reading-evidence/guest/serial.log
+            reading-evidence/guest/drawn-*/steps.txt
+          retention-days: 14

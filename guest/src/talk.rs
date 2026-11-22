@@ -123,13 +123,16 @@ pub struct Talk {
     /// While an answer is awaited and none of it has arrived: how many tokens of the message the
     /// service says it has read, and of how many. Only what the service said.
     pub reading: Option<(u64, u64)>,
+    /// Whether anything of the reply awaited has arrived, were it a piece with no text in it. Once
+    /// it has, the reading is over and stays over (C3).
+    begun: bool,
 }
 
 const EMPTY: Turn = Turn { who: Who::System, text: Text::new(), cut: false, reply: 0, state: Reply::None, sent: false };
 
 impl Talk {
     pub const fn new() -> Self {
-        Self { service: Service::Absent, conversation: 1, next_reply: 1, turns: [EMPTY; TURNS], count: 0, dropped: 0, pending: None, strays: 0, checked: None, reading: None }
+        Self { service: Service::Absent, conversation: 1, next_reply: 1, turns: [EMPTY; TURNS], count: 0, dropped: 0, pending: None, strays: 0, checked: None, reading: None, begun: false }
     }
 
     pub fn turns(&self) -> &[Turn] { &self.turns[..self.count] }
@@ -188,6 +191,7 @@ impl Talk {
         self.next_reply += 1;
         self.pending = Some(reply);
         self.reading = None;
+        self.begun = false;
         self.push(Who::Taylor, "", reply, Reply::Streaming, false);
         Some(Outgoing { conversation: self.conversation, reply, history, text: Text::display(words) })
     }
@@ -209,7 +213,13 @@ impl Talk {
         // Reading is said before anything of the answer. Once some of it is here, or for another
         // reply, it is a stray like anything late.
         if let Incoming::Reading { read, of, .. } = incoming {
-            if self.pending_turn(conversation, reply).is_some_and(|t| t.text.as_str().is_empty()) {
+            // Within one reply the count never goes back and the total never changes: a record
+            // that says otherwise is not shown (Director 2). The first one fixes the total.
+            let in_step = match self.reading {
+                Some((before, total)) => read >= before && of == total,
+                None => true,
+            };
+            if !self.begun && in_step && self.pending_turn(conversation, reply).is_some() {
                 self.reading = Some((read, of));
                 return Taken::Shown;
             }
@@ -222,6 +232,7 @@ impl Talk {
         }
         // Whatever else arrives for the reply, the reading is over.
         self.reading = None;
+        self.begun = true;
         let Some(turn) = self.pending_turn(conversation, reply) else { return Taken::Stray };
         match incoming {
             Incoming::Reading { .. } => {}
@@ -307,6 +318,14 @@ mod tests {
         assert_eq!(talk.receive(Incoming::Reading { conversation: c, reply: r + 1, read: 9, of: 40 }), Taken::Stray);
         assert_eq!(talk.receive(Incoming::Reading { conversation: c + 1, reply: r, read: 9, of: 40 }), Taken::Stray);
         assert_eq!(talk.reading, Some((3, 40)));
+        // Going back, or another total, is not shown: what was shown stays. The same count again is.
+        for (read, of) in [(2u64, 40u64), (3, 41), (5, 39), (0, 40)] {
+            assert_eq!(talk.receive(Incoming::Reading { conversation: c, reply: r, read, of }), Taken::Stray, "{read} of {of}");
+            assert_eq!(talk.reading, Some((3, 40)));
+        }
+        assert_eq!(talk.receive(Incoming::Reading { conversation: c, reply: r, read: 3, of: 40 }), Taken::Shown);
+        assert_eq!(talk.receive(Incoming::Reading { conversation: c, reply: r, read: 9, of: 40 }), Taken::Shown);
+        assert_eq!(talk.reading, Some((9, 40)));
         // The first of the answer ends it, and reading that arrives afterwards is a stray.
         assert_eq!(talk.receive(Incoming::Chunk { conversation: c, reply: r, text: "Hi" }), Taken::Shown);
         assert_eq!(talk.reading, None);

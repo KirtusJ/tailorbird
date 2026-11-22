@@ -9,6 +9,7 @@
 //!  `fail`   answers that the reply failed;
 //!  `leave`  says a few bytes and ends, as a service that stops would;
 //!  `cut N`  (N in digits, at most 480) sends an answer of exactly N bytes, then says the reply failed;
+//!  `sequence` sends inconsistent reading counts, then waits for Stop; `again` starts a new total;
 //!  anything else: answers in pieces of eight bytes, a pause between them, and stops at once if told to.
 use pcp_game_guest::{call, exit, log, open, sleep_us};
 use tailorbird_ui::wire::{pack, Kind, Reader, Record, Step};
@@ -118,6 +119,32 @@ pub extern "C" fn worker_main() -> ! {
         }
         let said = &got.body[..got.length];
         log(b"test worker: was sent a message\n");
+        if said == b"sequence" && got.progress {
+            for (read, total, marker) in [
+                (3, 7, &b"test worker: sequence first 3/7\n"[..]),
+                (2, 7, &b"test worker: sequence regression 2/7\n"[..]),
+                (2, 9, &b"test worker: sequence changed total 2/9\n"[..]),
+                (4, 7, &b"test worker: sequence advanced 4/7\n"[..]),
+            ] {
+                send(fd, Kind::Reading, got.conversation, got.reply, &progress(read, total));
+                log(marker);
+                if read != 4 { pause(4000); }
+            }
+            let stop = next(fd, &mut reader, true).unwrap_or_else(|| exit(3));
+            if stop.kind != Kind::Stop || stop.conversation != got.conversation || stop.reply != got.reply {
+                exit(3);
+            }
+            log(b"test worker: sequence received matching Stop\n");
+            continue;
+        }
+        if said == b"again" && got.progress {
+            send(fd, Kind::Reading, got.conversation, got.reply, &progress(1, 5));
+            log(b"test worker: replacement read 1/5\n");
+            pause(4000);
+            send(fd, Kind::Chunk, got.conversation, got.reply, b"ok");
+            send(fd, Kind::Done, got.conversation, got.reply, b"");
+            continue;
+        }
         if said == b"fail" {
             send(fd, Kind::Failed, got.conversation, got.reply, b"");
             continue;

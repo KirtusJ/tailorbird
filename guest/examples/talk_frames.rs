@@ -30,7 +30,7 @@ fn main() {
         match step {
             "ready" => {
                 ever_ready = true;
-                ui.talk.service_is(Service::Ready)
+                ui.model_ready()
             }
             // `loading`, or `loading <bytes checked> <of bytes>` as the service said it.
             "loading" => {
