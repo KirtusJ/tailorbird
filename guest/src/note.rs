@@ -89,6 +89,28 @@ pub fn next_number_in(list: Option<&[u8]>, into: &ProjectLocation, at_least: Opt
     Some(next)
 }
 
+/// Everything decided before the kernel is asked for a note, in one place: whether it may be asked at
+/// all, into which project, and under which number. `folder` is the build folder a checked list of this
+/// launch named (None: PCP OS has not said); `active` the project chosen (None: the first project of
+/// that folder, if its name fits). On success: the project, the number to ask for, and the number the
+/// next request in that project starts from (None when this one is the last there is).
+pub fn decide(allowed: bool, full: bool, folder: Option<BuildFolder>, active: Option<ProjectLocation>, list: Option<&[u8]>,
+              number: Option<u32>) -> Result<(ProjectLocation, u32, Option<u32>), &'static str> {
+    if !allowed {
+        return Err(NOT_ALLOWED);
+    }
+    if full {
+        return Err(crate::jobs::FULL);
+    }
+    let folder = folder.ok_or(NO_FOLDER)?;
+    let project = match active {
+        Some(project) => project,
+        None => default_project(folder).ok_or(NO_ROOM_FOR_NAME)?,
+    };
+    let next = next_number_in(list, &project, number).ok_or(NO_NUMBER)?;
+    Ok((project, next, next.checked_add(1)))
+}
+
 /// What is typed, with a new line after it, as note `number` of the current project. The job is ready to
 /// be handed to the kernel: its record is built and it knows what the receipt must say.
 #[cfg(test)]
@@ -232,6 +254,24 @@ mod tests {
         let long = BuildFolder::new(core::str::from_utf8(&[b'a'; 116]).unwrap()).unwrap();
         assert!(default_project(long).is_none());
         assert_eq!(prepare_in(other, 1, 41, "x").unwrap().job.destination().as_str(), "taylor/other/note-41.txt");
+    }
+
+    #[test]
+    fn nothing_is_asked_without_a_folder_a_name_that_fits_and_a_number() {
+        let root = BuildFolder::new("taylor").unwrap();
+        let long = BuildFolder::new(core::str::from_utf8(&[b'a'; 116]).unwrap()).unwrap();
+        // Not allowed, the request limit, and no folder each stop it, in that order, and name no folder.
+        assert_eq!(decide(false, true, None, None, None, Some(1)), Err(NOT_ALLOWED));
+        assert_eq!(decide(true, true, None, None, None, Some(1)), Err(crate::jobs::FULL));
+        assert_eq!(decide(true, false, None, None, None, Some(1)), Err(NO_FOLDER));
+        // The list failed at start and is read on the next press: the same call then succeeds.
+        let (project, number, next) = decide(true, false, Some(root), None, None, Some(1)).unwrap();
+        assert_eq!((project.as_str(), number, next), ("taylor/my-first-project", 1, Some(2)));
+        // A folder whose name leaves no room: said, and no other folder stands in.
+        assert_eq!(decide(true, false, Some(long), None, None, Some(1)), Err(NO_ROOM_FOR_NAME));
+        // The last number there is can be asked for once; after it there is none, and nothing wraps.
+        assert_eq!(decide(true, false, Some(root), Some(project), None, Some(u32::MAX)).map(|d| (d.1, d.2)), Ok((u32::MAX, None)));
+        assert_eq!(decide(true, false, Some(root), Some(project), None, None), Err(NO_NUMBER));
     }
 
     #[test]

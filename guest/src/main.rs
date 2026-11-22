@@ -180,21 +180,16 @@ pub extern "C" fn tailorbird_main() -> ! {
                         ui.active = launch.and_then(|(root, _)| note::default_project(root));
                     }
                     let list = read_list().ok();
-                    let (words, job) = match (launch, ui.active) {
-                        _ if proposals < 0 => (Text::display(note::NOT_ALLOWED), None),
-                        _ if ui.jobs.is_full() => (Text::display(tailorbird_ui::jobs::FULL), None),
-                        (None, _) => (Text::display(note::NO_FOLDER), None),
-                        (Some(_), None) => (Text::display(note::NO_ROOM_FOR_NAME), None),
-                        (Some(_), Some(project)) => match note::next_number_in(list, &project, number) {
-                            None => (Text::display(note::NO_NUMBER), None),
-                            Some(next) => {
-                                // The next request in this project starts after this number, if there
-                                // is one after it.
-                                number = next.checked_add(1);
-                                make_note(proposals, project, attempt, next, ui.input.as_str())
-                            }
-                        },
+                    let (words, job) = match note::decide(proposals >= 0, ui.jobs.is_full(), launch.map(|(root, _)| root), ui.active, list, number) {
+                        Err(words) => (Text::display(words), None),
+                        Ok((project, this, next)) => {
+                            number = next;
+                            make_note(proposals, project, attempt, this, ui.input.as_str())
+                        }
                     };
+                    // What became of it is shown at once, not hidden behind a list read before it.
+                    ui.show_projects = false;
+                    ui.browse_level = 0;
                     ui.notice = words;
                     if let Some(job) = job {
                         // Room was checked before the kernel was asked, so this cannot fail.

@@ -206,9 +206,13 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
             if let Some(active) = ui.active {
                 label(f, 420, 370, "New notes go into the project", 1, SOFT);
                 wrapped(f, 420, 384, active.as_str(), 84);
-            } else {
+            } else if ui.projects.folder.is_empty() {
                 // No folder is assumed: until PCP OS names one, a note has nowhere to go.
                 label(f, 420, 370, "PCP OS has not yet said where projects go.", 1, AMBER);
+            } else {
+                // PCP OS has named the folder, and its name leaves no room for a project and a note.
+                label(f, 420, 370, "Folder name too long to hold a note:", 1, AMBER);
+                wrapped(f, 420, 384, ui.projects.folder.as_str(), 84);
             }
             let x = key(f, 339, 420, "Esc", "returns to Programs");
             key(f, x, 420, "Alt+P", "shows your projects");
@@ -399,7 +403,7 @@ fn files(f: &mut Frame<'_>, list: &crate::projects::Files, place: usize, active:
                     label(f, 347 + 69 * 6, y, "...", 1, AMBER);
                 }
                 label(f, 800, y, decimal_u64(entry.size as u64, &mut digits), 1, TEXT);
-                label(f, 842, y, "characters", 1, SOFT);
+                label(f, 842, y, "bytes", 1, SOFT);
             }
             if let Some(destination) = list.rows[..list.shown].get(place).and_then(|r| r.destination) {
                 label(f, 339, 366, "Chosen:", 1, SOFT);
