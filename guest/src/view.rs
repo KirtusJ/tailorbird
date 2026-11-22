@@ -538,7 +538,8 @@ fn files(f: &mut Frame<'_>, list: &crate::projects::Files, place: usize, active:
                     label(f, 347 + 69 * 6, y, "...", 1, AMBER);
                 }
                 label(f, 800, y, decimal_u64(entry.size as u64, &mut digits), 1, TEXT);
-                label(f, 842, y, "bytes", 1, SOFT);
+                // u32 sizes need up to ten 6-pixel digits (x=800..860). Keep a full cell gap.
+                label(f, 866, y, "bytes", 1, SOFT);
             }
             if let Some(destination) = list.rows[..list.shown].get(place).and_then(|r| r.destination) {
                 label(f, 339, 366, "Chosen:", 1, SOFT);
@@ -801,6 +802,58 @@ mod tests {
             }
         }
         assert!(lowest >= 404 && lowest < 416, "the last line of words ends at {lowest}");
+    }
+
+    /// The complete listed u32 size and the unit word occupy disjoint glyph cells.
+    /// Independently draw both on the same sunken-row surface, then compare every pixel.
+    /// The old x=842 unit location must fail this oracle for long sizes.
+    #[test]
+    fn project_file_size_and_units_do_not_overpaint_at_u32_boundaries() {
+        use crate::projects::{Files, Listing};
+        for (width, height) in [(960usize, 540usize), (1920, 1080)] {
+            let scale = width / 960;
+            for size in [0u32, 9_999_999, 10_000_000, u32::MAX] {
+                let mut list = Files::new();
+                list.state = Listing::Listed;
+                list.complete = true;
+                list.count = 1;
+                list.shown = 1;
+                list.rows[0].size = size;
+
+                let mut actual = vec![PANEL; width * height];
+                files(&mut Frame::new(&mut actual, width, height, width, PANEL, false),
+                      &list, 0, None);
+
+                let mut expected = vec![PANEL; width * height];
+                let mut digits = [0u8; 20];
+                let count = decimal_u64(size as u64, &mut digits);
+                {
+                    let mut f = Frame::new(&mut expected, width, height, width, PANEL, false);
+                    f.well(339, 241, 570, 18, GROUND);
+                    label(&mut f, 800, 244, count, 1, TEXT);
+                    label(&mut f, 866, 244, "bytes", 1, SOFT);
+                }
+                assert!(800 + 6 * count.len() + 6 <= 866, "no gap for {size}");
+                for y in 244 * scale..256 * scale {
+                    for x in 800 * scale..896 * scale {
+                        assert_eq!(actual[y * width + x], expected[y * width + x],
+                                   "size {size} painted over or misplaced at {x},{y}");
+                    }
+                }
+
+                if count.len() >= 8 {
+                    let mut collided = vec![PANEL; width * height];
+                    let mut f = Frame::new(&mut collided, width, height, width, PANEL, false);
+                    f.well(339, 241, 570, 18, GROUND);
+                    label(&mut f, 800, 244, count, 1, TEXT);
+                    label(&mut f, 842, 244, "bytes", 1, SOFT);
+                    assert!((244 * scale..256 * scale).any(|y|
+                        (800 * scale..896 * scale).any(|x|
+                            collided[y * width + x] != expected[y * width + x])),
+                        "legacy overlapping units were not rejected for {size}");
+                }
+            }
+        }
     }
 
     /// With TAILORBIRD_SHOT=<folder> set, write the first screen at the common sizes as P6 files.
