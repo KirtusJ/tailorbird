@@ -399,11 +399,13 @@ fn transcript(f: &mut Frame<'_>, talk: &crate::talk::Talk) {
             // What the service said of its reading, and nothing worked out from it.
             let (read, of) = talk.reading.unwrap_or((0, 1));
             let mut line = crate::Text::<84>::new();
-            for part in ["(reading your message: ", decimal_u64(read, &mut digits), " of "] {
+            // "Preparing the reply", not "reading your message": the count is of everything the model
+            // reads before it can answer, which includes the conversation so far (C3).
+            for part in ["(preparing the reply: ", decimal_u64(read, &mut digits), " of "] {
                 for b in part.bytes() { line.push_ascii(b); }
             }
             let mut more = [0u8; 20];
-            for b in decimal_u64(of, &mut more).bytes().chain(b" tokens)".iter().copied()) { line.push_ascii(b); }
+            for b in decimal_u64(of, &mut more).bytes().chain(b" tokens read)".iter().copied()) { line.push_ascii(b); }
             label(f, 393, y, line.as_str(), 1, SOFT);
             y += 12;
         } else if text.is_empty() {
@@ -687,7 +689,7 @@ mod tests {
         // (A new frame starts from its ground everywhere, so the words are drawn on one of their
         // own and that row copied over.)
         let mut alone = vec![0u32; expected.len()];
-        label(&mut Frame::new(&mut alone, width, expected.len() / width, width, blank, false), 393, 242, "(reading your message: 37 of 212 tokens)", 1, SOFT);
+        label(&mut Frame::new(&mut alone, width, expected.len() / width, width, blank, false), 393, 242, "(preparing the reply: 37 of 212 tokens read)", 1, SOFT);
         for y in 242..254 {
             for x in 393..393 + 6 * 84 {
                 expected[y * width + x] = alone[y * width + x];
