@@ -65,3 +65,25 @@ runners refuse optimized Python, which would otherwise remove their assertions.
 ## Next
 
 The look is to be redrawn to match the PCP OS desktop (`pcp-os` issue 334), then the model worker.
+
+The isolated `guest/src/project_location.rs` module supplies exact project destinations for the
+fresh backend: a configurable build-folder value (default `taylor`), a selected project beneath
+it, and a single filename beneath that project. A selected project and its pending destinations
+retain their original folder when the default changes. Unsupported names fail without repair or
+truncation. The first prototype accepts lowercase ASCII paths within the kernel's current limits.
+This is tested location data, not a connected setting or filesystem feature: it creates nothing,
+checks no availability or collisions, and supplies no permission or durability guarantee. Z3 owns
+the settings, project list, kernel namespace and Files integration; C3 owns this destination-binding
+logic. Preview, kernel request and result opening must eventually use the same exact destination.
+
+`guest/src/file_job.rs` holds the first single-file job outside model text: exact request, project,
+destination, ordered steps, immutable proposal binding, and kernel result. A successful write or a
+generated claim of completion does not enable Open. The controller must read the current launch's
+kernel receipt, validate its wire form and supply matching identity/digests. A confirmed creation
+enables that exact target; only a complete read with matching length, digest and EOF marks it verified.
+Stop and uncertain transport preserve already-known effects. The controller still owns the actual
+proposed bytes, hashing, device transport and viewer. This module does not authenticate caller-supplied
+events, enforce permissions or establish model correctness. Z3 is integrating the visible settings,
+confined project list and read-only text viewer separately. Build-folder changes apply on the next
+launch; the current job retains its original destination. The live-work renderer can show all 120
+destination bytes across two rows; an independent pinned-font check covers all four supported sizes.
