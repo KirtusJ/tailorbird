@@ -13,11 +13,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Checkout exact proposed source
+      # The proposed merge with main, not the branch's own head: a branch older than the catalogue
+      # has no check at its head, and the job would fail on changes that have nothing to do with it.
+      - name: Check out the proposed merge
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           submodules: true
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: The catalogue is the tree, inline relative links hold, no session context
         run: python3 guest/tests/check_catalog.py
