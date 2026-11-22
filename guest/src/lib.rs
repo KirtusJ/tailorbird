@@ -368,8 +368,13 @@ impl Ui {
     /// and the pixel oracle must both take this single reducer path.
     pub fn observed_talk(&mut self, incoming: talk::Incoming<'_>) -> talk::Taken {
         let taken = self.talk.receive(incoming);
+        // The sticky effect-uncertainty banner is an independent warning
+        // prefixed by notice(); do not let it mask the queue label's own
+        // transition on a matching record. The warning must survive intact.
+        let notice = self.notice.as_str();
+        let delivery = notice.strip_prefix("EFFECT UNKNOWN - ").unwrap_or(notice);
         if taken == talk::Taken::Shown
-            && self.notice.as_str() == "QUEUED LOCALLY - DELIVERY UNCONFIRMED"
+            && delivery == "QUEUED LOCALLY - DELIVERY UNCONFIRMED"
         {
             self.notice("MATCHING REPLY RECORD - MODEL UNVERIFIED");
         }
@@ -1063,6 +1068,32 @@ mod tests {
         assert!(u.for_service().is_none());
         assert_eq!(u.input.as_str(), "and another");
         assert_eq!(u.notice.as_str(), "REPLY PENDING - NOT SENT");
+    }
+    #[test]
+    fn matching_talk_record_retires_queued_label_without_erasing_effect_warning() {
+        // Independently reachable work-effect uncertainty and local talk
+        // backpressure must remain distinguishable on the same screen.
+        // A correlated reply frame is not a trusted model receipt.
+        let mut u = Ui::new();
+        u.effect_uncertain = true;
+        u.talk.service_is(talk::Service::Ready);
+        typed(&mut u, "hello");
+        assert_eq!(u.intent(Action::Submit), None);
+        let queued = "EFFECT UNKNOWN - QUEUED LOCALLY - DELIVERY UNCONFIRMED";
+        assert_eq!(u.notice.as_str(), queued);
+        assert!(matches!(u.for_service(), Some(talk::Request::Say(_))));
+        assert_eq!(u.observed_talk(talk::Incoming::Reading {
+            conversation: 1, reply: 99, read: 0, of: 3,
+        }), talk::Taken::Stray);
+        assert_eq!(u.notice.as_str(), queued, "unmatched reply must not alter queue label");
+        assert_eq!(u.observed_talk(talk::Incoming::Reading {
+            conversation: 1, reply: 1, read: 0, of: 3,
+        }), talk::Taken::Shown);
+        assert_eq!(u.notice.as_str(),
+            "EFFECT UNKNOWN - MATCHING REPLY RECORD - MODEL UNVERIFIED");
+        assert!(u.effect_uncertain, "uncertain file effect survives model-channel correlation");
+        assert!(matches!(u.for_service(), Some(talk::Request::Say(_))),
+            "a matching wire record is not service admission of an unwritten SAY");
     }
     #[test]
     fn stop_stops_an_answer_under_way_and_tells_the_service_which() {
