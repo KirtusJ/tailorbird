@@ -671,7 +671,7 @@ def check(kernel, app, measurement, folder, small):
     # starts connected=false, Model::Unknown. This is a display identity
     # check, not a claim about a trusted service or an authenticated model.
     offline_labels = (
-        ("Not ready", 796, 26, 10, 20, BAD, GROUND),
+        ("Service off", 796, 26, 10, 20, BAD, GROUND),
         ("TAYLOR IS", 38, 115, 6, 12, TEAL, PANEL),
         ("Not connected", 38, 135, 10, 20, AMBER, PANEL),
     )

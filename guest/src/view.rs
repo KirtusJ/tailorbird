@@ -99,8 +99,15 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
     // Where this is and where Esc leads: Programs, from which this was started (A3 pressed it and saw).
     label(f, 22, 52, "PCP OS > Programs > Tailorbird (Esc returns to Programs)", 1, SOFT);
     label(f, 202, 27, "builds and fixes on this computer", 2, SOFT);
-    // What is behind it, said once, where the eye lands last: a lamp and two words.
-    let (lamp, link) = if ui.connected { (GOOD, "Ready") } else { (BAD, "Not ready") };
+    // The transport being connected does not establish model readiness.
+    // These are labels for the reported UI status, not verified inference or consent.
+    let (lamp, link) = match (ui.connected, ui.model) {
+        (false, _) => (BAD, "Service off"),
+        (true, Model::Ready) => (GOOD, "Model ready"),
+        (true, Model::Loading) => (AMBER, "Model loading"),
+        (true, Model::Unavailable) => (BAD, "Unavailable"),
+        (true, Model::Unknown) => (AMBER, "Model unknown"),
+    };
     f.well(764, 18, 176, 36, GROUND);
     f.rect(778, 31, 10, 10, lamp);
     label(f, 796, 26, link, 2, lamp);
@@ -108,8 +115,15 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
     // Mode and Stop are always visible even if the model is missing.
     f.panel(20, 94, 280, 352, PANEL);
     label(f, 38, 115, "TAYLOR IS", 1, TEAL);
-    label(f, 38, 135, sentence(ui.model.label(), &mut name), 2,
-          if ui.model == Model::Ready { GOOD } else { AMBER });
+    // Unknown means the connected service has not reported model readiness;
+    // it must not be presented as "Not connected" while the service is online.
+    let model_caption = if ui.connected && ui.model == Model::Unknown {
+        "Model unknown"
+    } else {
+        sentence(ui.model.label(), &mut name)
+    };
+    label(f, 38, 135, model_caption, 2,
+          if ui.connected && ui.model == Model::Ready { GOOD } else { AMBER });
     label(f, 38, 191, "MODE", 1, TEAL);
     let mode_rect = crate::pointer::MODE_RECT;
     f.well(mode_rect.x, mode_rect.y, mode_rect.width, mode_rect.height, GROUND);
@@ -253,6 +267,105 @@ mod tests {
     extern crate std;
     use super::*;
     use std::{format, vec, vec::Vec};
+
+    /// A connected transport must not paint a green ready lamp for a model
+    /// that the service reports as loading, unknown, or unavailable. Compare
+    /// the full header-status panel against independently specified glyphs
+    /// and palette colors, not only whether some pixels were drawn.
+    #[test]
+    fn header_status_paints_reported_model_state_not_transport_alone() {
+        let cases = [
+            (false, Model::Unknown, BAD, "Service off"),
+            (false, Model::Ready, BAD, "Service off"),
+            (true, Model::Unknown, AMBER, "Model unknown"),
+            (true, Model::Loading, AMBER, "Model loading"),
+            (true, Model::Unavailable, BAD, "Unavailable"),
+            (true, Model::Ready, GOOD, "Model ready"),
+        ];
+        for (width, height, left, top, scale) in [
+            (960usize, 540usize, 0usize, 0usize, 1usize),
+            (1280, 720, 160, 90, 1),
+            (1920, 1080, 0, 0, 2),
+            (2560, 1440, 320, 180, 2),
+        ] {
+            for (connected, model, color, caption) in cases {
+                assert!(796 + caption.len() * 10 <= 940, "header caption overflows");
+                let mut ui = Ui::new();
+                assert!(ui.observe(crate::BackendEvent::Service {
+                    connected, model, saved_mode: crate::Mode::Single,
+                }));
+                let mut actual = vec![0u32; width * height];
+                let mut expected = vec![0u32; width * height];
+                {
+                    let mut frame = Frame::new(&mut actual, width, height, width, GROUND, false);
+                    paint_frame(&mut frame, &ui);
+                }
+                {
+                    let mut frame = Frame::new(&mut expected, width, height, width, GROUND, false);
+                    frame.well(764, 18, 176, 36, GROUND);
+                    frame.rect(778, 31, 10, 10, color);
+                    label(&mut frame, 796, 26, caption, 2, color);
+                }
+                let (x0, x1) = (left + 764 * scale, left + 940 * scale);
+                for y in (top + 18 * scale)..(top + 54 * scale) {
+                    let start = y * width;
+                    assert_eq!(
+                        &actual[start + x0..start + x1],
+                        &expected[start + x0..start + x1],
+                        "status pixel mismatch at {width}x{height} y={y}, service={connected}, model={model:?}",
+                    );
+                }
+            }
+        }
+    }
+
+    /// The sidebar must agree with the connection/model distinction in the
+    /// header. In particular a connected Unknown model is not "Not connected".
+    /// Compare the complete caption raster at each supported sample geometry.
+    #[test]
+    fn sidebar_model_caption_distinguishes_service_and_model() {
+        let cases = [
+            (false, Model::Unknown, "Not connected", AMBER),
+            (false, Model::Ready, "Not connected", AMBER),
+            (true, Model::Unknown, "Model unknown", AMBER),
+            (true, Model::Loading, "Model loading", AMBER),
+            (true, Model::Unavailable, "Model unavailable", AMBER),
+            (true, Model::Ready, "Model ready", GOOD),
+        ];
+        for (width, height, left, top, scale) in [
+            (960usize, 540usize, 0usize, 0usize, 1usize),
+            (1280, 720, 160, 90, 1),
+            (1920, 1080, 0, 0, 2),
+            (2560, 1440, 320, 180, 2),
+        ] {
+            for (connected, model, caption, color) in cases {
+                assert!(38 + caption.len() * 10 <= 300, "sidebar caption overflows");
+                let mut ui = Ui::new();
+                assert!(ui.observe(crate::BackendEvent::Service {
+                    connected, model, saved_mode: crate::Mode::Single,
+                }));
+                let mut actual = vec![0u32; width * height];
+                let mut expected = vec![0u32; width * height];
+                {
+                    let mut frame = Frame::new(&mut actual, width, height, width, GROUND, false);
+                    paint_frame(&mut frame, &ui);
+                }
+                {
+                    let mut frame = Frame::new(&mut expected, width, height, width, GROUND, false);
+                    frame.panel(20, 94, 280, 352, PANEL);
+                    label(&mut frame, 38, 135, caption, 2, color);
+                }
+                for y in (top + 135 * scale)..(top + 155 * scale) {
+                    let begin = y * width + left + 38 * scale;
+                    let end = y * width + left + 278 * scale;
+                    assert_eq!(
+                        &actual[begin..end], &expected[begin..end],
+                        "sidebar mismatch at {width}x{height} y={y}, service={connected}, model={model:?}"
+                    );
+                }
+            }
+        }
+    }
 
     /// With TAILORBIRD_SHOT=<folder> set, write the first screen at the common sizes as P6 files.
     #[test]
