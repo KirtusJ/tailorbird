@@ -1,6 +1,6 @@
 # Tailorbird, built fresh: what the parts are and who is trusted
 
-Status: **draft for the directors (Z3, 22 November 2026; B3's review of the same day taken in). Nothing here is built.** The owner decided to
+Status: **draft for the directors (Z3, 22 November 2026; B3's and C3's reviews of the same day taken in). Nothing here is built.** The owner decided to
 stop waiting for the earlier private implementation and start again. This page is the agreement to reach
 before any code that can change files or the system is written.
 
@@ -62,6 +62,33 @@ Visual in what it does; clear in what it did; able to act on the whole system wh
 - To be checked on both 800 by 600 UEFI devices and on the two-page display, with a long target and
   with a cancelled question.
 
+### Proposals and receipts (C3's conditions, adopted)
+
+- **What the model writes is never a receipt.** Tokens, plans and half-made things can only put the
+  screen into a *proposed* state. Only the kernel's receipt, matching the proposal, shows something as
+  applied. A generated sentence that says "done" is nothing.
+- A proposal and its receipt are bound to the task attempt, a proposal number, the exact target, the
+  state expected beforehand, the bytes and their digest, and the result. Asking twice does not do the
+  thing twice. The kernel keeps the receipt and can show it after Stop has ended Tailorbird.
+- **The first thing that can be made is one new file of text or data** (create only, UTF-8, within
+  agreed limits of size and path) that a program already on the system can open. One decision covers
+  the whole file. The kernel's screen shows the exact content, with control and undrawable characters
+  marked unmistakably, and refuses what it cannot show whole and never clips it. Replacing a file,
+  several effects in one plan, and anything that runs come later, each with its own agreement.
+- **Kept until when, said plainly.** The ordinary kernel's files last until power-off; a kept file is a
+  different, acknowledged commit. A receipt says which; "created" never silently means "will be there
+  after a restart". How the user gets from Tailorbird to the new file and back, on a system that shows
+  one program at a time, must be a designed path.
+
+### The screen stays alive (C3's conditions, adopted)
+
+- The model's work is cut into bounded pieces, in loading, in reading the prompt and inside the layers,
+  not only between words produced; between pieces the program reads keys, redraws and honours a
+  request to stop. The kernel's Stop works even if it does not.
+- Recorded, not estimated: the longest wait from a key to a picture and from a stop to stopped, while
+  loading, reading and producing; and that memory is all returned after the kernel's Stop. Counts of
+  work done are shown as counts, never as a percentage that was not measured.
+
 What this buys: no trusted service to write and authenticate, no transport to secure, and a model that
 is wrong or manipulated can only ever *ask*.
 
@@ -75,9 +102,9 @@ real question is asked by the kernel.
 
 ## Open questions, in the order they block us
 
-1. **What can a "built" thing be?** PCP OS has no compiler on board. Candidates: (a) a small sandboxed
-   script or bytecode that a PCP OS runtime draws with; (b) documents and data only at first. Without
-   an answer "build it" means "write text files".
+1. **What can a "built" thing be, beyond the first file?** PCP OS has no compiler on board. The first
+   slice makes documents and data (above). For "build it" to mean more, the candidate is a small
+   sandboxed script or bytecode that a PCP OS runtime draws with. The owner has been asked.
 2. **Can a model run here at all, then usefully?** Measured by B3 at `070c9d5` on emulated UEFI: free
    memory when Tailorbird starts was about 138, 394 and 906 MiB on machines of 256, 512 and 1,024 MiB;
    the kernel uses one pool of memory below 1 GiB; boot modules must end below 128 MiB. The
