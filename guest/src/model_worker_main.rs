@@ -1,6 +1,6 @@
 #![no_std]
 #![no_main]
-//! Opt-in scalar inference qualification worker. No tool execution or release-speed claim.
+//! Local inference worker for the model-preloaded image. No tool execution or release-speed claim.
 extern crate alloc;
 #[path="../../pcp-os/store/apps/parrots-all-the-way-down/guest/src/heap.rs"] mod heap;
 mod model_worker_io;
@@ -40,12 +40,12 @@ fn run(link:&mut Link)->Result<()>{
     let mut memory=Memory::new().map_err(|_|"conversation memory")?;
     let probe=memory.begin(1,"Hi").map_err(|_|"conversation preflight")?;
     let prompt=memory.prompt(&tokenizer,model.config().architecture,&probe,false,||true).map_err(|_|"chat profile refused")?;
-    let mut decoder=Decoder::new(&model,bytes,CONTEXT,768<<20,||link.keep(None,&mut ticks)).map_err(|_|"model working memory refused")?;
+    let mut decoder=Decoder::for_inference(&model,bytes,CONTEXT,768<<20,||link.keep(None,&mut ticks)).map_err(|_|"model working memory refused")?;
     decoder.step(prompt[0],||link.keep(None,&mut ticks)).map_err(|_|"model preflight failed")?;decoder.reset();
     drop(prompt);drop(probe);
     link.send(Kind::Ready,None,b"")?;
     log(b"Taylor model worker: verified, tokenized and preflighted; Q4_K/Q6_K projections: ");
-    log(decoder.projection().name().as_bytes());
+    log(decoder.projection_name().as_bytes());
     log(b"\n");
     loop{
         link.state.remembered=memory.conversation();

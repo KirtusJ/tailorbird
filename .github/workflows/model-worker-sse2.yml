@@ -64,7 +64,7 @@ jobs:
           objdump -d qualification/model-worker > "$RUNNER_TEMP/worker.s"
           grep -m1 -E '[[:space:]]mulsd[[:space:]]' "$RUNNER_TEMP/worker.s" | tee qualification/codegen.txt
           grep -m1 -E '[[:space:]]addsd[[:space:]]' "$RUNNER_TEMP/worker.s" | tee -a qualification/codegen.txt
-          for op in vpmovzxbd vmulps vmulpd; do
+          for op in vpmovzxbd vmulps vmulpd vpmaddubsw vpmaddwd; do
             grep -m1 -E "[[:space:]]${op}[[:space:]].*%ymm" "$RUNNER_TEMP/worker.s" | tee -a qualification/codegen.txt
             grep -qE "[[:space:]]${op}[[:space:]].*%ymm" "$RUNNER_TEMP/worker.s"
           done
@@ -81,17 +81,24 @@ jobs:
           cp pcp-os/PCP_OS_Rust/crates/pcpos-kernel/target/pcpos-kernel.elf32 "$RUNNER_TEMP/kernel.elf32"
           cd qualification
           sha256sum "$RUNNER_TEMP/kernel.elf32" > kernel.sha256
-          for trial in 1 2 3; do
+          for trial in 1 2 3 4 5; do
             case "$trial" in
               1) cpu=qemu64 ;;
               2) cpu=max,-avx2 ;;
               3) cpu=max ;;
+              4) cpu=max,-fma ;;
+              5) cpu=max,-f16c ;;
             esac
             order=(x86_64-unknown-none x86_64-pcpos-worker)
             if [[ "$trial" == 2 ]]; then order=(x86_64-pcpos-worker x86_64-unknown-none); fi
             for name in "${order[@]}"; do
               backend=scalar
-              if [[ "$cpu" == max && "$name" == x86_64-pcpos-worker ]]; then backend=AVX2; fi
+              packed=scalar
+              if [[ "$name" == x86_64-pcpos-worker && "$trial" -ge 3 ]]; then
+                backend=AVX2
+                packed=AVX2
+                if [[ "$cpu" == max ]]; then packed="AVX2 Q8_K"; fi
+              fi
               cp "$name" qwen-probe
               status=0
               timeout 180 qemu-system-x86_64 -machine pc -accel tcg -cpu "$cpu" -m 256M \
@@ -101,6 +108,10 @@ jobs:
               cat "$name-$trial.log"
               test "$status" = 33
               grep -Fq "Qwen Q4_K/Q6_K projections passed with $backend" "$name-$trial.log"
+              test "$(tr -d '\r' < "$name-$trial.log" | grep -Fxc "Qwen inference backend: $packed")" = 2
+              if [[ "$packed" == "AVX2 Q8_K" ]]; then
+                grep -Fq 'Qwen upstream Q8_K dots, four prompt positions, Stop and retry passed' "$name-$trial.log"
+              fi
               grep -Fq 'Qwen decoder passed 128 reference logits' "$name-$trial.log"
               test "$(grep -Fc 'Qwen worker prefill progress passed opt-in, Stop and retry' "$name-$trial.log")" = 2
               grep -Fq 'ALL SELF-TESTS PASS' "$name-$trial.log"
