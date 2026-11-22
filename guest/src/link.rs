@@ -59,6 +59,7 @@ impl Link {
                     None => break,
                     Some(Request::Say(message)) => wire::say(&message),
                     Some(Request::Stop { conversation, reply }) => wire::stop(conversation, reply),
+                    Some(Request::Forget { conversation }) => wire::forget(conversation),
                 };
                 match packed {
                     Some(packed) => self.sending = Some((packed, 0)),

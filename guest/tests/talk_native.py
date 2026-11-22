@@ -21,6 +21,8 @@ Predicates, fixed before the first run.
     message starts no reply, and the worker is never started.
  T10 while the worker says it is checking a model (2 of 5 MiB, made-up numbers), the screen says
     "Getting ready" and "Checked 2 of 5 MiB", and is not the screen of a model that is ready.
+ T11 Alt+C begins a new conversation: the worker is told to forget the old one, the screen shows
+    none of it, and the next message is answered as before.
  T9 what is on the screen. The console lines above say how a reply ended and how many bytes it
     kept, not what was drawn (Director 2: `hello` and `hxllo` are the same length). So each capture
     of Tailorbird's screen (answered, stopped, service-stopped, and no-model in the control) is
@@ -191,6 +193,14 @@ def run(kernel, guest, worker, output, with_worker, tool):
         # The words of the note are still in the field: take them out before the next message.
         for _ in "garden":
             vm.key("backspace")
+        # T11: Alt+C begins a new conversation. The screen shows none of the old one, and the worker is told.
+        vm.key("alt", "c")
+        if wait_for("test worker: told to forget a conversation"):
+            time.sleep(0.5)
+            vm.screenshot("new-conversation")
+            screens.same("new-conversation", first + ["type garden", "hide", "clear", "new"], {
+                "the old conversation still shown": first + ["type garden", "clear"],
+                "the first screen": ["notes", "folder taylor", "ready"]})
         # T4
         type_and_send("tell me more about that please")
         wait_for("tailorbird: reply 2 is being answered")
@@ -209,7 +219,7 @@ def run(kernel, guest, worker, output, with_worker, tool):
         second = OPENING + "tell me more about that please"
         # The note that was refused left its words in the field and the Work panel on its result;
         # the next message brings the conversation back.
-        until_stop = first + ["type garden", "hide", "clear", "type tell me more about that please", "enter", "took"]
+        until_stop = first + ["type garden", "hide", "clear", "new", "type tell me more about that please", "enter", "took"]
         halted = until_stop + ["chunk " + second[:kept], "stop"]
         if kept:
             screens.same("stopped", halted, {

@@ -93,6 +93,11 @@ impl OrderedKeyboard {
                 self.note_chord = !already_down && !self.held[42] && !self.held[54];
                 return KeyOutcome::Unchanged;
             }
+            if code == 46 {
+                // Alt+C: a new conversation. Edge-triggered; Shift makes it a different chord.
+                if already_down || self.held[42] || self.held[54] { return KeyOutcome::Unchanged; }
+                return if ui.new_conversation() { KeyOutcome::Redraw } else { KeyOutcome::Unchanged };
+            }
             if code == 25 {
                 // Edge-triggered like every other command; Shift makes it a different chord.
                 if already_down || self.held[42] || self.held[54] { return KeyOutcome::Unchanged; }

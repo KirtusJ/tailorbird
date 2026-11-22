@@ -96,8 +96,13 @@ pub extern "C" fn worker_main() -> ! {
     let mut reader = Reader::new();
     loop {
         let Some(got) = next(fd, &mut reader, true) else { continue };
+        if got.kind == Kind::Forget {
+            // It keeps nothing of any conversation, so there is nothing to drop; it says it was told.
+            log(b"test worker: told to forget a conversation\n");
+            continue;
+        }
         if got.kind != Kind::Say {
-            // A Stop for a reply already finished, or a conversation to forget: nothing to do.
+            // A Stop for a reply already finished: nothing to do.
             continue;
         }
         let said = &got.body[..got.length];

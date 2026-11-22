@@ -231,9 +231,15 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
             label(f, 420, 316, "Tell me in your own words what to", 2, SOFT);
             label(f, 420, 340, "build or fix. If I can, I will.", 2, SOFT);
         } else if ui.notes {
-            // No model, but PCP OS lets Taylor ask to make files: say the one thing that works today.
-            label(f, 420, 316, "Today I can save what you type as", 2, SOFT);
-            label(f, 420, 340, "a note. Type it, then press Alt+N.", 2, SOFT);
+            if ui.talk.service == crate::talk::Service::Ready {
+                // A model on this computer is ready: talking works, and so do notes.
+                label(f, 420, 316, "Type and press Enter to talk to", 2, SOFT);
+                label(f, 420, 340, "me. Alt+N saves it as a note.", 2, SOFT);
+            } else {
+                // No model, but PCP OS lets Taylor ask to make files: say the one thing that works today.
+                label(f, 420, 316, "Today I can save what you type as", 2, SOFT);
+                label(f, 420, 340, "a note. Type it, then press Alt+N.", 2, SOFT);
+            }
             // Where a note will go, whole, before anything is asked.
             if let Some(active) = ui.active {
                 label(f, 420, 370, "New notes go into the project", 1, SOFT);
@@ -388,6 +394,7 @@ fn transcript(f: &mut Frame<'_>, talk: &crate::talk::Talk) {
         y += 12;
     }
     let x = key(f, 339, 420, "Enter", "sends");
+    let x = key(f, x, 420, "Alt+C", "new conversation");
     let x = key(f, x, 420, "Alt+P", "projects");
     key(f, x, 420, "Esc", "returns to Programs");
 }

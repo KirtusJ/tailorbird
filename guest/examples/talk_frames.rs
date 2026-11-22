@@ -4,7 +4,7 @@
 //!
 //!   ready | loading [<checked> <of>] | gone | not-started      what the model service is
 //!   type <words>                                  into the field
-//!   enter | stop | took                           the keys, and "the request was carried"
+//!   enter | stop | new | took                     the keys (new: Alt+C), and "the request was carried"
 //!   chunk <words> | done | failed                 from the service, for the reply being waited for
 //!   notes                                          PCP OS lets this launch make notes
 //!   folder <name>                                  the folder PCP OS said this launch builds into
@@ -58,6 +58,13 @@ fn main() {
                 let _ = ui.intent(Action::Stop);
             }
             "took" => ui.service_took(),
+            "new" => {
+                let _ = ui.new_conversation();
+                // Whatever it queued for the service is taken as carried.
+                while ui.for_service().is_some() {
+                    ui.service_took();
+                }
+            }
             "chunk" => {
                 let (conversation, reply) = waited.expect("no reply is waited for");
                 ui.talk.receive(Incoming::Chunk { conversation, reply, text: rest });

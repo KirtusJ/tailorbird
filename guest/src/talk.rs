@@ -86,11 +86,15 @@ pub enum Request {
     Say(Outgoing),
     /// The person stopped this reply.
     Stop { conversation: u64, reply: u64 },
+    /// The person began a new conversation: the service is to keep nothing of this one.
+    Forget { conversation: u64 },
 }
 
-/// Requests waiting to be carried. Four is more than one press can make; a fifth is refused, and
-/// the caller says so instead of losing it.
-pub const WAITING: usize = 4;
+/// Requests waiting to be carried. A message is taken only while there is room for it and for the
+/// Stop and the Forget that may follow it, so neither of those is ever lost for want of room.
+pub const WAITING: usize = 9;
+/// The room a message needs before it is taken: itself, its Stop, and its conversation's Forget.
+pub const ROOM_FOR_A_MESSAGE: usize = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Taken {
@@ -250,12 +254,15 @@ impl Talk {
         self.checked = checked;
     }
 
-    /// Start over: nothing of this conversation is kept or can arrive in the next.
-    pub fn new_chat(&mut self) {
+    /// Start over: nothing of this conversation is kept or can arrive in the next. Returns the
+    /// conversation that ended, to tell the service.
+    pub fn new_chat(&mut self) -> u64 {
+        let ended = self.conversation;
         self.conversation += 1;
         self.count = 0;
         self.dropped = 0;
         self.pending = None;
+        ended
     }
 }
 
