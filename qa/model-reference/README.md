@@ -50,6 +50,14 @@ the harness without repairing or normalizing generated text. The upstream behavi
 is visible in [the pinned argument parser](https://github.com/ggml-org/llama.cpp/blob/a956a852c/common/arg.cpp)
 and [tokenize tool](https://github.com/ggml-org/llama.cpp/blob/a956a852c/tools/tokenize/tokenize.cpp).
 
+The exact-input harness used for those frozen trials is retained in
+`historical/run_reference_exact.py`. The current runner and replay share
+`scoring.py`: both reject duplicate JSON keys and invalid UTF-8. The runner records
+malformed stdout bytes without repair, writes the failed trial's result and
+continues the next case. `test_runner_output.py` exercises that sequence on Windows
+with controlled process output and no model. The frozen outcomes are unchanged;
+no inference was rerun for this recording correction.
+
 | Corrected trial set | Valid JSON | Exact requested result |
 |---|---:|---:|
 | Initial prompt, unconstrained | 4 / 5 | 0 / 5 |

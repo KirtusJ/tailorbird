@@ -10,40 +10,12 @@ import json
 from pathlib import Path
 import re
 import sys
+from scoring import score
 
 
 def require(condition, message):
     if not condition:
         raise ValueError(message)
-
-
-def unique_object(pairs):
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError('duplicate JSON key')
-        result[key] = value
-    return result
-
-
-def score(raw, expected):
-    """Only the reference tool's final transport marker is removed.
-
-    No Markdown repair, newline insertion, normalization or trimming of the
-    text field. This is a QA scorer, not the kernel's proposal validator.
-    """
-    try:
-        candidate = raw.decode('utf-8').strip().removesuffix('[end of text]').strip()
-        value = json.loads(candidate, object_pairs_hook=unique_object)
-        valid = (isinstance(value,dict) and set(value)=={'kind','name','text'}
-                 and all(isinstance(v,str) for v in value.values())
-                 and value['kind'] in ('create_text','unsupported')
-                 and len(value['text'].encode('utf-8'))<=4096 and '\x00' not in value['text'])
-        exact = (valid and value['kind']==expected['kind'] and value['name']==expected['name']
-                 and (expected['text'] is None or value['text']==expected['text']))
-        return bool(valid),bool(exact)
-    except (ValueError,TypeError,UnicodeError):
-        return False,False
 
 
 def negative_checks():

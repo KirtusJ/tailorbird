@@ -21,3 +21,6 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Verify evidence digests and replay passing and failing outcomes
         run: python3 qa/model-reference/replay.py
+      - name: Preserve malformed trial output and continue remaining cases
+        if: runner.os == 'Windows'
+        run: python3 qa/model-reference/test_runner_output.py

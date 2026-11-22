@@ -9,6 +9,7 @@ import re
 import subprocess
 import threading
 import time
+from scoring import evaluate
 
 ROOT = MODEL = RUNNER = None
 MODEL_SHA = '1d9614638d18024d0fbb36575a15f1302a3adf044df10345688ec4f6e1c4ff32'
@@ -74,27 +75,18 @@ def run(case, constrained):
             if handle: kernel.CloseHandle(handle)
             thread.join(timeout=10); p.stdout.close()
     (folder/'stdout.bin').write_bytes(output)
-    raw = output.decode('utf-8',errors='strict')
-    (folder/'stdout.txt').write_text(raw,encoding='utf-8')
-    candidate = raw.strip().removesuffix('[end of text]').strip()
-    valid = False; exact = False; parsed = None
-    try:
-        parsed = json.loads(candidate)
-        valid = (isinstance(parsed,dict) and set(parsed)=={'kind','name','text'} and
-                 all(isinstance(v,str) for v in parsed.values()) and
-                 parsed['kind'] in ('create_text','unsupported') and
-                 len(parsed['text'].encode('utf-8')) <= 4096 and '\x00' not in parsed['text'])
-        exact = valid and parsed['kind']==kind and parsed['name']==filename and (
-            expected is None or parsed['text']==expected)
-    except (ValueError,TypeError,UnicodeError): pass
+    # Keep malformed output byte-for-byte. The scorer records failure instead of
+    # aborting this trial before its result, or stopping the remaining cases.
+    (folder/'stdout.txt').write_bytes(output)
+    scored = evaluate(output, {'kind':kind,'name':filename,'text':expected})
     log = (folder/'stderr.txt').read_text(encoding='utf-8',errors='replace')
     report = {'case':name,'schema_constrained':constrained,'returncode':p.returncode,
               'timed_out':timed_out,'elapsed_seconds':round(time.monotonic()-started,3),
               'first_nonwhite_stdout_seconds':round(first[0],3) if first else None,
               'sampled_peak_working_set_bytes':peak if samples else None,
               'sampled_peak_private_commit_bytes':private if samples else None,
-              'memory_samples':samples,'json_shape_valid':valid,'exact_requested_result':exact,
-              'parsed':parsed,'timing_lines':[s for s in log.splitlines() if 'time =' in s],
+              'memory_samples':samples,**scored,
+              'timing_lines':[s for s in log.splitlines() if 'time =' in s],
               'memory_lines':[s for s in log.splitlines() if 'buffer size' in s or 'KV self size' in s]}
     (folder/'result.json').write_text(json.dumps(report,indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
     print(json.dumps({k:v for k,v in report.items() if k not in ('parsed','timing_lines','memory_lines')}),flush=True)
