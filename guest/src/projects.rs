@@ -5,7 +5,8 @@ use crate::build_folder_snapshot::{EntryKind, Snapshot};
 use crate::project_location::{BuildFolder, FileDestination, ProjectLocation};
 use crate::Text;
 
-pub const ROWS: usize = 7;
+/// Rows of a list the screen has room for beside the folder's whole name and what is not shown.
+pub const ROWS: usize = 6;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Listing {
@@ -307,6 +308,7 @@ mod tests {
 
     #[test]
     fn more_projects_than_rows_are_counted_not_dropped() {
+        assert!(ROWS < 10);
         let names: Vec<std::string::String> = (0..10).map(|i| std::format!("taylor/p{}/f.txt", i)).collect();
         let listed: Vec<(&str, u32)> = names.iter().map(|n| (n.as_str(), 1)).collect();
         let p = Projects::read(&snapshot(1, 4, &listed), None);

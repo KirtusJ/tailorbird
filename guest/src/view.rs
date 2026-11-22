@@ -258,6 +258,13 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
     footer(f, ui);
 }
 
+/// A name whole, on as many rows of `across` characters as it needs (12 apart).
+fn wrapped(f: &mut Frame<'_>, x: i32, y: i32, value: &str, across: usize) {
+    for (row, part) in value.as_bytes().chunks(across).enumerate() {
+        label(f, x, y + row as i32 * 12, core::str::from_utf8(part).unwrap_or("?"), 1, TEXT);
+    }
+}
+
 /// The project list, in the Work panel: where the projects are, each with how many files, and in words
 /// what is not known. "No projects yet" is said only of a whole list that was read and held nothing.
 fn projects(f: &mut Frame<'_>, list: &crate::projects::Projects, place: usize) {
@@ -275,17 +282,17 @@ fn projects(f: &mut Frame<'_>, list: &crate::projects::Projects, place: usize) {
             label(f, 339, 250, "nothing is shown. Alt+P twice retries.", 2, AMBER);
         }
         Listing::Listed => {
-            label(f, 339, 218, "in the folder", 1, SOFT);
-            label(f, 339 + 14 * 6, 218, list.folder.as_str(), 1, TEXT);
+            label(f, 339, 214, "in the folder", 1, SOFT);
+            wrapped(f, 339 + 14 * 6, 214, list.folder.as_str(), 80);
             if list.known_empty() {
-                label(f, 339, 250, "No projects yet.", 2, SOFT);
-                label(f, 339, 280, "Type something and press Alt+N to make a note.", 1, SOFT);
+                label(f, 339, 256, "No projects yet.", 2, SOFT);
+                label(f, 339, 286, "Type something and press Alt+N to make a note.", 1, SOFT);
             }
             for (row, entry) in list.rows[..list.shown].iter().enumerate() {
-                let y = 240 + row as i32 * 22;
-                f.well(339, y - 3, 570, 20, GROUND);
+                let y = 244 + row as i32 * 20;
+                f.well(339, y - 3, 570, 18, GROUND);
                 if row == place {
-                    f.rect(339, y - 3, 4, 20, TEAL);
+                    f.rect(339, y - 3, 4, 18, TEAL);
                 }
                 let name = entry.project.as_str();
                 // A name too long for the row is shown cut, and marked as cut.
@@ -297,19 +304,22 @@ fn projects(f: &mut Frame<'_>, list: &crate::projects::Projects, place: usize) {
                 label(f, 800, y, decimal_u64(entry.files as u64, &mut digits), 1, TEXT);
                 label(f, 830, y, if entry.files == 1 { "file" } else { "files" }, 1, SOFT);
             }
-            let mut y = 240 + list.shown as i32 * 22 + 4;
+            // Fixed places below the rows, clear of the keys: the chosen project's whole location (a cut
+            // row cannot tell two long names apart), then what is not shown, then whether the list is whole.
+            if let Some(location) = list.rows[..list.shown].get(place).and_then(|r| r.location) {
+                label(f, 339, 366, "Chosen:", 1, SOFT);
+                wrapped(f, 339 + 8 * 6, 366, location.as_str(), 86);
+            }
             if list.projects > list.shown {
-                label(f, 339, y, "more projects not shown:", 1, AMBER);
-                label(f, 339 + 25 * 6, y, decimal_u64((list.projects - list.shown) as u64, &mut digits), 1, AMBER);
-                y += 14;
+                label(f, 339, 392, "more projects not shown:", 1, AMBER);
+                label(f, 339 + 25 * 6, 392, decimal_u64((list.projects - list.shown) as u64, &mut digits), 1, AMBER);
             }
             if list.other > 0 {
-                label(f, 339, y, "other files in the folder:", 1, SOFT);
-                label(f, 339 + 27 * 6, y, decimal_u64(list.other as u64, &mut digits), 1, SOFT);
-                y += 14;
+                label(f, 339 + 34 * 6, 392, "other files in the folder:", 1, SOFT);
+                label(f, 339 + 61 * 6, 392, decimal_u64(list.other as u64, &mut digits), 1, SOFT);
             }
             if !list.complete {
-                label(f, 339, y, "PCP OS listed only part of the folder. There is more.", 1, AMBER);
+                label(f, 339, 404, "PCP OS listed only part of the folder. There is more.", 1, AMBER);
             }
         }
     }
@@ -326,24 +336,18 @@ fn projects(f: &mut Frame<'_>, list: &crate::projects::Projects, place: usize) {
 fn files(f: &mut Frame<'_>, list: &crate::projects::Files, place: usize) {
     use crate::projects::Listing;
     let mut digits = [0u8; 20];
-    label(f, 339, 190, "Project", 2, SOFT);
+    label(f, 339, 190, "Project", 2, TEXT);
     match list.state {
         Listing::Listed => {
-            let name = list.project.as_str();
-            for (row, part) in name.as_bytes().chunks(46).take(1).enumerate() {
-                label(f, 429, 190 + row as i32 * 20, core::str::from_utf8(part).unwrap_or("?"), 2, TEXT);
-            }
-            if name.len() > 46 {
-                label(f, 339, 218, "(its name is longer than this line shows)", 1, AMBER);
-            }
+            wrapped(f, 339, 214, list.project.as_str(), 94);
             if list.count == 0 {
-                label(f, 339, 250, if list.complete { "This project has no files now." } else { "No files of it are in the part PCP OS listed." }, 1, SOFT);
+                label(f, 339, 256, if list.complete { "This project has no files now." } else { "No files of it are in the part PCP OS listed." }, 1, SOFT);
             }
             for (row, entry) in list.rows[..list.shown].iter().enumerate() {
-                let y = 240 + row as i32 * 22;
-                f.well(339, y - 3, 570, 20, GROUND);
+                let y = 244 + row as i32 * 20;
+                f.well(339, y - 3, 570, 18, GROUND);
                 if row == place {
-                    f.rect(339, y - 3, 4, 20, TEAL);
+                    f.rect(339, y - 3, 4, 18, TEAL);
                 }
                 let name = entry.name.as_str();
                 let (fits, cut) = if name.len() > 72 { (&name[..69], true) } else { (name, false) };
@@ -354,14 +358,16 @@ fn files(f: &mut Frame<'_>, list: &crate::projects::Files, place: usize) {
                 label(f, 800, y, decimal_u64(entry.size as u64, &mut digits), 1, TEXT);
                 label(f, 842, y, "characters", 1, SOFT);
             }
-            let mut y = 240 + list.shown as i32 * 22 + 4;
+            if let Some(destination) = list.rows[..list.shown].get(place).and_then(|r| r.destination) {
+                label(f, 339, 366, "Chosen:", 1, SOFT);
+                wrapped(f, 339 + 8 * 6, 366, destination.as_str(), 86);
+            }
             if list.count > list.shown {
-                label(f, 339, y, "more files not shown:", 1, AMBER);
-                label(f, 339 + 22 * 6, y, decimal_u64((list.count - list.shown) as u64, &mut digits), 1, AMBER);
-                y += 14;
+                label(f, 339, 392, "more files not shown:", 1, AMBER);
+                label(f, 339 + 22 * 6, 392, decimal_u64((list.count - list.shown) as u64, &mut digits), 1, AMBER);
             }
             if !list.complete {
-                label(f, 339, y, "PCP OS listed only part of the folder. There is more.", 1, AMBER);
+                label(f, 339, 404, "PCP OS listed only part of the folder. There is more.", 1, AMBER);
             }
         }
         _ => {
@@ -520,6 +526,46 @@ mod tests {
             let (x, y) = (i % 960, i / 960);
             assert!(a == b || (x >= 316 && x < 940 && y >= 280 && y < 446) || (x >= 764 && y >= 18 && y < 54), "differs at {x},{y}");
         }
+    }
+
+    /// The fullest list there can be (longest folder, long names, more projects than rows, other files,
+    /// an incomplete list) draws nothing outside the Work panel, and nothing on the row of keys but the keys.
+    #[test]
+    fn the_fullest_project_list_stays_in_its_panel() {
+        use crate::projects::Projects;
+        let folder = std::format!("{}/{}", "a".repeat(57), "b".repeat(58));
+        let mut bytes: Vec<u8> = Vec::new();
+        let names: Vec<std::string::String> = (0..9).map(|i| std::format!("{}/{}/f", folder, i)).chain([std::format!("{}/zz", folder)]).collect();
+        for word in [1u32, names.len() as u32, 0, folder.len() as u32] {
+            bytes.extend_from_slice(&word.to_le_bytes());
+        }
+        bytes.extend_from_slice(&7u64.to_le_bytes());
+        bytes.extend_from_slice(folder.as_bytes());
+        for name in &names {
+            bytes.extend_from_slice(&(name.len() as u16).to_le_bytes());
+            bytes.extend_from_slice(&[0, 0, 1, 0, 0, 0]);
+            bytes.extend_from_slice(name.as_bytes());
+        }
+        let list = Projects::read(&bytes, None);
+        assert_eq!((list.projects, list.other, list.complete, list.folder.as_str().len()), (9, 1, false, 116));
+        let mut full = Ui::new();
+        full.notes = true;
+        full.show_projects = true;
+        full.projects = list;
+        let mut empty = Ui::new();
+        empty.notes = true;
+        empty.show_projects = true;
+        empty.projects = Projects::unavailable();
+        let (a, b) = (shot(&full), shot(&empty));
+        let mut lowest = 0;
+        for (i, (p, q)) in a.iter().zip(b.iter()).enumerate() {
+            let (x, y) = (i % 960, i / 960);
+            if p != q {
+                assert!(x >= 333 && x < 925 && y >= 176 && y < 446, "outside the panel at {x},{y}");
+                if y < 416 { lowest = lowest.max(y); }
+            }
+        }
+        assert!(lowest >= 404 && lowest < 416, "the last line of words ends at {lowest}");
     }
 
     /// With TAILORBIRD_SHOT=<folder> set, write the first screen at the common sizes as P6 files.
