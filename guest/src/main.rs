@@ -188,6 +188,7 @@ pub extern "C" fn tailorbird_main() -> ! {
                         }
                     };
                     // What became of it is shown at once, not hidden behind a list read before it.
+                    ui.talk_shown = false;
                     ui.show_projects = false;
                     ui.browse_level = 0;
                     ui.notice = words;

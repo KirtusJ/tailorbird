@@ -152,6 +152,8 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
         // Consent details occupy a focused exact-text inspector instead of
         // fighting task-output rows for the same pixels. Stop and mode stay
         // visible in the separate x=20..300 sidebar.
+    } else if ui.lines().is_empty() && ui.talk_shown && !ui.show_projects {
+        transcript(f, &ui.talk);
     } else if ui.lines().is_empty() && ui.show_projects {
         match ui.browse_level {
             0 => projects(f, &ui.projects, ui.place, ui.active),
@@ -292,6 +294,65 @@ fn range(f: &mut Frame<'_>, top: usize, shown: usize, total: usize, what: &str) 
     }
     label(f, x, 392, what, 1, AMBER);
     label(f, x + what.len() as i32 * 6 + 6, 392, "(Page Up/Down)", 1, SOFT);
+}
+
+/// The conversation, in the Work panel: the latest turns that fit, each with who really said it. Taylor's
+/// name stands only on turns a model service sent; what this program says about the state of things is
+/// marked as PCP OS's. Nothing here is a task: no stages, no Stop.
+fn transcript(f: &mut Frame<'_>, talk: &crate::talk::Talk) {
+    use crate::talk::{Reply, Who};
+    const ACROSS: usize = 84;
+    const ROWS: i32 = 16;
+    let mut digits = [0u8; 20];
+    label(f, 339, 190, "Talking with Taylor", 2, TEXT);
+    // Rows each turn needs: its text wrapped, at least one, and a gap after it.
+    let rows = |t: &crate::talk::Turn| (t.text.as_str().len().div_ceil(ACROSS).max(1) + t.cut as usize) as i32 + 1;
+    let turns = talk.turns();
+    let mut first = turns.len();
+    let mut used = 0;
+    while first > 0 && used + rows(&turns[first - 1]) <= ROWS {
+        used += rows(&turns[first - 1]);
+        first -= 1;
+    }
+    let above = talk.dropped + first;
+    if above > 0 {
+        label(f, 600, 196, "earlier turns not shown:", 1, AMBER);
+        label(f, 600 + 25 * 6, 196, decimal_u64(above as u64, &mut digits), 1, AMBER);
+    }
+    let mut y = 218;
+    for turn in &turns[first..] {
+        let (name, colour) = match turn.who {
+            Who::Person => ("You", TEAL),
+            Who::Taylor => ("Taylor", GOOD),
+            Who::System => ("PCP OS", AMBER),
+        };
+        label(f, 339, y, name, 1, colour);
+        let text = turn.text.as_str().as_bytes();
+        for part in text.chunks(ACROSS) {
+            label(f, 393, y, core::str::from_utf8(part).unwrap_or("?"), 1, if turn.who == Who::System { SOFT } else { TEXT });
+            y += 12;
+        }
+        if text.is_empty() {
+            let waiting = match turn.state {
+                Reply::Streaming => "(answering...)",
+                Reply::Cancelled => "(stopped before anything was said)",
+                Reply::Failed => "(no answer: it failed)",
+                _ => "",
+            };
+            label(f, 393, y, waiting, 1, SOFT);
+            y += 12;
+        } else if turn.state == Reply::Cancelled || turn.state == Reply::Failed {
+            label(f, 393 + (text.len() % ACROSS) as i32 * 6 + 8, y - 12, if turn.state == Reply::Cancelled { "(stopped)" } else { "(failed)" }, 1, AMBER);
+        }
+        if turn.cut {
+            label(f, 393, y, "(the rest is not kept)", 1, AMBER);
+            y += 12;
+        }
+        y += 12;
+    }
+    let x = key(f, 339, 420, "Enter", "sends");
+    let x = key(f, x, 420, "Alt+P", "projects");
+    key(f, x, 420, "Esc", "returns to Programs");
 }
 
 /// A name whole, on as many rows of `across` characters as it needs (12 apart).
