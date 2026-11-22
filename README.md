@@ -26,12 +26,13 @@ Rust 1.97.0 with `rust-src` and the `x86_64-unknown-none` target, and `lld`.
     sh build.sh
 
 `build.sh` records this folder as `/tailorbird` and the compiler's sources as `/rustc/<commit>`, so the program is the same file wherever the
-repository and the compiler are installed. Measured on 21 November 2026, offline, Rust 1.97.0, pcp-os pin `745e883` (unchanged by the move to `070c9d5`):
+repository and the compiler are installed. The first two rows record the 21 November 2026 import measurements with Rust 1.97.0 and PCP OS pin `745e883`. The 22 November row was reproduced in two checkout paths with Rust 1.97.0 and PCP OS pin `070c9d5`, using `cargo test --locked --offline --release --lib` and `sh build.sh --offline`.
 
 | Source | Library tests | ELF bytes | SHA-256 |
 |---|---|---|---|
 | pull request 134 only (this repository's #1) | 99 pass | 149,304 | `f67d41ab467690545f1fc53760503c3ca399f68557760d433775e7da7b6e60b7` |
-| with the stack to 293 (this tree) | 111 pass | 149,384 | `c1e79cee1b5a645062d15dc2cd9de2cf2d4306d9de34edc395052a7c2b727b00` |
+| historical import through [PCP OS #293](https://github.com/KirtusJ/pcp-os/pull/293) | 111 pass | 149,384 | `c1e79cee1b5a645062d15dc2cd9de2cf2d4306d9de34edc395052a7c2b727b00` |
+| [22 November, `ab12d96a`](https://github.com/KirtusJ/tailorbird/tree/ab12d96a24c4d461971123dfb57b3f18f01ec103) | 149 pass | 147,880 | `afc5bc5ad9b94accaf915fe85366606668e1e2b03c8aeeee95f3b1c113d5e115` |
 
 Another compiler version or linker may give another file. The
 [`Tailorbird native guest` workflow](.github/workflows/tailorbird-guest.yml) runs on pull requests
