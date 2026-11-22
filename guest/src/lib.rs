@@ -50,6 +50,10 @@ pub mod projects;
 pub mod jobs;
 /// Talking with Taylor, and the records that cross to a local model service.
 pub mod talk;
+/// The records of `talk` as bytes on the channel to a local model service.
+pub mod wire;
+/// Carries the conversation over a channel to the model service; no device of its own.
+pub mod link;
 pub const LOG_LIMIT: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -278,6 +282,8 @@ pub struct Ui {
     pub talk: talk::Talk,
     /// The Work panel shows the conversation: set by sending a message, cleared by a note's result.
     pub talk_shown: bool,
+    /// What the conversation has for the model service and nobody has carried yet, oldest first.
+    pub to_service: [Option<talk::Request>; talk::WAITING],
     /// The Work panel shows the project list (Alt+P) instead of Taylor's greeting or the last result.
     pub show_projects: bool,
     pub projects: projects::Projects,
@@ -305,7 +311,7 @@ impl Ui {
             model: Model::Unknown, connected: false, service_epoch: 0,
             task: Task { id: 0, seq: 0, state: TaskState::Idle },
             stop_intent_task: None, permission: None, decision_pending: None, decision_choice: None,
-            effect_uncertain: false, notice: Text::new(), notes: false, jobs: jobs::Jobs::new(), active: None, talk: talk::Talk::new(), talk_shown: false, show_projects: false, projects: projects::Projects::new(), browse_level: 0, place: 0, top: 0, file_place: 0, file_top: 0,
+            effect_uncertain: false, notice: Text::new(), notes: false, jobs: jobs::Jobs::new(), active: None, talk: talk::Talk::new(), to_service: [None; talk::WAITING], talk_shown: false, show_projects: false, projects: projects::Projects::new(), browse_level: 0, place: 0, top: 0, file_place: 0, file_top: 0,
             files: projects::Files::new(), viewed: projects::Viewed::new(),
             lines: [Line::empty(); LOG_LIMIT], count: 0, feed_hidden_rows: 0,
         }
@@ -532,17 +538,47 @@ impl Ui {
                 if !self.input.is_empty() {
                     let repeated = self.talk.turns().iter().rev().find(|t| t.who == talk::Who::Person)
                         .is_some_and(|t| !t.sent && t.text.as_str() == self.input.as_str());
-                    if !repeated {
-                        let _ = self.talk.say(self.input.as_str(), true);
-                    }
                     self.talk_shown = true;
                     self.show_projects = false;
+                    if self.talk.service == talk::Service::Ready && !self.talk.answering()
+                        && self.to_service.iter().filter(|r| r.is_none()).count() < talk::ROOM_FOR_A_MESSAGE {
+                        // Nothing has carried the earlier requests away. This one is not added to them.
+                        self.notice("MODEL SERVICE NOT TAKING MESSAGES - NOT SENT");
+                        return None;
+                    }
+                    if !repeated {
+                        if let Some(message) = self.talk.say(self.input.as_str(), true) {
+                            self.ask_service(talk::Request::Say(message));
+                            // Sent: the field is free for the next message. What was sent is in the
+                            // conversation, as the person's turn.
+                            self.input = Text::new();
+                            self.notice("SENT TO TAYLOR'S MODEL ON THIS COMPUTER");
+                            return None;
+                        }
+                    }
                 }
-                self.notice("NO MODEL SERVICE - OS STILL USABLE");
+                self.notice(match self.talk.service {
+                    talk::Service::Absent => "NO MODEL SERVICE - OS STILL USABLE",
+                    talk::Service::Loading => "MODEL STILL LOADING - NOT SENT",
+                    talk::Service::Failed => "MODEL DID NOT START - NOT SENT",
+                    talk::Service::Stopped => "MODEL HAS STOPPED - NOT SENT",
+                    talk::Service::Ready if self.input.is_empty() => "NOTHING TYPED - NOTHING SENT",
+                    talk::Service::Ready => "TAYLOR IS STILL ANSWERING - NOT SENT",
+                });
                 None
             }
             Action::RetrySubmit => { self.notice("NO CONNECTED RETRYABLE SUBMISSION"); None }
             Action::ToggleMode => { self.notice("MODE CHANGE UNAVAILABLE"); None }
+            // No task is running, and an answer is: Stop stops the answer. What had arrived stays,
+            // marked as stopped, and the service is told. Nothing else on the computer is touched.
+            Action::Stop if self.talk.answering() => {
+                if let Some((conversation, reply)) = self.talk.cancel() {
+                    self.ask_service(talk::Request::Stop { conversation, reply });
+                }
+                self.talk_shown = true;
+                self.notice("ANSWER STOPPED - WHAT ARRIVED IS KEPT");
+                None
+            }
             Action::Stop => { self.notice("NO STOPPABLE TASK - USE OS STOP KEY"); None }
             Action::Approve | Action::Deny if self.decision_pending.is_some() => {
                 self.notice("DECISION PENDING - AWAIT SERVICE"); None
@@ -550,6 +586,46 @@ impl Ui {
             Action::Approve | Action::Deny => { self.notice("NO VALID PERMISSION REQUEST"); None }
         }
     }
+    /// The person asks for a new conversation. An answer under way is stopped first, and the service
+    /// is told to keep nothing of the conversation that ended. Nothing was said yet: nothing changes.
+    /// True if the screen may have changed.
+    pub fn new_conversation(&mut self) -> bool {
+        if self.talk.is_empty() {
+            return false;
+        }
+        if let Some((conversation, reply)) = self.talk.cancel() {
+            self.ask_service(talk::Request::Stop { conversation, reply });
+        }
+        let ended = self.talk.new_chat();
+        // Only a conversation the service has heard of is one it can forget.
+        if self.talk.service == talk::Service::Ready {
+            self.ask_service(talk::Request::Forget { conversation: ended });
+        }
+        self.talk_shown = true;
+        self.notice("NEW CONVERSATION - THE EARLIER ONE IS NOT KEPT");
+        true
+    }
+
+    /// Keep a request for whoever carries them to the model service. Room for a message, its Stop
+    /// and its conversation's Forget is checked before the message is taken, so the two that may
+    /// follow always find room.
+    fn ask_service(&mut self, request: talk::Request) {
+        if let Some(slot) = self.to_service.iter_mut().find(|r| r.is_none()) {
+            *slot = Some(request);
+        }
+    }
+
+    /// The oldest request not yet carried, if any. It stays until `service_took` says it went.
+    pub fn for_service(&self) -> Option<talk::Request> {
+        self.to_service[0]
+    }
+
+    /// The oldest request was written to the channel whole.
+    pub fn service_took(&mut self) {
+        self.to_service.copy_within(1.., 0);
+        self.to_service[talk::WAITING - 1] = None;
+    }
+
     pub fn observe(&mut self, event: BackendEvent<'_>) -> bool {
         match event {
             BackendEvent::Service { connected, model, saved_mode } => {
@@ -910,6 +986,140 @@ mod tests {
         assert!(u.intent(Action::Stop).is_none());
         assert!(u.intent(Action::ToggleMode).is_none());
         assert_eq!(u.mode, Mode::Single);
+    }
+    fn typed(u: &mut Ui, words: &str) {
+        u.input = Text::new();
+        for b in words.bytes() { assert!(u.input.push_ascii(b)); }
+    }
+    #[test]
+    fn with_a_model_ready_a_message_is_queued_for_it_once_and_the_field_is_cleared() {
+        let mut u = Ui::new();
+        u.talk.service_is(talk::Service::Ready);
+        typed(&mut u, "hello");
+        assert!(u.intent(Action::Submit).is_none()); // no task, no file job, no question to PCP OS
+        let Some(talk::Request::Say(message)) = u.for_service() else { panic!("no message queued") };
+        assert_eq!((message.text.as_str(), message.conversation, message.reply, message.history), ("hello", 1, 1, true));
+        assert!(u.input.is_empty() && u.talk_shown && u.talk.answering());
+        assert_eq!(u.notice.as_str(), "SENT TO TAYLOR'S MODEL ON THIS COMPUTER");
+        // Enter with nothing typed while the answer is under way adds nothing and queues nothing.
+        let turns = u.talk.turns().len();
+        assert!(u.intent(Action::Submit).is_none());
+        assert_eq!(u.talk.turns().len(), turns);
+        u.service_took();
+        assert!(u.for_service().is_none());
+        // A second message while the first is being answered is kept, not sent, and stays typed.
+        typed(&mut u, "and another");
+        assert!(u.intent(Action::Submit).is_none());
+        assert!(u.for_service().is_none());
+        assert_eq!(u.input.as_str(), "and another");
+        assert_eq!(u.notice.as_str(), "TAYLOR IS STILL ANSWERING - NOT SENT");
+    }
+    #[test]
+    fn stop_stops_an_answer_under_way_and_tells_the_service_which() {
+        let mut u = Ui::new();
+        u.talk.service_is(talk::Service::Ready);
+        typed(&mut u, "tell me a long story");
+        let _ = u.intent(Action::Submit);
+        u.service_took();
+        assert_eq!(u.talk.receive(talk::Incoming::Chunk { conversation: 1, reply: 1, text: "Once" }), talk::Taken::Shown);
+        assert!(u.intent(Action::Stop).is_none());
+        assert_eq!(u.for_service(), Some(talk::Request::Stop { conversation: 1, reply: 1 }));
+        assert!(!u.talk.answering());
+        let last = u.talk.turns().last().unwrap();
+        assert_eq!((last.text.as_str(), last.state), ("Once", talk::Reply::Cancelled));
+        // What arrives for it afterwards is not shown.
+        assert_eq!(u.talk.receive(talk::Incoming::Chunk { conversation: 1, reply: 1, text: " upon" }), talk::Taken::Stray);
+        // With no answer under way Stop is what it was.
+        u.service_took();
+        assert!(u.intent(Action::Stop).is_none());
+        assert_eq!(u.notice.as_str(), "NO STOPPABLE TASK - USE OS STOP KEY");
+        assert!(u.for_service().is_none());
+    }
+    #[test]
+    fn a_model_that_is_loading_or_did_not_start_is_said_and_nothing_is_queued() {
+        for (service, words) in [(talk::Service::Loading, "MODEL STILL LOADING - NOT SENT"), (talk::Service::Failed, "MODEL DID NOT START - NOT SENT"),
+                                 (talk::Service::Absent, "NO MODEL SERVICE - OS STILL USABLE")] {
+            let mut u = Ui::new();
+            u.talk.service_is(service);
+            typed(&mut u, "hello");
+            assert!(u.intent(Action::Submit).is_none());
+            assert!(u.for_service().is_none());
+            assert_eq!(u.notice.as_str(), words);
+            assert_eq!(u.input.as_str(), "hello");
+        }
+    }
+    #[test]
+    fn requests_nobody_carries_are_never_dropped_and_a_message_with_no_room_for_what_follows_is_not_taken() {
+        let mut u = Ui::new();
+        u.talk.service_is(talk::Service::Ready);
+        // Each round: a message, its Stop, and a new conversation. Nothing carries them away.
+        for _ in 0..3 {
+            typed(&mut u, "one");
+            let _ = u.intent(Action::Submit);
+            let _ = u.intent(Action::Stop);
+            assert!(u.new_conversation());
+        }
+        assert!(u.to_service.iter().all(|r| r.is_some()));
+        typed(&mut u, "four");
+        assert!(u.intent(Action::Submit).is_none());
+        assert_eq!(u.notice.as_str(), "MODEL SERVICE NOT TAKING MESSAGES - NOT SENT");
+        assert_eq!((u.talk.turns().len(), u.input.as_str()), (0, "four"));
+        // They come out in the order they were made, each conversation's own.
+        for conversation in 1..=3u64 {
+            assert!(matches!(u.for_service(), Some(talk::Request::Say(m)) if m.conversation == conversation));
+            u.service_took();
+            assert_eq!(u.for_service(), Some(talk::Request::Stop { conversation, reply: conversation }));
+            u.service_took();
+            assert_eq!(u.for_service(), Some(talk::Request::Forget { conversation }));
+            u.service_took();
+        }
+        assert!(u.for_service().is_none());
+        // With two places free a message is still not taken: its Stop and Forget would have none.
+        for _ in 0..2 {
+            typed(&mut u, "one");
+            let _ = u.intent(Action::Submit);
+            let _ = u.intent(Action::Stop);
+            assert!(u.new_conversation());
+        }
+        typed(&mut u, "x");
+        let _ = u.intent(Action::Submit);
+        assert!(u.talk.answering());
+        assert_eq!(u.to_service.iter().filter(|r| r.is_none()).count(), 2);
+        // And those two are there for exactly that.
+        assert!(u.new_conversation());
+        assert!(u.to_service.iter().all(|r| r.is_some()));
+    }
+    #[test]
+    fn a_new_conversation_stops_the_answer_under_way_forgets_the_old_one_and_shows_nothing_of_it() {
+        let mut u = Ui::new();
+        // Nothing said yet: nothing to begin again, nothing asked of anyone.
+        assert!(!u.new_conversation());
+        u.talk.service_is(talk::Service::Ready);
+        typed(&mut u, "first");
+        let _ = u.intent(Action::Submit);
+        u.service_took();
+        assert_eq!(u.talk.receive(talk::Incoming::Chunk { conversation: 1, reply: 1, text: "An answer" }), talk::Taken::Shown);
+        assert!(u.new_conversation());
+        assert_eq!(u.for_service(), Some(talk::Request::Stop { conversation: 1, reply: 1 }));
+        u.service_took();
+        assert_eq!(u.for_service(), Some(talk::Request::Forget { conversation: 1 }));
+        u.service_took();
+        assert!(u.talk.turns().is_empty() && !u.talk.answering() && u.talk.conversation() == 2);
+        assert_eq!(u.notice.as_str(), "NEW CONVERSATION - THE EARLIER ONE IS NOT KEPT");
+        // What the service still sends for the old conversation is never shown in the new one.
+        assert_eq!(u.talk.receive(talk::Incoming::Chunk { conversation: 1, reply: 1, text: " goes on" }), talk::Taken::Stray);
+        assert_eq!(u.talk.receive(talk::Incoming::Done { conversation: 1, reply: 1 }), talk::Taken::Stray);
+        assert!(u.talk.turns().is_empty());
+        // The next message is of the new conversation.
+        typed(&mut u, "second");
+        let _ = u.intent(Action::Submit);
+        assert!(matches!(u.for_service(), Some(talk::Request::Say(m)) if m.conversation == 2));
+        // With no model there is nobody to tell: the screen starts over and nothing is queued.
+        let mut u = Ui::new();
+        typed(&mut u, "hello");
+        let _ = u.intent(Action::Submit);
+        assert!(u.new_conversation());
+        assert!(u.for_service().is_none() && u.talk.turns().is_empty());
     }
     #[test]
     fn text_is_bounded_and_model_output_is_not_executable() {

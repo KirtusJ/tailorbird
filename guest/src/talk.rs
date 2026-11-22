@@ -14,6 +14,8 @@ pub enum Service {
     Ready,
     /// A model was expected and could not be started. Distinct from Absent: something is wrong.
     Failed,
+    /// A model was running and is gone. It is started again when Tailorbird is next opened.
+    Stopped,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,6 +42,7 @@ pub const TURNS: usize = 24;
 pub const NO_MODEL: &str = "No model is running on this computer, so Taylor cannot answer yet.";
 pub const STILL_LOADING: &str = "Taylor's model is still loading. Your message was not sent; send it again when ready.";
 pub const NOT_STARTED: &str = "Taylor's model could not be started, so Taylor cannot answer.";
+pub const HAS_STOPPED: &str = "Taylor's model has stopped, so Taylor cannot answer. Leaving and opening Tailorbird starts it again.";
 pub const TOO_LONG: &str = "That message is longer than can be sent at once, so none of it was sent.";
 pub const BUSY: &str = "Taylor is still answering. Stop that answer first, or wait.";
 
@@ -76,6 +79,23 @@ pub enum Incoming<'a> {
     Failed { conversation: u64, reply: u64 },
 }
 
+/// Something this program has to tell the model service. Made by the conversation, carried by
+/// whoever holds the channel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Request {
+    Say(Outgoing),
+    /// The person stopped this reply.
+    Stop { conversation: u64, reply: u64 },
+    /// The person began a new conversation: the service is to keep nothing of this one.
+    Forget { conversation: u64 },
+}
+
+/// Requests waiting to be carried. A message is taken only while there is room for it and for the
+/// Stop and the Forget that may follow it, so neither of those is ever lost for want of room.
+pub const WAITING: usize = 9;
+/// The room a message needs before it is taken: itself, its Stop, and its conversation's Forget.
+pub const ROOM_FOR_A_MESSAGE: usize = 3;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Taken {
     Shown,
@@ -95,13 +115,16 @@ pub struct Talk {
     /// The reply being waited for or received.
     pending: Option<u64>,
     pub strays: u64,
+    /// While the model is loading: how many of its bytes the service says it has checked, and of
+    /// how many. Only what the service said; None when it has said nothing or is not loading.
+    pub checked: Option<(u64, u64)>,
 }
 
 const EMPTY: Turn = Turn { who: Who::System, text: Text::new(), cut: false, reply: 0, state: Reply::None, sent: false };
 
 impl Talk {
     pub const fn new() -> Self {
-        Self { service: Service::Absent, conversation: 1, next_reply: 1, turns: [EMPTY; TURNS], count: 0, dropped: 0, pending: None, strays: 0 }
+        Self { service: Service::Absent, conversation: 1, next_reply: 1, turns: [EMPTY; TURNS], count: 0, dropped: 0, pending: None, strays: 0, checked: None }
     }
 
     pub fn turns(&self) -> &[Turn] { &self.turns[..self.count] }
@@ -147,6 +170,7 @@ impl Talk {
             (Service::Absent, _) => Some(NO_MODEL),
             (Service::Loading, _) => Some(STILL_LOADING),
             (Service::Failed, _) => Some(NOT_STARTED),
+            (Service::Stopped, _) => Some(HAS_STOPPED),
             (Service::Ready, Some(_)) => Some(BUSY),
             (Service::Ready, None) => None,
         };
@@ -214,6 +238,7 @@ impl Talk {
     /// The service stopped being ready while an answer was under way: that answer failed.
     pub fn service_is(&mut self, service: Service) {
         self.service = service;
+        self.checked = None;
         if service != Service::Ready {
             if let Some(reply) = self.pending.take() {
                 if let Some(turn) = self.turns[..self.count].iter_mut().rev().find(|t| t.reply == reply && t.state == Reply::Streaming) {
@@ -223,12 +248,21 @@ impl Talk {
         }
     }
 
-    /// Start over: nothing of this conversation is kept or can arrive in the next.
-    pub fn new_chat(&mut self) {
+    /// The service says it is loading, and perhaps how far its check of the model has got.
+    pub fn loading(&mut self, checked: Option<(u64, u64)>) {
+        self.service_is(Service::Loading);
+        self.checked = checked;
+    }
+
+    /// Start over: nothing of this conversation is kept or can arrive in the next. Returns the
+    /// conversation that ended, to tell the service.
+    pub fn new_chat(&mut self) -> u64 {
+        let ended = self.conversation;
         self.conversation += 1;
         self.count = 0;
         self.dropped = 0;
         self.pending = None;
+        ended
     }
 }
 
@@ -240,7 +274,7 @@ mod tests {
     fn without_a_model_the_message_is_kept_and_the_reason_is_a_system_turn() {
         let mut talk = Talk::new();
         assert!(talk.is_empty());
-        for (service, why) in [(Service::Absent, NO_MODEL), (Service::Loading, STILL_LOADING), (Service::Failed, NOT_STARTED)] {
+        for (service, why) in [(Service::Absent, NO_MODEL), (Service::Loading, STILL_LOADING), (Service::Failed, NOT_STARTED), (Service::Stopped, HAS_STOPPED)] {
             talk.service_is(service);
             assert_eq!(talk.say("hello", true), None);
             let turns = talk.turns();
@@ -251,7 +285,7 @@ mod tests {
         // Nothing here is Taylor's, and nothing is being waited for.
         assert!(talk.turns().iter().all(|t| t.who != Who::Taylor) && !talk.answering());
         assert_eq!(talk.say("", true), None);
-        assert_eq!(talk.turns().len(), 6);
+        assert_eq!(talk.turns().len(), 8);
     }
 
     #[test]
