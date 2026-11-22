@@ -259,6 +259,10 @@ pub struct Ui {
     /// service refresh or a new task. PT owns trusted journal reconciliation.
     pub effect_uncertain: bool,
     pub notice: Text<84>,
+    /// PCP OS lets this launch propose files to it. Read once at start; decides what Taylor says it can do.
+    pub notes: bool,
+    /// The last note asked for, with what the kernel's receipt established about it. Kept, not summarised.
+    pub last_note: Option<file_job::FileJob>,
     lines: [Line; LOG_LIMIT],
     count: usize,
     /// Rows actually evicted from this launch's local eight-line UI window.
@@ -274,7 +278,7 @@ impl Ui {
             model: Model::Unknown, connected: false, service_epoch: 0,
             task: Task { id: 0, seq: 0, state: TaskState::Idle },
             stop_intent_task: None, permission: None, decision_pending: None, decision_choice: None,
-            effect_uncertain: false, notice: Text::new(),
+            effect_uncertain: false, notice: Text::new(), notes: false, last_note: None,
             lines: [Line::empty(); LOG_LIMIT], count: 0, feed_hidden_rows: 0,
         }
     }

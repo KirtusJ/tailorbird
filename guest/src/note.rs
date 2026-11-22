@@ -98,6 +98,19 @@ pub fn settle(job: &mut FileJob, receipt: &[u8]) -> Text<84> {
     words
 }
 
+/// The same answer for the screen, read from the kept job each time it is drawn: a headline and whether
+/// it is good news. Where the file is and how long it lasts are drawn separately, from the job.
+pub fn headline(job: &FileJob) -> (&'static str, bool) {
+    match (job.stage(), job.receipt().map(|r| r.outcome)) {
+        (Stage::Created | Stage::Verified, _) => ("I made your note.", true),
+        (_, Some(Outcome::Declined)) => ("Not made: you said no.", false),
+        (_, Some(Outcome::NameTaken)) => ("Not made: that name is taken.", false),
+        (_, Some(Outcome::NoSpace)) => ("Not made: no room is left.", false),
+        (_, Some(Outcome::CannotDisplay)) => ("Not made: display too small.", false),
+        _ => ("I cannot tell what happened.", false),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,6 +151,8 @@ mod tests {
         assert_eq!(made.as_str(), "Made taylor/my-first-project/note-1.txt. Kept until power-off.");
         assert!(made.as_str().len() <= 70);
         assert_eq!(p.job.open_target().map(|d| d.as_str()), Some("taylor/my-first-project/note-1.txt"));
+        assert_eq!(headline(&p.job), ("I made your note.", true));
+        assert_eq!(headline(&prepare(3, 1, "hello").unwrap().job), ("I cannot tell what happened.", false));
 
         for (outcome, words) in [(2, "Not made: you said no."), (3, "Not made: that name is already taken."),
                                  (5, "Not made: there is no room left."), (6, "Not made: this display is too small to show it to you.")] {
@@ -145,6 +160,7 @@ mod tests {
             p.job.submitted().unwrap();
             let receipt = kernel_receipt(&p, outcome, 9);
             assert_eq!(settle(&mut p.job, &receipt).as_str(), words);
+            assert!(!headline(&p.job).1 && headline(&p.job).0.starts_with("Not made: "));
             assert!(p.job.open_target().is_none());
         }
     }

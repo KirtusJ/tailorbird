@@ -100,7 +100,7 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
     label(f, 22, 52, "PCP OS > Programs > Tailorbird (Esc returns to Programs)", 1, SOFT);
     label(f, 202, 27, "builds and fixes on this computer", 2, SOFT);
     // What is behind it, said once, where the eye lands last: a lamp and two words.
-    let (lamp, link) = if ui.connected { (GOOD, "Ready") } else { (BAD, "Not ready") };
+    let (lamp, link) = if ui.connected { (GOOD, "Ready") } else if ui.notes { (AMBER, "Notes only") } else { (BAD, "Not ready") };
     f.well(764, 18, 176, 36, GROUND);
     f.rect(778, 31, 10, 10, lamp);
     label(f, 796, 26, link, 2, lamp);
@@ -163,10 +163,32 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
         }
         // Taylor says who it is once, says what is so in words anyone can read, and stops.
         taylor(f, 339, 286, 4);
+        if let Some(job) = &ui.last_note {
+            // What became of the last note, from the job the kernel's receipt was checked against: what
+            // happened, where the file is (whole name, on as many lines as it needs), how long it lasts.
+            let (words, good) = crate::note::headline(job);
+            label(f, 420, 286, words, 2, if good { GOOD } else { AMBER });
+            if good {
+                let name = job.destination().as_str().as_bytes();
+                for (row, part) in name.chunks(80).enumerate() {
+                    label(f, 420, 316 + row as i32 * 16, core::str::from_utf8(part).unwrap_or("?"), 1, TEXT);
+                }
+                label(f, 420, 352, "Kept until this computer is switched off.", 1, AMBER);
+            } else {
+                label(f, 420, 316, "Nothing was changed.", 2, SOFT);
+            }
+            label(f, 420, 384, "Type again and press Alt+N for another.", 1, SOFT);
+            key(f, 339, 420, "Esc", "returns to Programs");
+            return footer(f, ui);
+        }
         label(f, 420, 286, "Hi, I'm Taylor. Nothing is running.", 2, TEXT);
         if ui.connected {
             label(f, 420, 316, "Tell me in your own words what to", 2, SOFT);
             label(f, 420, 340, "build or fix. If I can, I will.", 2, SOFT);
+        } else if ui.notes {
+            // No model, but PCP OS lets Taylor ask to make files: say the one thing that works today.
+            label(f, 420, 316, "Today I can save what you type as", 2, SOFT);
+            label(f, 420, 340, "a note. Type it, then press Alt+N.", 2, SOFT);
         } else {
             label(f, 420, 316, "I am not switched on yet, so I", 2, AMBER);
             label(f, 420, 340, "cannot build anything.", 2, AMBER);
@@ -217,6 +239,10 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
         }
     }
 
+    footer(f, ui);
+}
+
+fn footer(f: &mut Frame<'_>, ui: &Ui) {
     f.panel(20, 458, 920, 48, PANEL);
     label(f, 32, 472, "ASK", 1, TEAL);
     // Trailing ASCII spaces have blank font cells. Display the exact byte
@@ -253,6 +279,49 @@ mod tests {
     extern crate std;
     use super::*;
     use std::{format, vec, vec::Vec};
+
+    fn shot(ui: &Ui) -> Vec<u32> {
+        let mut pixels = vec![0u32; 960 * 540];
+        let mut f = Frame::new(&mut pixels, 960, 540, 960, GROUND, false);
+        paint_frame(&mut f, ui);
+        pixels
+    }
+
+    /// Without a model the screen says what Taylor can do today only when PCP OS lets it, and after a
+    /// note it shows that note's result in the Work panel, not the greeting.
+    #[test]
+    fn the_work_panel_follows_what_taylor_can_do_and_did() {
+        let plain = shot(&Ui::new());
+        let mut ui = Ui::new();
+        ui.notes = true;
+        let able = shot(&ui);
+        assert_ne!(plain, able);
+        let mut p = crate::note::prepare(3, 1, "hello").unwrap();
+        ui.last_note = Some(p.job);
+        let unknown = shot(&ui);
+        assert_ne!(able, unknown);
+        p = crate::note::prepare(3, 1, "hello").unwrap();
+        p.job.submitted().unwrap();
+        let (name, content) = ("taylor/my-first-project/note-1.txt", b"hello\n");
+        let mut r = [0u8; 100];
+        r[0..4].copy_from_slice(&1u32.to_le_bytes());
+        r[4..8].copy_from_slice(&1u32.to_le_bytes());
+        r[8..16].copy_from_slice(&9u64.to_le_bytes());
+        r[16..24].copy_from_slice(&3u64.to_le_bytes());
+        r[24..32].copy_from_slice(&1u64.to_le_bytes());
+        r[32..64].copy_from_slice(&crate::kernel_proposal::request_digest(name, content));
+        r[64..96].copy_from_slice(&crate::sha256::sha256(&[content]));
+        crate::note::settle(&mut p.job, &r);
+        assert_eq!(crate::note::headline(&p.job), ("I made your note.", true));
+        ui.last_note = Some(p.job);
+        let made = shot(&ui);
+        assert_ne!(unknown, made);
+        // Everything outside the Work panel's lower part is the same in all four.
+        for (i, (a, b)) in plain.iter().zip(made.iter()).enumerate() {
+            let (x, y) = (i % 960, i / 960);
+            assert!(a == b || (x >= 316 && x < 940 && y >= 280 && y < 446) || (x >= 764 && y >= 18 && y < 54), "differs at {x},{y}");
+        }
+    }
 
     /// With TAILORBIRD_SHOT=<folder> set, write the first screen at the common sizes as P6 files.
     #[test]

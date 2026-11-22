@@ -28,17 +28,17 @@ fn paint(display: &mut Display, ui: &Ui) {
 /// Ask PCP OS to make a note of what is typed. The person is asked by the kernel, on the kernel's own
 /// screen, while this program is stopped inside the `write`; what comes back is the kernel's receipt, and
 /// only a receipt that matches the job is reported as a file made.
-fn make_note(proposals: isize, attempt: u64, number: u32, typed: &str) -> Text<84> {
+fn make_note(proposals: isize, attempt: u64, number: u32, typed: &str) -> (Text<84>, Option<tailorbird_ui::file_job::FileJob>) {
     if proposals < 0 {
-        return Text::display(note::NOT_ALLOWED);
+        return (Text::display(note::NOT_ALLOWED), None);
     }
     let mut prepared = match note::prepare(attempt, number, typed) {
         Ok(p) => p,
-        Err(words) => return Text::display(words),
+        Err(words) => return (Text::display(words), None),
     };
     let taken = call(1, proposals as usize, prepared.record.as_ptr() as usize, prepared.length, 0, 0, 0);
     if taken != prepared.length as isize || prepared.job.submitted().is_err() {
-        return Text::display(note::NOT_TAKEN);
+        return (Text::display(note::NOT_TAKEN), None);
     }
     let mut receipt = [0u8; 100];
     let got = call(0, proposals as usize, receipt.as_mut_ptr() as usize, receipt.len(), 0, 0, 0);
@@ -46,7 +46,8 @@ fn make_note(proposals: isize, attempt: u64, number: u32, typed: &str) -> Text<8
     log(b"tailorbird: ");
     log(words.as_str().as_bytes());
     log(b"\n");
-    words
+    // The words go to the log; the screen reads the job itself, so nothing is cut to fit a line.
+    (Text::new(), Some(prepared.job))
 }
 
 pcp_game_guest::entry!(tailorbird_main);
@@ -64,6 +65,7 @@ pub extern "C" fn tailorbird_main() -> ! {
     let (mut attempt, mut number) = (1u64, 1u32);
     let mut ordered = OrderedKeyboard::new();
     let mut ui = Ui::new();
+    ui.notes = proposals >= 0;
     paint(&mut display, &ui);
     log(b"Tailorbird first frame presented\n");
     loop {
@@ -80,7 +82,11 @@ pub extern "C" fn tailorbird_main() -> ! {
                 KeyOutcome::Exit => exit(0),
                 KeyOutcome::Redraw => dirty = true,
                 KeyOutcome::MakeNote => {
-                    ui.notice = make_note(proposals, attempt, number, ui.input.as_str());
+                    let (words, job) = make_note(proposals, attempt, number, ui.input.as_str());
+                    ui.notice = words;
+                    if job.is_some() {
+                        ui.last_note = job;
+                    }
                     attempt += 1;
                     number += 1;
                     // The kernel had the display while it asked: everything is drawn again.
