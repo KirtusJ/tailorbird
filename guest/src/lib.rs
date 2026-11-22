@@ -361,7 +361,10 @@ impl Ui {
     /// other notice is touched.
     pub fn model_ready(&mut self) {
         self.talk.service_is(talk::Service::Ready);
-        if self.notice.as_str() == "MODEL STILL LOADING - NOT SENT" {
+        // The notice may carry the standing warning in front of it; the warning stays, the stale
+        // words after it go (B3 found them left behind when both were showing).
+        let said = self.notice.as_str();
+        if said.strip_prefix("EFFECT UNKNOWN - ").unwrap_or(said) == "MODEL STILL LOADING - NOT SENT" {
             self.notice(if self.input.is_empty() { "MODEL READY" } else { "MODEL READY - ENTER SENDS WHAT YOU TYPED" });
         }
     }
@@ -1125,6 +1128,28 @@ mod tests {
         u.notice("SOMETHING ELSE");
         u.model_ready();
         assert_eq!(u.notice.as_str(), "SOMETHING ELSE");
+        // With the standing warning that an effect is unknown in front of it (B3): the warning
+        // stays, the loading words go, the draft stays and nothing is sent.
+        for (typed_words, after) in [("draft", "EFFECT UNKNOWN - MODEL READY - ENTER SENDS WHAT YOU TYPED"), ("", "EFFECT UNKNOWN - MODEL READY")] {
+            let mut u = Ui::new();
+            u.effect_uncertain = true;
+            u.talk.service_is(talk::Service::Loading);
+            typed(&mut u, "draft");
+            let _ = u.intent(Action::Submit);
+            assert_eq!(u.notice.as_str(), "EFFECT UNKNOWN - MODEL STILL LOADING - NOT SENT");
+            if typed_words.is_empty() { u.input = Text::new(); }
+            u.model_ready();
+            assert_eq!(u.notice.as_str(), after);
+            assert_eq!(u.input.as_str(), typed_words);
+            assert!(u.for_service().is_none());
+            assert!(u.effect_uncertain);
+        }
+        // The warning in front of any other words is left alone.
+        let mut u = Ui::new();
+        u.effect_uncertain = true;
+        u.notice("SOMETHING ELSE");
+        u.model_ready();
+        assert_eq!(u.notice.as_str(), "EFFECT UNKNOWN - SOMETHING ELSE");
     }
     #[test]
     fn a_new_conversation_leaves_the_projects_so_that_enter_sends() {
