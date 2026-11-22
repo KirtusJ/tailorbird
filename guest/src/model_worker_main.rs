@@ -4,6 +4,8 @@
 extern crate alloc;
 #[path="../../pcp-os/store/apps/parrots-all-the-way-down/guest/src/heap.rs"] mod heap;
 mod model_worker_io;
+#[cfg(all(target_os = "linux", feature = "stable-model-worker"))]
+mod stable_compare;
 use model_worker_io::{Link,Mapping,Result,sleep};
 use pcp_game_guest::{exit,log};
 use pcpos_model_media::{Manifest,VerifiedSlices};

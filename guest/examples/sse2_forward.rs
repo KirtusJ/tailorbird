@@ -12,6 +12,10 @@ extern crate alloc;
 #[path = "../../pcp-os/store/apps/parrots-all-the-way-down/guest/src/heap.rs"]
 mod heap;
 
+#[cfg(all(target_os = "linux", feature = "stable-model-worker"))]
+#[path = "../src/stable_compare.rs"]
+mod stable_compare;
+
 #[cfg(any(target_os = "none", all(target_os = "linux", feature = "stable-model-worker")))]
 mod guest {
     use pcp_game_guest::{exit, log, sleep_us, time_us};
@@ -69,6 +73,17 @@ mod guest {
 
     #[no_mangle]
     pub extern "C" fn probe_main() -> ! {
+        #[cfg(all(target_os = "linux", feature = "stable-model-worker"))]
+        unsafe {
+            use super::stable_compare::{bcmp, memcmp};
+            let a = [7, 0, 0x80];
+            let b = [7, 0, 0x7f];
+            assert_eq!(memcmp(core::ptr::null(), core::ptr::null(), 0), 0);
+            assert_eq!(bcmp(a.as_ptr(), b.as_ptr(), 2), 0);
+            assert!(memcmp(a.as_ptr(), b.as_ptr(), 3) > 0);
+            assert!(memcmp(b.as_ptr(), a.as_ptr(), 3) < 0);
+            assert_ne!(bcmp(a.as_ptr(), b.as_ptr(), 3), 0);
+        }
         verify(
             include_bytes!(concat!(env!("QWEN_FIXTURE_DIR"), "/qwen2.gguf")),
             include_str!("../../pcp-os/PCP_OS_Rust/crates/pcpos-qwen/tests/data/qwen2-forward.txt"),
