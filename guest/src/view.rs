@@ -470,7 +470,9 @@ fn projects(f: &mut Frame<'_>, list: &crate::projects::Projects, place: usize, a
     use crate::projects::Listing;
     let mut digits = [0u8; 20];
     label(f, 339, 190, "Your projects", 2, TEXT);
-    if active.is_some() {
+    // Where new notes would go is said only while new notes can be made (Director B3 read the
+    // legend and the marker off the screen beside "No new files").
+    if active.is_some() && !gave_up {
         label(f, 600, 196, "\"notes\" marks where new notes go", 1, SOFT);
     }
     match list.state {
@@ -510,7 +512,7 @@ fn projects(f: &mut Frame<'_>, list: &crate::projects::Projects, place: usize, a
                     label(f, 347 + 69 * 6, y, "...", 1, AMBER);
                 }
                 // Its own column, right of the count, clear of the longest name a row shows.
-                if active.is_some() && entry.location == active {
+                if active.is_some() && entry.location == active && !gave_up {
                     label(f, 872, y, "notes", 1, GOOD);
                 }
                 label(f, 800, y, decimal_u64(entry.files as u64, &mut digits), 1, TEXT);
@@ -774,6 +776,35 @@ mod tests {
                 // The words stay within the width of the text.
                 assert!(x as usize + 6 * words.len() <= 393 + 6 * 84 + 8, "{length} characters {words}: runs past the text");
             }
+        }
+    }
+
+    /// On the project list, where new notes go is marked only while new notes can be made: after
+    /// giving up, the list with a project chosen is drawn exactly as the list with none chosen.
+    #[test]
+    fn after_giving_up_the_project_list_marks_nowhere_for_new_notes() {
+        let location = crate::note::default_project(crate::project_location::BuildFolder::default()).unwrap();
+        let listed = |active: bool, gave_up: bool, rows: usize| {
+            let mut ui = Ui::new();
+            ui.notes = true;
+            ui.gave_up = gave_up;
+            ui.show_projects = true;
+            ui.projects.state = crate::projects::Listing::Listed;
+            ui.projects.complete = true;
+            ui.projects.folder = crate::Text::display("taylor");
+            ui.projects.projects = rows;
+            ui.projects.shown = rows;
+            if rows == 1 {
+                ui.projects.rows[0] = crate::projects::Row { project: crate::Text::display(location.as_str()), location: Some(location), files: 2 };
+            }
+            ui.active = active.then_some(location);
+            shot(&ui)
+        };
+        for rows in [0, 1] {
+            // Before giving up, a chosen project is marked (the legend, and on its row the word).
+            assert_ne!(listed(true, false, rows), listed(false, false, rows), "{rows} row(s)");
+            // After, nothing marks it: the same picture as with no project chosen.
+            assert_eq!(listed(true, true, rows), listed(false, true, rows), "{rows} row(s)");
         }
     }
 
