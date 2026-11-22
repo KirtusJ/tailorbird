@@ -124,6 +124,20 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
         }
     };
     label(f, 38, 135, standing, 2, colour);
+    // How far the service says its check of the model has got, in whole mebibytes, as it said it.
+    // A check that is complete is still not a model that is ready: the word above says which.
+    if let (false, Some((checked, of))) = (ui.connected, ui.talk.checked) {
+        let mut digits = [0u8; 20];
+        label(f, 38, 163, "Checked", 1, SOFT);
+        let first = decimal_u64(checked >> 20, &mut digits);
+        label(f, 38 + 8 * 6, 163, first, 1, TEXT);
+        let x = 38 + (9 + first.len() as i32) * 6;
+        label(f, x, 163, "of", 1, SOFT);
+        let mut digits = [0u8; 20];
+        let second = decimal_u64(of >> 20, &mut digits);
+        label(f, x + 3 * 6, 163, second, 1, TEXT);
+        label(f, x + (4 + second.len() as i32) * 6, 163, "MiB", 1, SOFT);
+    }
     label(f, 38, 191, "MODE", 1, TEAL);
     let mode_rect = crate::pointer::MODE_RECT;
     f.well(mode_rect.x, mode_rect.y, mode_rect.width, mode_rect.height, GROUND);

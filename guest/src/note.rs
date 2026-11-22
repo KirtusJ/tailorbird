@@ -3,7 +3,9 @@
 //! plain words; the two calls to the kernel between are made by the program itself.
 use crate::file_job::{FileJob, Outcome, Stage};
 use crate::kernel_proposal as wire;
-use crate::project_location::{BuildFolder, ProjectLocation, DEFAULT_BUILD_FOLDER};
+#[cfg(test)]
+use crate::project_location::DEFAULT_BUILD_FOLDER;
+use crate::project_location::{BuildFolder, ProjectLocation};
 use crate::Text;
 
 /// Until projects can be chosen on the screen there is one, in the folder Taylor builds into.

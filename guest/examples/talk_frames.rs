@@ -2,11 +2,12 @@
 //! itself uses: a native test then compares its screen captures with these, pixel for pixel.
 //! The conversation is driven through the same calls the program makes, from a script, one step a line:
 //!
-//!   ready | loading | gone | not-started      what the model service is
+//!   ready | loading [<checked> <of>] | gone | not-started      what the model service is
 //!   type <words>                                  into the field
 //!   enter | stop | took                           the keys, and "the request was carried"
 //!   chunk <words> | done | failed                 from the service, for the reply being waited for
 //!   notes                                          PCP OS lets this launch make notes
+//!   folder <name>                                  the folder PCP OS said this launch builds into
 //!   say <words>                                    the notice line, as the program sets it after a note
 //!   hide                                           the Work panel leaves the conversation (after a note)
 //!   shot <name>                                    write <name>.ppm of the screen as it now is
@@ -31,10 +32,16 @@ fn main() {
                 ever_ready = true;
                 ui.talk.service_is(Service::Ready)
             }
-            "loading" => ui.talk.service_is(Service::Loading),
+            // `loading`, or `loading <bytes checked> <of bytes>` as the service said it.
+            "loading" => {
+                let mut numbers = rest.split_whitespace().map(|n| n.parse::<u64>().expect("a number of bytes"));
+                ui.talk.loading(numbers.next().zip(numbers.next()));
+            }
             "not-started" => ui.talk.service_is(Service::Failed),
             "gone" => ui.talk.service_is(if ever_ready { Service::Stopped } else { Service::Failed }),
             "notes" => ui.notes = true,
+            // The folder PCP OS said this launch builds into: new notes go to its first project.
+            "folder" => ui.active = tailorbird_ui::project_location::BuildFolder::new(rest).ok().and_then(tailorbird_ui::note::default_project),
             "type" => {
                 for b in rest.bytes() {
                     assert!(ui.input.push_ascii(b), "the field is full");

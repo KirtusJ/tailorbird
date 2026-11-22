@@ -110,7 +110,7 @@ impl Link {
                         let Some(record) = self.reader.record() else { continue };
                         let (conversation, reply) = (record.conversation, record.reply);
                         match record.kind {
-                            Kind::Loading => ui.talk.service_is(Service::Loading),
+                            Kind::Loading => ui.talk.loading(wire::progress(record.body)),
                             Kind::Ready => {
                                 self.was_ready = true;
                                 ui.talk.service_is(Service::Ready);
@@ -230,6 +230,38 @@ mod tests {
         channel.says(Kind::Ready, 0, 0, b"");
         assert!(turn(&mut link, &mut ui, &mut channel));
         assert_eq!(ui.talk.service, Service::Ready);
+    }
+
+    #[test]
+    fn how_far_a_check_has_got_is_kept_while_loading_and_is_never_ready() {
+        let mut ui = Ui::new();
+        let mut link = Link::new(true, &mut ui);
+        let mut channel = Channel::new();
+        let body = |checked: u64, of: u64| [checked.to_le_bytes(), of.to_le_bytes()].concat();
+        channel.says(Kind::Loading, 0, 0, &body(1 << 30, 5 << 30));
+        while !channel.from_service.is_empty() {
+            turn(&mut link, &mut ui, &mut channel);
+        }
+        assert_eq!((ui.talk.service, ui.talk.checked), (Service::Loading, Some((1 << 30, 5 << 30))));
+        // All of it checked is still not ready: a message is not sent.
+        channel.says(Kind::Loading, 0, 0, &body(5 << 30, 5 << 30));
+        while !channel.from_service.is_empty() {
+            turn(&mut link, &mut ui, &mut channel);
+        }
+        typed(&mut ui, "hello");
+        let _ = ui.intent(Action::Submit);
+        assert!(ui.for_service().is_none());
+        assert_eq!((ui.talk.service, ui.notice.as_str()), (Service::Loading, "MODEL STILL LOADING - NOT SENT"));
+        channel.says(Kind::Loading, 0, 0, b"");
+        while !channel.from_service.is_empty() {
+            turn(&mut link, &mut ui, &mut channel);
+        }
+        assert_eq!(ui.talk.checked, None);
+        channel.says(Kind::Ready, 0, 0, b"");
+        while !channel.from_service.is_empty() {
+            turn(&mut link, &mut ui, &mut channel);
+        }
+        assert_eq!((ui.talk.service, ui.talk.checked), (Service::Ready, None));
     }
 
     #[test]

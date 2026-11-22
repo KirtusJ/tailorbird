@@ -19,6 +19,8 @@ Predicates, fixed before the first run.
  T7 Esc ends Tailorbird, PCP OS ends the worker's run, and the emulator ends with status 33.
  T8 (control) the same Tailorbird without the worker's words on the line: no channel, a typed
     message starts no reply, and the worker is never started.
+ T10 while the worker says it is checking a model (2 of 5 MiB, made-up numbers), the screen says
+    "Getting ready" and "Checked 2 of 5 MiB", and is not the screen of a model that is ready.
  T9 what is on the screen. The console lines above say how a reply ended and how many bytes it
     kept, not what was drawn (Director 2: `hello` and `hxllo` are the same length). So each capture
     of Tailorbird's screen (answered, stopped, service-stopped, and no-model in the control) is
@@ -133,10 +135,10 @@ def run(kernel, guest, worker, output, with_worker, tool):
             type_and_send("hello")
             time.sleep(2)
             vm.screenshot("no-model")
-            screens.same("no-model", ["notes", "type hello", "enter"], {
-                "the person's words changed": ["notes", "type hxllo", "enter"],
-                "a model that is ready": ["notes", "ready", "type hello", "enter"],
-                "nothing sent": ["notes", "type hello"]})
+            screens.same("no-model", ["notes", "folder taylor", "type hello", "enter"], {
+                "the person's words changed": ["notes", "folder taylor", "type hxllo", "enter"],
+                "a model that is ready": ["notes", "folder taylor", "ready", "type hello", "enter"],
+                "nothing sent": ["notes", "folder taylor", "type hello"]})
             if replies() or any("test worker" in line for line in lines()) or any("tailorbird: model service" in line and "no model service channel" not in line for line in lines()):
                 problems.append("T8: without the worker a reply began, a service was reported, or the worker ran")
             vm.key("esc")
@@ -147,6 +149,16 @@ def run(kernel, guest, worker, output, with_worker, tool):
 
         # T1
         wait_for("tailorbird: a model service channel is open")
+        # T10: while the worker says it is checking, the screen says how far and does not say ready.
+        if wait_for("test worker: says it has checked 2 of 5 MiB"):
+            time.sleep(0.8)
+            vm.screenshot("checking")
+            screens.same("checking", ["notes", "folder taylor", "loading 2097152 5242880"], {
+                "ready": ["notes", "folder taylor", "ready"],
+                "loading with nothing said about how far": ["notes", "folder taylor", "loading"],
+                "another amount checked": ["notes", "folder taylor", "loading 3145728 5242880"],
+                "all of it checked": ["notes", "folder taylor", "loading 5242880 5242880"],
+                "no model": ["notes", "folder taylor"]})
         wait_for("tailorbird: model service: ready")
         said = lines()
         order = [i for i, line in enumerate(said) if "test worker: said it is ready" in line or "tailorbird: model service: ready" in line]
@@ -154,14 +166,14 @@ def run(kernel, guest, worker, output, with_worker, tool):
             problems.append("T1: ready was not reported once, after the worker said it")
         # T2
         type_and_send("hello")
-        first = ["notes", "ready", "type hello", "enter", "took", "chunk " + OPENING + "hello", "done"]
+        first = ["notes", "folder taylor", "ready", "type hello", "enter", "took", "chunk " + OPENING + "hello", "done"]
         if wait_for("tailorbird: reply 1 kept %d bytes and is complete" % len(OPENING + "hello")):
             vm.screenshot("answered")
             screens.same("answered", first, {
                 "one character of the reply changed, the length kept": first[:5] + ["chunk " + OPENING + "hxllo", "done"],
                 "one character of the worker's own words changed": first[:5] + ["chunk " + OPENING.replace("not a model", "now a model") + "hello", "done"],
                 "no reply yet": first[:5],
-                "the person's words changed": ["notes", "ready", "type hellp", "enter", "took", "chunk " + OPENING + "hello", "done"],
+                "the person's words changed": ["notes", "folder taylor", "ready", "type hellp", "enter", "took", "chunk " + OPENING + "hello", "done"],
                 "the reply failed": first[:6] + ["failed"],
                 "the model stopped": first + ["gone"]})
         # T3

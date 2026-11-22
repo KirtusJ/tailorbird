@@ -18,13 +18,42 @@
 //!
 //! From this program: SAY (the person's message), STOP (the person stopped that reply), FORGET (that
 //! conversation is over; keep nothing of it). From the service: LOADING, READY, NOT_STARTED (about
-//! itself; conversation and reply 0), and CHUNK, DONE, FAILED (about one reply).
+//! itself), and CHUNK, DONE, FAILED (about one reply).
+//!
+//! Who a record is about is part of whether it is a record at all (agreed with C3, who writes the
+//! service): LOADING, READY and NOT_STARTED carry conversation 0 and reply 0; FORGET carries a
+//! conversation and reply 0; SAY, STOP, CHUNK, DONE and FAILED carry both, neither 0.
+//!
+//! LOADING has no body, or sixteen bytes: how many of the model's bytes the service has checked so
+//! far and how many there are, each little-endian, the first no more than the second and the second
+//! not 0. It says how far a check has got. It never means ready: only READY does, and the service
+//! sends READY only when it can answer.
+//!
+//! What the service is expected to do, which this module cannot enforce: send a CHUNK only at the
+//! boundary of whole UTF-8 characters, holding back the bytes of an unfinished one (an answer is as
+//! many CHUNKs as it needs; 480 bytes is one record, not one answer); on STOP, stop that reply within
+//! a bounded time, send nothing more for it, and stay ready for the next SAY; on FORGET, drop what it
+//! kept of that conversation; with `history` clear on a SAY, answer that message alone without
+//! dropping what it kept.
 use crate::talk::Outgoing;
 
 pub const HEADER: usize = 24;
 /// The most one record carries after its header: as much as one turn of the conversation keeps.
 pub const MOST: usize = crate::talk::TURN;
 pub const VERSION: u8 = 1;
+/// The length of the body of a LOADING record that says how far a check has got.
+pub const PROGRESS: usize = 16;
+
+/// How far a check has got, out of a LOADING record's body: (checked, of). None if the body is not
+/// sixteen bytes that say so (checked no more than of, of not 0).
+pub fn progress(body: &[u8]) -> Option<(u64, u64)> {
+    if body.len() != PROGRESS {
+        return None;
+    }
+    let checked = u64::from_le_bytes([body[0], body[1], body[2], body[3], body[4], body[5], body[6], body[7]]);
+    let of = u64::from_le_bytes([body[8], body[9], body[10], body[11], body[12], body[13], body[14], body[15]]);
+    (of != 0 && checked <= of).then_some((checked, of))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -55,14 +84,22 @@ impl Kind {
         })
     }
 
-    /// Whether a record of this kind may carry anything after its header.
-    fn carries(self) -> bool {
-        matches!(self, Kind::Say | Kind::Chunk)
+    /// Whether a body of this length may follow the header of a record of this kind.
+    fn takes(self, length: usize) -> bool {
+        match self {
+            Kind::Say | Kind::Chunk => length <= MOST,
+            Kind::Loading => length == 0 || length == PROGRESS,
+            _ => length == 0,
+        }
     }
 
-    /// Whether a record of this kind is about one reply of one conversation.
-    fn names_a_reply(self) -> bool {
-        matches!(self, Kind::Say | Kind::Stop | Kind::Chunk | Kind::Done | Kind::Failed)
+    /// Whether these are the conversation and reply a record of this kind must carry.
+    fn names(self, conversation: u64, reply: u64) -> bool {
+        match self {
+            Kind::Loading | Kind::Ready | Kind::NotStarted => conversation == 0 && reply == 0,
+            Kind::Forget => conversation != 0 && reply == 0,
+            _ => conversation != 0 && reply != 0,
+        }
     }
 }
 
@@ -89,19 +126,16 @@ impl Packed {
     }
 }
 
-/// Put one record into bytes. None if it is not one this module would read back: a body longer than
-/// a record carries, a body on a kind that has none, or a reply named where none is meant.
+/// Put one record into bytes. None if it is not one this module would read back: a body its kind
+/// does not take, progress that does not add up, or a conversation or reply its kind does not carry.
 pub fn pack(record: Record<'_>) -> Option<Packed> {
-    if record.body.len() > MOST || (!record.body.is_empty() && !record.kind.carries()) {
+    if !record.kind.takes(record.body.len()) || !record.kind.names(record.conversation, record.reply) {
         return None;
     }
     if record.history && record.kind != Kind::Say {
         return None;
     }
-    if !record.kind.names_a_reply() && record.reply != 0 {
-        return None;
-    }
-    if record.kind.names_a_reply() && (record.conversation == 0 || record.reply == 0) {
+    if record.kind == Kind::Loading && !record.body.is_empty() && progress(record.body).is_none() {
         return None;
     }
     let mut bytes = [0u8; HEADER + MOST];
@@ -177,16 +211,14 @@ impl Reader {
             return false;
         }
         if at >= 8 {
-            let length = self.body_length();
-            if length > MOST || length != 0 && !kind.is_some_and(Kind::carries) {
+            if !kind.is_some_and(|k| k.takes(self.body_length())) {
                 return false;
             }
         }
         if at >= HEADER {
             let conversation = u64::from_le_bytes([b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]]);
             let reply = u64::from_le_bytes([b[16], b[17], b[18], b[19], b[20], b[21], b[22], b[23]]);
-            let names = kind.is_some_and(Kind::names_a_reply);
-            if names && (conversation == 0 || reply == 0) || !names && reply != 0 {
+            if !kind.is_some_and(|k| k.names(conversation, reply)) {
                 return false;
             }
         }
@@ -208,6 +240,11 @@ impl Reader {
             return Step::Broken;
         }
         if self.have >= HEADER && self.have == HEADER + self.body_length() {
+            // Progress that does not add up is not a record either.
+            if self.bytes[3] == Kind::Loading as u8 && self.have > HEADER && progress(&self.bytes[HEADER..self.have]).is_none() {
+                self.broken = true;
+                return Step::Broken;
+            }
             self.whole = true;
             return Step::Whole;
         }
@@ -290,6 +327,12 @@ mod tests {
         assert!(none(Kind::Done, false, 1, 1, b"x")); // a body where none belongs
         assert!(none(Kind::Chunk, true, 1, 1, b"x")); // the history flag on anything but SAY
         assert!(none(Kind::Ready, false, 0, 1, b"")); // a reply named by a record about the service
+        assert!(none(Kind::Ready, false, 7, 0, b"")); // a conversation named by one (C3: this was accepted)
+        assert!(none(Kind::Loading, false, 7, 0, b""));
+        assert!(none(Kind::NotStarted, false, 7, 0, b""));
+        assert!(none(Kind::Forget, false, 0, 0, b"")); // forgetting no conversation
+        assert!(none(Kind::Forget, false, 7, 1, b"")); // a reply named by FORGET
+        assert!(none(Kind::Stop, false, 7, 0, b""));
         assert!(none(Kind::Chunk, false, 0, 1, b"x")); // no conversation
         assert!(none(Kind::Chunk, false, 1, 0, b"x")); // no reply
     }
@@ -317,6 +360,43 @@ mod tests {
             assert!(good.bytes().iter().all(|b| reader.take(*b) == Step::Broken));
             assert!(reader.record().is_none());
         }
+    }
+
+    #[test]
+    fn a_service_record_that_names_a_conversation_is_not_read_as_one() {
+        // Built by hand, since `pack` will not make it: READY with conversation 7.
+        let mut bytes = pack(Record { kind: Kind::Ready, history: false, conversation: 0, reply: 0, body: b"" }).unwrap().bytes().to_vec();
+        bytes[8] = 7;
+        let (records, broken) = read_all(&bytes);
+        assert!(broken && records.is_empty());
+        // And FORGET with no conversation.
+        let mut bytes = forget(7).unwrap().bytes().to_vec();
+        bytes[8] = 0;
+        assert!(read_all(&bytes).1);
+    }
+
+    #[test]
+    fn loading_says_how_far_a_check_has_got_only_when_the_numbers_add_up() {
+        let body = |checked: u64, of: u64| [checked.to_le_bytes(), of.to_le_bytes()].concat();
+        let made = |body: &[u8]| pack(Record { kind: Kind::Loading, history: false, conversation: 0, reply: 0, body });
+        for (checked, of) in [(0u64, 5_027_783_488u64), (1 << 32, 5_027_783_488), (5_027_783_488, 5_027_783_488)] {
+            let packed = made(&body(checked, of)).unwrap();
+            let (records, broken) = read_all(packed.bytes());
+            assert!(!broken);
+            assert_eq!(progress(&records[0].4), Some((checked, of)));
+        }
+        assert_eq!(progress(b""), None);
+        assert!(made(b"").is_some()); // loading, with nothing said about how far
+        assert!(made(&body(2, 1)).is_none()); // more checked than there is
+        assert!(made(&body(0, 0)).is_none()); // of nothing
+        assert!(made(&[0u8; 15]).is_none() && made(&[0u8; 17]).is_none());
+        // The same, arriving as bytes from a service that packed them itself.
+        let mut bytes = made(&body(1, 2)).unwrap().bytes().to_vec();
+        bytes[HEADER] = 3;
+        assert!(read_all(&bytes).1);
+        let mut bytes = made(b"").unwrap().bytes().to_vec();
+        bytes[6] = 8;
+        assert!(read_all(&bytes).1);
     }
 
     #[test]

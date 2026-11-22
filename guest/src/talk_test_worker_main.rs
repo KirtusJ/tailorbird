@@ -79,8 +79,18 @@ pub extern "C" fn worker_main() -> ! {
         exit(2);
     }
     log(b"test worker: NOT A MODEL; started\n");
+    // As a service checking a model would: loading, then how far the check has got, twice, the
+    // second time all of it; and only after that, ready. The numbers are made up: nothing is checked.
     send(fd, Kind::Loading, 0, 0, b"");
     pause(400);
+    for (checked, wait) in [(2u64 << 20, 3000), (5u64 << 20, 1000)] {
+        let mut body = [0u8; 16];
+        body[..8].copy_from_slice(&checked.to_le_bytes());
+        body[8..].copy_from_slice(&(5u64 << 20).to_le_bytes());
+        send(fd, Kind::Loading, 0, 0, &body);
+        log(if checked == 5 << 20 { b"test worker: says it has checked 5 of 5 MiB (made-up numbers)\n" } else { b"test worker: says it has checked 2 of 5 MiB (made-up numbers)\n" });
+        pause(wait);
+    }
     send(fd, Kind::Ready, 0, 0, b"");
     log(b"test worker: said it is ready\n");
     let mut reader = Reader::new();

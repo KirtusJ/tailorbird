@@ -111,13 +111,16 @@ pub struct Talk {
     /// The reply being waited for or received.
     pending: Option<u64>,
     pub strays: u64,
+    /// While the model is loading: how many of its bytes the service says it has checked, and of
+    /// how many. Only what the service said; None when it has said nothing or is not loading.
+    pub checked: Option<(u64, u64)>,
 }
 
 const EMPTY: Turn = Turn { who: Who::System, text: Text::new(), cut: false, reply: 0, state: Reply::None, sent: false };
 
 impl Talk {
     pub const fn new() -> Self {
-        Self { service: Service::Absent, conversation: 1, next_reply: 1, turns: [EMPTY; TURNS], count: 0, dropped: 0, pending: None, strays: 0 }
+        Self { service: Service::Absent, conversation: 1, next_reply: 1, turns: [EMPTY; TURNS], count: 0, dropped: 0, pending: None, strays: 0, checked: None }
     }
 
     pub fn turns(&self) -> &[Turn] { &self.turns[..self.count] }
@@ -231,6 +234,7 @@ impl Talk {
     /// The service stopped being ready while an answer was under way: that answer failed.
     pub fn service_is(&mut self, service: Service) {
         self.service = service;
+        self.checked = None;
         if service != Service::Ready {
             if let Some(reply) = self.pending.take() {
                 if let Some(turn) = self.turns[..self.count].iter_mut().rev().find(|t| t.reply == reply && t.state == Reply::Streaming) {
@@ -238,6 +242,12 @@ impl Talk {
                 }
             }
         }
+    }
+
+    /// The service says it is loading, and perhaps how far its check of the model has got.
+    pub fn loading(&mut self, checked: Option<(u64, u64)>) {
+        self.service_is(Service::Loading);
+        self.checked = checked;
     }
 
     /// Start over: nothing of this conversation is kept or can arrive in the next.
