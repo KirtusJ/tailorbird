@@ -309,6 +309,40 @@ mod tests {
         assert!(!ui.talk.answering());
     }
 
+    /// Transport success is not a model-acceptance receipt. Never show "sent" merely because
+    /// the local UI admitted a Say request, including when zero bytes could leave the channel.
+    #[test]
+    fn queued_say_never_claims_delivery_under_zero_write_partial_write_or_completed_write() {
+        let mut ui = Ui::new();
+        let mut link = Link::new(true, &mut ui);
+        let mut channel = Channel::new();
+        channel.says(Kind::Ready, 0, 0, b"");
+        turn(&mut link, &mut ui, &mut channel);
+        typed(&mut ui, "hello");
+        let _ = ui.intent(Action::Submit);
+        const QUEUED: &str = "QUEUED LOCALLY - DELIVERY UNCONFIRMED";
+        assert_eq!(ui.notice.as_str(), QUEUED);
+        assert!(matches!(ui.for_service(), Some(Request::Say(_))));
+        channel.room = 0;
+        turn(&mut link, &mut ui, &mut channel);
+        assert!(channel.to_service.is_empty(), "EAGAIN did not write any Say bytes");
+        assert!(ui.for_service().is_some());
+        assert_eq!(ui.notice.as_str(), QUEUED);
+
+        channel.room = 5;
+        turn(&mut link, &mut ui, &mut channel);
+        assert_eq!(channel.to_service.len(), 5, "only a partial frame was written");
+        assert!(ui.for_service().is_some());
+        assert_eq!(ui.notice.as_str(), QUEUED);
+
+        channel.room = 65_536;
+        turn(&mut link, &mut ui, &mut channel);
+        assert!(ui.for_service().is_none(), "complete frame leaves the local queue");
+        assert_eq!(ui.notice.as_str(), QUEUED, "channel write is not service acceptance");
+        // No model reply or correlated acceptance has arrived in this test.
+        assert!(ui.talk.answering());
+    }
+
     #[test]
     fn the_message_asks_for_reading_progress_and_what_the_service_says_of_it_is_kept_until_the_answer_begins() {
         let mut ui = Ui::new();
