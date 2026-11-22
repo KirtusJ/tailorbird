@@ -12,16 +12,17 @@ pub enum KeyOutcome {
     Unchanged,
     Redraw,
     Exit,
-    /// Alt+N, freshly pressed: make a note of what is typed. The program asks the kernel; nothing here does.
+    /// A completed Alt+N chord asks the kernel to review a note.
     MakeNote,
 }
 
 pub struct OrderedKeyboard {
     held: [bool; 128],
+    note_chord: bool,
 }
 impl OrderedKeyboard {
     pub const fn new() -> Self {
-        Self { held: [false; 128] }
+        Self { held: [false; 128], note_chord: false }
     }
 
     /// Consume one kernel event, as received from the keyboard FIFO.
@@ -37,6 +38,20 @@ impl OrderedKeyboard {
         // includes a letter held before Alt and repeated afterward.
         let already_down = self.held[code];
         self.held[code] = down;
+        // The kernel takes the keyboard while it reviews a note. Consume both
+        // releases here so the next editor shortcut starts with accurate state.
+        if self.note_chord {
+            if code == 49 || code == 56 {
+                if !self.held[49] && !self.held[56] {
+                    self.note_chord = false;
+                    return KeyOutcome::MakeNote;
+                }
+                return KeyOutcome::Unchanged;
+            }
+            if down {
+                self.note_chord = false;
+            }
+        }
         if !down {
             return KeyOutcome::Unchanged;
         }
@@ -73,8 +88,8 @@ impl OrderedKeyboard {
                 return KeyOutcome::Unchanged;
             }
             if code == 49 {
-                // Like every command, only on a fresh press, and not with Shift.
-                return if already_down || self.held[42] || self.held[54] { KeyOutcome::Unchanged } else { KeyOutcome::MakeNote };
+                self.note_chord = !already_down && !self.held[42] && !self.held[54];
+                return KeyOutcome::Unchanged;
             }
             let action = match code {
                 50 => Some(Action::ToggleMode),
@@ -141,6 +156,31 @@ mod tests {
     fn stroke(keys: &mut OrderedKeyboard, ui: &mut Ui, code: usize) {
         keys.event(code, true, ui);
         keys.event(code, false, ui);
+    }
+
+    #[test]
+    fn consecutive_note_shortcuts_finish_on_release_in_either_order() {
+        let mut keys = OrderedKeyboard::new();
+        let mut ui = Ui::new();
+        for (first, last) in [(49, 56), (56, 49)] {
+            for (code, down) in [(56, true), (49, true), (49, true), (first, false)] {
+                assert_eq!(keys.event(code, down, &mut ui), KeyOutcome::Unchanged);
+            }
+            assert_eq!(keys.event(last, false, &mut ui), KeyOutcome::MakeNote);
+            assert_eq!(keys.event(last, false, &mut ui), KeyOutcome::Unchanged);
+        }
+        assert!(ui.input.as_str().is_empty());
+    }
+
+    #[test]
+    fn another_key_cancels_an_unfinished_note_shortcut() {
+        let mut keys = OrderedKeyboard::new();
+        let mut ui = Ui::new();
+        for (code, down) in [(56, true), (49, true), (42, true), (42, false),
+                             (49, false), (56, false)] {
+            assert_eq!(keys.event(code, down, &mut ui), KeyOutcome::Unchanged);
+        }
+        assert!(ui.input.as_str().is_empty());
     }
 
     #[test]
