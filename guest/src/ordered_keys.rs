@@ -14,6 +14,8 @@ pub enum KeyOutcome {
     Exit,
     /// A completed Alt+N chord asks the kernel to review a note.
     MakeNote,
+    /// Alt+P turned the project list on or off; when on, the program reads a fresh list.
+    Projects,
 }
 
 pub struct OrderedKeyboard {
@@ -90,6 +92,12 @@ impl OrderedKeyboard {
             if code == 49 {
                 self.note_chord = !already_down && !self.held[42] && !self.held[54];
                 return KeyOutcome::Unchanged;
+            }
+            if code == 25 {
+                // Edge-triggered like every other command; Shift makes it a different chord.
+                if already_down || self.held[42] || self.held[54] { return KeyOutcome::Unchanged; }
+                ui.show_projects = !ui.show_projects;
+                return KeyOutcome::Projects;
             }
             let action = match code {
                 50 => Some(Action::ToggleMode),

@@ -8,6 +8,9 @@ use tailorbird_ui::view::paint_frame;
 // This is a separate guest process using PCP OS' existing display and keyboard grants.
 use pcp_game_guest::{call, exit, log, open, sleep_us, Display};
 use tailorbird_ui::{note, ordered_keys::{KeyOutcome, OrderedKeyboard}, Text, Ui};
+use tailorbird_ui::build_folder_snapshot::MAX_SNAPSHOT_BYTES;
+use tailorbird_ui::project_location::BuildFolder;
+use tailorbird_ui::projects::{Listing, Projects};
 
 use tailorbird_ui::palette::GROUND;
 
@@ -50,6 +53,45 @@ fn make_note(proposals: isize, attempt: u64, number: u32, typed: &str) -> (Text<
     (Text::new(), Some(prepared.job))
 }
 
+/// One fresh list of the build folder: opened, read to its end, closed on every path, then checked whole.
+/// A read that fills the buffer is more than a list may be, and is not shown.
+fn read_projects(expected: Option<(BuildFolder, u64)>) -> Projects {
+    static mut LIST: [u8; MAX_SNAPSHOT_BYTES + 1] = [0; MAX_SNAPSHOT_BYTES + 1];
+    // Safety: this program has one thread and uses the buffer only inside this function.
+    let list = unsafe { &mut *core::ptr::addr_of_mut!(LIST) };
+    let fd = open(b"/dev/build-folder\0", 0);
+    if fd < 0 {
+        return Projects::unavailable();
+    }
+    let mut have = 0usize;
+    let ended = loop {
+        if have == list.len() {
+            break false;
+        }
+        let got = call(0, fd as usize, list[have..].as_mut_ptr() as usize, list.len() - have, 0, 0, 0);
+        if got == 0 {
+            break true;
+        }
+        if got < 0 {
+            break false;
+        }
+        have += got as usize;
+    };
+    call(3, fd as usize, 0, 0, 0, 0, 0);
+    if !ended {
+        return Projects::unreadable();
+    }
+    Projects::read(&list[..have], expected)
+}
+
+/// The folder and run the first good list of this launch named; later lists must name the same.
+fn same_launch(projects: &Projects) -> Option<(BuildFolder, u64)> {
+    if projects.state != Listing::Listed {
+        return None;
+    }
+    BuildFolder::new(projects.folder.as_str()).ok().map(|root| (root, projects.launch))
+}
+
 pcp_game_guest::entry!(tailorbird_main);
 #[no_mangle]
 pub extern "C" fn tailorbird_main() -> ! {
@@ -63,6 +105,7 @@ pub extern "C" fn tailorbird_main() -> ! {
     // not, Alt+N says so and nothing else changes.
     let proposals = open(b"/dev/proposal\0", 2);
     let (mut attempt, mut number) = (1u64, 1u32);
+    let mut launch: Option<(BuildFolder, u64)> = None;
     let mut ordered = OrderedKeyboard::new();
     let mut ui = Ui::new();
     ui.notes = proposals >= 0;
@@ -90,6 +133,16 @@ pub extern "C" fn tailorbird_main() -> ! {
                     attempt += 1;
                     number += 1;
                     // The kernel had the display while it asked: everything is drawn again.
+                    dirty = true;
+                }
+                KeyOutcome::Projects => {
+                    if ui.show_projects {
+                        let fresh = read_projects(launch);
+                        if launch.is_none() {
+                            launch = same_launch(&fresh);
+                        }
+                        ui.projects = fresh;
+                    }
                     dirty = true;
                 }
                 KeyOutcome::Unchanged => {}

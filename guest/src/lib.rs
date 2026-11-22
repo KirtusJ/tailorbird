@@ -44,6 +44,8 @@ pub mod project_location;
 pub mod file_job;
 /// Validated current-launch build-folder snapshots; no I/O or authority.
 pub mod build_folder_snapshot;
+/// What the project list shows, summarised from one snapshot.
+pub mod projects;
 pub const LOG_LIMIT: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -265,6 +267,9 @@ pub struct Ui {
     pub notes: bool,
     /// The last note asked for, with what the kernel's receipt established about it. Kept, not summarised.
     pub last_note: Option<file_job::FileJob>,
+    /// The Work panel shows the project list (Alt+P) instead of Taylor's greeting or the last result.
+    pub show_projects: bool,
+    pub projects: projects::Projects,
     lines: [Line; LOG_LIMIT],
     count: usize,
     /// Rows actually evicted from this launch's local eight-line UI window.
@@ -280,7 +285,7 @@ impl Ui {
             model: Model::Unknown, connected: false, service_epoch: 0,
             task: Task { id: 0, seq: 0, state: TaskState::Idle },
             stop_intent_task: None, permission: None, decision_pending: None, decision_choice: None,
-            effect_uncertain: false, notice: Text::new(), notes: false, last_note: None,
+            effect_uncertain: false, notice: Text::new(), notes: false, last_note: None, show_projects: false, projects: projects::Projects::new(),
             lines: [Line::empty(); LOG_LIMIT], count: 0, feed_hidden_rows: 0,
         }
     }

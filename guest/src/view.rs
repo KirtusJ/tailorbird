@@ -150,6 +150,8 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
         // Consent details occupy a focused exact-text inspector instead of
         // fighting task-output rows for the same pixels. Stop and mode stay
         // visible in the separate x=20..300 sidebar.
+    } else if ui.lines().is_empty() && ui.show_projects {
+        projects(f, &ui.projects);
     } else if ui.lines().is_empty() {
         // Nothing has happened: show what will, as three places a job passes through, none of them lit.
         for (n, (step, what)) in [("1", "You ask"), ("2", "You check"), ("3", "I build")].iter().enumerate() {
@@ -182,7 +184,10 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
                       else { "Not confirmed: this file may or may not have been made." }, 1, AMBER);
             }
             label(f, 420, 384, "Type again and press Alt+N for another.", 1, SOFT);
-            key(f, 339, 420, "Esc", "returns to Programs");
+            let x = key(f, 339, 420, "Esc", "returns to Programs");
+            if ui.notes {
+                key(f, x, 420, "Alt+P", "shows your projects");
+            }
             return footer(f, ui);
         }
         label(f, 420, 286, "Hi, I'm Taylor. Nothing is running.", 2, TEXT);
@@ -198,7 +203,10 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
             label(f, 420, 340, "cannot build anything.", 2, AMBER);
         }
         label(f, 420, 384, "The rest of PCP OS works without me.", 2, GOOD);
-        key(f, 339, 420, "Esc", "returns to Programs");
+        let x = key(f, 339, 420, "Esc", "returns to Programs");
+        if ui.notes {
+            key(f, x, 420, "Alt+P", "shows your projects");
+        }
     } else {
         for (i, event) in ui.lines().iter().enumerate() {
             let y = 190 + i as i32 * 28;
@@ -244,6 +252,62 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
     }
 
     footer(f, ui);
+}
+
+/// The project list, in the Work panel: where the projects are, each with how many files, and in words
+/// what is not known. "No projects yet" is said only of a whole list that was read and held nothing.
+fn projects(f: &mut Frame<'_>, list: &crate::projects::Projects) {
+    use crate::projects::Listing;
+    let mut digits = [0u8; 20];
+    label(f, 339, 190, "Your projects", 2, TEXT);
+    match list.state {
+        Listing::NotAsked => label(f, 339, 226, "Not read yet.", 2, SOFT),
+        Listing::Unavailable => {
+            label(f, 339, 226, "PCP OS has not let Taylor see a", 2, AMBER);
+            label(f, 339, 250, "projects folder in this launch.", 2, AMBER);
+        }
+        Listing::Unreadable => {
+            label(f, 339, 226, "The list could not be read, so", 2, AMBER);
+            label(f, 339, 250, "nothing is shown. Alt+P twice retries.", 2, AMBER);
+        }
+        Listing::Listed => {
+            label(f, 339, 218, "in the folder", 1, SOFT);
+            label(f, 339 + 14 * 6, 218, list.folder.as_str(), 1, TEXT);
+            if list.known_empty() {
+                label(f, 339, 250, "No projects yet.", 2, SOFT);
+                label(f, 339, 280, "Type something and press Alt+N to make a note.", 1, SOFT);
+            }
+            for (row, entry) in list.rows[..list.shown].iter().enumerate() {
+                let y = 240 + row as i32 * 22;
+                f.well(339, y - 3, 570, 20, GROUND);
+                let name = entry.project.as_str();
+                // A name too long for the row is shown cut, and marked as cut.
+                let (fits, cut) = if name.len() > 72 { (&name[..69], true) } else { (name, false) };
+                label(f, 347, y, fits, 1, TEXT);
+                if cut {
+                    label(f, 347 + 69 * 6, y, "...", 1, AMBER);
+                }
+                label(f, 800, y, decimal_u64(entry.files as u64, &mut digits), 1, TEXT);
+                label(f, 830, y, if entry.files == 1 { "file" } else { "files" }, 1, SOFT);
+            }
+            let mut y = 240 + list.shown as i32 * 22 + 4;
+            if list.projects > list.shown {
+                label(f, 339, y, "more projects not shown:", 1, AMBER);
+                label(f, 339 + 25 * 6, y, decimal_u64((list.projects - list.shown) as u64, &mut digits), 1, AMBER);
+                y += 14;
+            }
+            if list.other > 0 {
+                label(f, 339, y, "other files in the folder:", 1, SOFT);
+                label(f, 339 + 27 * 6, y, decimal_u64(list.other as u64, &mut digits), 1, SOFT);
+                y += 14;
+            }
+            if !list.complete {
+                label(f, 339, y, "PCP OS listed only part of the folder. There is more.", 1, AMBER);
+            }
+        }
+    }
+    let x = key(f, 339, 420, "Alt+P", "goes back");
+    key(f, x, 420, "Esc", "returns to Programs");
 }
 
 fn footer(f: &mut Frame<'_>, ui: &Ui) {
