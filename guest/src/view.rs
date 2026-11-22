@@ -737,13 +737,18 @@ mod tests {
         // Use the same panel substrates as the real renderer, since the production
         // font alpha-blends into those backgrounds. Comparing pixels to the raw ink
         // colour would wrongly accept two blank masks and miss every blended glyph.
-        let mut expected = vec![0u32; screen.len()];
-        let mut f = Frame::new(&mut expected, 960, 540, 960, GROUND, false);
         let stop_rect = crate::pointer::STOP_RECT;
         let (stop_fill, _, caption_color) = stop_colors(true);
+        let mut bare_panels = vec![0u32; screen.len()];
+        {
+            let mut base = Frame::new(&mut bare_panels, 960, 540, 960, GROUND, false);
+            base.panel(stop_rect.x, stop_rect.y, stop_rect.width, stop_rect.height, stop_fill);
+            base.panel(316, 94, 624, 352, PANEL);
+        }
+        let mut expected = vec![0u32; screen.len()];
+        let mut f = Frame::new(&mut expected, 960, 540, 960, GROUND, false);
         f.panel(stop_rect.x, stop_rect.y, stop_rect.width, stop_rect.height, stop_fill);
         f.panel(316, 94, 624, 352, PANEL);
-        let bare_panels = expected.clone();
         let stop = "Waiting for a reply";
         let transcript = "(waiting for a reply)";
         label(&mut f, 48, 365, stop, 1, caption_color);
