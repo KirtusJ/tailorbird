@@ -495,6 +495,82 @@ def check(kernel, app, measurement, folder, small):
         # The name, letter by letter from the kernel's typeface in the 15 by 30 cell view.rs draws it in.
         return stop_text_ok(rgb,mode,"Tailorbird",22,12,15,15,30,TEAL,PANEL)
 
+    # Independent, fixed brand oracle, not derived from the renderer under test.
+    # This is the 16x14 tile drawing approved in #35. Every actual QEMU frame
+    # must contain the expected RGB at its real screen coordinates.
+    taylor_tiles = (
+        "...............G",
+        "......HHHH....GG",
+        ".....HHHHHH...GG",
+        "....HHHHHHHH.GG.",
+        ".....GGKGGGGGGG.",
+        "...SSGGGGGGGGGG.",
+        "SS...GWWWGGGGG..",
+        "SSAAAGGWWWGGGG..",
+        "SS...WWWWWWGG...",
+        "......WWWWWG....",
+        ".......WWWW.....",
+        "........A.A.....",
+        "........A.A.....",
+        ".......AA.AA....",
+    )
+    taylor_inks = {
+        "G": bytes.fromhex("7fae5c"),  # LEAF, not status GOOD
+        "H": bytes.fromhex("f2c230"),  # HARD_HAT, not warning AMBER
+        "W": bytes.fromhex("f1f4e4"),  # CREAM, not TEXT
+        "A": AMBER,                    # handle and legs
+        "S": SOFT,                     # hammer head
+        "K": GROUND,                   # dark outline
+    }
+    assert len(taylor_tiles) == 14 and all(len(row) == 16 for row in taylor_tiles)
+    taylor_receipts = {"native_frames": 0, "erased_tile_negatives": 0,
+                       "old_colour_negatives": 0}
+
+    def expected_taylor_rgb(mode):
+        left, top, right, bottom = box(mode, 339, 286, 64, 56)
+        stride = right - left
+        # The Work panel is flat PANEL this far below its top relief.
+        expected = bytearray(PANEL * (stride * (bottom - top)))
+        for gy, row in enumerate(taylor_tiles):
+            for gx, symbol in enumerate(row):
+                ink = taylor_inks.get(symbol)
+                if ink is None:
+                    continue
+                x0, y0, x1, y1 = box(mode, 339 + gx*4, 286 + gy*4, 4, 4)
+                for py in range(y0, y1):
+                    i = ((py-top)*stride + x0-left)*3
+                    expected[i:i+(x1-x0)*3] = ink * (x1-x0)
+        return bytes(expected)
+
+    def taylor_ok(rgb, mode):
+        return area(rgb, mode, 339, 286, 64, 56) == expected_taylor_rgb(mode)
+
+    def changed_taylor_square(rgb, mode, symbol, new_rgb):
+        gy, gx = next((y, row.index(symbol)) for y, row in enumerate(taylor_tiles)
+                      if symbol in row)
+        left, top, right, bottom = box(mode, 339 + gx*4, 286 + gy*4, 4, 4)
+        altered = bytearray(rgb)
+        for py in range(top, bottom):
+            i = (py*w + left)*3
+            altered[i:i+(right-left)*3] = new_rgb * (right-left)
+        return bytes(altered)
+
+    def check_taylor_native(rgb, mode):
+        assert taylor_ok(rgb, mode), "actual native Taylor sprite differs from independent 16x14 RGB oracle"
+        for symbol in "GHWASK":
+            erased = changed_taylor_square(rgb, mode, symbol, PANEL)
+            assert erased != rgb and not taylor_ok(erased, mode), (
+                f"erased native Taylor tile {symbol!r} was accepted"
+            )
+            taylor_receipts["erased_tile_negatives"] += 1
+        for symbol, old_ink in (("H", AMBER), ("G", GOOD), ("W", TEXT), ("A", SOFT)):
+            substituted = changed_taylor_square(rgb, mode, symbol, old_ink)
+            assert substituted != rgb and not taylor_ok(substituted, mode), (
+                f"outdated native Taylor palette tile {symbol!r} was accepted"
+            )
+            taylor_receipts["old_colour_negatives"] += 1
+        taylor_receipts["native_frames"] += 1
+
     def erased_title_with_one_teal_pixel(rgb, mode):
         """Host-only negative: nearly empty headline that passed the old oracle."""
         left, top, right, bottom = box(mode,22,12,150,30)
@@ -918,6 +994,7 @@ def check(kernel, app, measurement, folder, small):
         check_empty_output_positive_and_negatives(empty,"fit")
         check_task_section_positive_and_negatives(empty,"fit")
         check_affordance_positive_and_negatives(empty,"fit")
+        check_taylor_native(empty,"fit")
         m.key("a")
         typed = sample("typed",lambda rgb: form(rgb,"fit") and editor(rgb,"fit") != editor(empty,"fit"))
         check_stop_positive_and_negatives(typed,"fit")
@@ -929,6 +1006,7 @@ def check(kernel, app, measurement, folder, small):
         check_empty_output_positive_and_negatives(typed,"fit")
         check_task_section_positive_and_negatives(typed,"fit")
         check_affordance_positive_and_negatives(typed,"fit")
+        check_taylor_native(typed,"fit")
         m.key("f6")
         compact = sample("compact",lambda rgb: form(rgb,"compact") and
                          badge(rgb,"compact") != badge(typed,"fit") and
@@ -942,6 +1020,7 @@ def check(kernel, app, measurement, folder, small):
         check_empty_output_positive_and_negatives(compact,"compact")
         check_task_section_positive_and_negatives(compact,"compact")
         check_affordance_positive_and_negatives(compact,"compact")
+        check_taylor_native(compact,"compact")
         if small:
             assert editor(compact,"compact") == editor(typed,"fit")
         for mode, rgb in [("fit",typed),("compact",compact)]:
@@ -960,6 +1039,7 @@ def check(kernel, app, measurement, folder, small):
         check_empty_output_positive_and_negatives(fit_again,"fit")
         check_task_section_positive_and_negatives(fit_again,"fit")
         check_affordance_positive_and_negatives(fit_again,"fit")
+        check_taylor_native(fit_again,"fit")
         require_stop_receipts(stop_receipts, small)
         require_mode_receipts(mode_receipts)
         require_f6_receipts(f6_receipts)
@@ -1089,6 +1169,11 @@ def check(kernel, app, measurement, folder, small):
                 f"corrupt status-row {'right' if at_right else 'left'} margin accepted"
             )
             return_receipts["tampered_status_margin_negatives"] += 1
+        assert taylor_receipts == {"native_frames": 4, "erased_tile_negatives": 24,
+                                   "old_colour_negatives": 16}, (
+            f"incomplete Taylor source-RGB acceptance: {taylor_receipts!r}"
+        )
+        report["taylor_brand_source_rgb"] = dict(taylor_receipts)
         require_launcher_return_receipts(return_receipts)
         report["full_launcher_return_source_rgb"] = dict(return_receipts)
         m.key("p")
