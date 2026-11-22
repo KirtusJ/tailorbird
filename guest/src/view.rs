@@ -37,6 +37,7 @@ fn sentence<'a>(value: &str, buf: &'a mut [u8; 40]) -> &'a str {
 /// Taylor, the tailorbird: green back, pale front, a long tail held up, and an amber crown worn like a
 /// builder's hat. Sixteen by fourteen squares, each `unit` of the layout across. Facing left, toward
 /// the words beside it.
+// Taylor carries a little hammer under one wing (the owner's wish): steel head, wooden handle.
 const TAYLOR: [&[u8; 16]; 14] = [
     b"............G...",
     b"...AAAA....GG...",
@@ -45,12 +46,12 @@ const TAYLOR: [&[u8; 16]; 14] = [
     b"..GGKGGGGGGG....",
     b"SSGGGGGGGGGG....",
     b"..GWWWGGGGG.....",
-    b"..WWWWWGGGG.....",
-    b"..WWWWWWGG......",
-    b"...WWWWWG.......",
-    b"....WWWW........",
-    b".....S.S........",
-    b".....S.S........",
+    b"..WWWWWGGGG.SSSS",
+    b"..WWWWWWGG..SSSS",
+    b"...WWWWWGGG..A..",
+    b"....WWWW..GGGA..",
+    b".....S.S.....A..",
+    b".....S.S.....A..",
     b"....SS.SS.......",
 ];
 
