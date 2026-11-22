@@ -7,7 +7,8 @@ use tailorbird_ui::view::paint_frame;
 // Native graphical *offline preview*. No model, tool service or transport is linked.
 // This is a separate guest process using PCP OS' existing display and keyboard grants.
 use pcp_game_guest::{call, exit, log, open, sleep_us, Display};
-use tailorbird_ui::{note, ordered_keys::{KeyOutcome, OrderedKeyboard}, Text, Ui};
+use tailorbird_ui::talk::{Reply, Service, Who};
+use tailorbird_ui::{link::Link, note, ordered_keys::{KeyOutcome, OrderedKeyboard}, Text, Ui};
 use tailorbird_ui::build_folder_snapshot::MAX_SNAPSHOT_BYTES;
 use tailorbird_ui::project_location::BuildFolder;
 use tailorbird_ui::projects::{read_whole, view, Files, Listing, Projects, Viewed, Whole, VIEW_BYTES};
@@ -119,6 +120,82 @@ fn view_file(destination: FileDestination, jobs: &mut tailorbird_ui::jobs::Jobs)
     viewed
 }
 
+/// What the console was last told about the conversation. The console is told how the model service
+/// stands and how each reply ended, with a count of bytes; never what was said.
+struct Said {
+    service: Service,
+    reply: u64,
+    state: Reply,
+}
+
+impl Said {
+    fn changes(&mut self, ui: &Ui) {
+        if ui.talk.service != self.service {
+            self.service = ui.talk.service;
+            log(match self.service {
+                Service::Absent => b"tailorbird: model service: none\n",
+                Service::Loading => b"tailorbird: model service: loading\n",
+                Service::Ready => b"tailorbird: model service: ready\n",
+                Service::Failed => b"tailorbird: model service: did not start\n",
+                Service::Stopped => b"tailorbird: model service: stopped\n",
+            });
+        }
+        let Some(turn) = ui.talk.turns().iter().rev().find(|t| t.who == Who::Taylor) else { return };
+        if (turn.reply, turn.state) == (self.reply, self.state) {
+            return;
+        }
+        (self.reply, self.state) = (turn.reply, turn.state);
+        let words = match turn.state {
+            Reply::Streaming => " is being answered\n",
+            Reply::Complete => " complete\n",
+            Reply::Cancelled => " stopped by the person\n",
+            Reply::Failed => " failed\n",
+            Reply::None => return,
+        };
+        // One line in one write: another program writes to the same console.
+        let mut line = ConsoleLine { bytes: [0; 96], length: 0 };
+        push(&mut line, "tailorbird: reply ");
+        number(&mut line, turn.reply);
+        if turn.state != Reply::Streaming {
+            push(&mut line, " kept ");
+            number(&mut line, turn.text.as_str().len() as u64);
+            push(&mut line, " bytes and is");
+        }
+        push(&mut line, words);
+        log(&line.bytes[..line.length]);
+    }
+}
+
+struct ConsoleLine {
+    bytes: [u8; 96],
+    length: usize,
+}
+
+fn push(line: &mut ConsoleLine, words: &str) {
+    for b in words.bytes() {
+        if line.length < line.bytes.len() {
+            line.bytes[line.length] = b;
+            line.length += 1;
+        }
+    }
+}
+
+fn number(line: &mut ConsoleLine, mut value: u64) {
+    let mut digits = [0u8; 20];
+    let mut count = 0;
+    loop {
+        digits[count] = b'0' + (value % 10) as u8;
+        value /= 10;
+        count += 1;
+        if value == 0 {
+            break;
+        }
+    }
+    for i in (0..count).rev() {
+        push(line, core::str::from_utf8(&digits[i..i + 1]).unwrap_or("?"));
+    }
+}
+
 /// The folder and run the first good list of this launch named; later lists must name the same.
 fn same_launch(projects: &Projects) -> Option<(BuildFolder, u64)> {
     if projects.state != Listing::Listed {
@@ -151,10 +228,19 @@ pub extern "C" fn tailorbird_main() -> ! {
         ui.active = launch.and_then(|(root, _)| note::default_project(root));
         ui.projects = first;
     }
+    // The channel to a local model service, if PCP OS started one beside this program. Opened not
+    // to wait: the person's keys are read whether or not a model has anything to say.
+    let talk = open(b"/dev/talk\0", 2 | 0x800);
+    let mut link = Link::new(talk >= 0, &mut ui);
+    log(if talk >= 0 { b"tailorbird: a model service channel is open\n" } else { b"tailorbird: no model service channel\n" });
+    let mut said = Said { service: ui.talk.service, reply: 0, state: Reply::None };
     paint(&mut display, &ui);
     log(b"Tailorbird first frame presented\n");
     loop {
-        let mut dirty = false;
+        let mut dirty = link.turn(&mut ui,
+            |into| call(0, talk as usize, into.as_mut_ptr() as usize, into.len(), 0, 0, 0),
+            |from| call(1, talk as usize, from.as_ptr() as usize, from.len(), 0, 0, 0));
+        said.changes(&ui);
         loop {
             let mut event = [0u8; 2];
             if call(0, kb as usize, event.as_mut_ptr() as usize, 2, 0, 0, 0) != 2 {

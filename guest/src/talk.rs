@@ -14,6 +14,8 @@ pub enum Service {
     Ready,
     /// A model was expected and could not be started. Distinct from Absent: something is wrong.
     Failed,
+    /// A model was running and is gone. It is started again when Tailorbird is next opened.
+    Stopped,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,6 +42,7 @@ pub const TURNS: usize = 24;
 pub const NO_MODEL: &str = "No model is running on this computer, so Taylor cannot answer yet.";
 pub const STILL_LOADING: &str = "Taylor's model is still loading. Your message was not sent; send it again when ready.";
 pub const NOT_STARTED: &str = "Taylor's model could not be started, so Taylor cannot answer.";
+pub const HAS_STOPPED: &str = "Taylor's model has stopped, so Taylor cannot answer. Leaving and opening Tailorbird starts it again.";
 pub const TOO_LONG: &str = "That message is longer than can be sent at once, so none of it was sent.";
 pub const BUSY: &str = "Taylor is still answering. Stop that answer first, or wait.";
 
@@ -75,6 +78,19 @@ pub enum Incoming<'a> {
     Done { conversation: u64, reply: u64 },
     Failed { conversation: u64, reply: u64 },
 }
+
+/// Something this program has to tell the model service. Made by the conversation, carried by
+/// whoever holds the channel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Request {
+    Say(Outgoing),
+    /// The person stopped this reply.
+    Stop { conversation: u64, reply: u64 },
+}
+
+/// Requests waiting to be carried. Four is more than one press can make; a fifth is refused, and
+/// the caller says so instead of losing it.
+pub const WAITING: usize = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Taken {
@@ -147,6 +163,7 @@ impl Talk {
             (Service::Absent, _) => Some(NO_MODEL),
             (Service::Loading, _) => Some(STILL_LOADING),
             (Service::Failed, _) => Some(NOT_STARTED),
+            (Service::Stopped, _) => Some(HAS_STOPPED),
             (Service::Ready, Some(_)) => Some(BUSY),
             (Service::Ready, None) => None,
         };
@@ -240,7 +257,7 @@ mod tests {
     fn without_a_model_the_message_is_kept_and_the_reason_is_a_system_turn() {
         let mut talk = Talk::new();
         assert!(talk.is_empty());
-        for (service, why) in [(Service::Absent, NO_MODEL), (Service::Loading, STILL_LOADING), (Service::Failed, NOT_STARTED)] {
+        for (service, why) in [(Service::Absent, NO_MODEL), (Service::Loading, STILL_LOADING), (Service::Failed, NOT_STARTED), (Service::Stopped, HAS_STOPPED)] {
             talk.service_is(service);
             assert_eq!(talk.say("hello", true), None);
             let turns = talk.turns();
@@ -251,7 +268,7 @@ mod tests {
         // Nothing here is Taylor's, and nothing is being waited for.
         assert!(talk.turns().iter().all(|t| t.who != Who::Taylor) && !talk.answering());
         assert_eq!(talk.say("", true), None);
-        assert_eq!(talk.turns().len(), 6);
+        assert_eq!(talk.turns().len(), 8);
     }
 
     #[test]

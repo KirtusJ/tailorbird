@@ -102,7 +102,9 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
     label(f, 22, 52, "PCP OS > Programs > Tailorbird (Esc returns to Programs)", 1, SOFT);
     label(f, 202, 27, "builds and fixes on this computer", 2, SOFT);
     // What is behind it, said once, where the eye lands last: a lamp and two words.
-    let (lamp, link) = if ui.connected { (GOOD, "Ready") } else if ui.notes { (AMBER, "Notes only") } else { (BAD, "Not ready") };
+    let talks = ui.talk.service == crate::talk::Service::Ready;
+    let (lamp, link) = if ui.connected { (GOOD, "Ready") } else if talks && ui.notes { (GOOD, "Talk + notes") } else if talks { (GOOD, "Talk only") }
+                       else if ui.notes { (AMBER, "Notes only") } else { (BAD, "Not ready") };
     f.well(764, 18, 176, 36, GROUND);
     f.rect(778, 31, 10, 10, lamp);
     label(f, 796, 26, link, 2, lamp);
@@ -110,8 +112,18 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
     // Mode and Stop are always visible even if the model is missing.
     f.panel(20, 94, 280, 352, PANEL);
     label(f, 38, 115, "TAYLOR IS", 1, TEAL);
-    label(f, 38, 135, sentence(ui.model.label(), &mut name), 2,
-          if ui.model == Model::Ready { GOOD } else { AMBER });
+    // With no task service, what stands here is how the model that talks stands: the two must not
+    // say different things on one screen.
+    let (standing, colour) = if ui.connected { (sentence(ui.model.label(), &mut name), if ui.model == Model::Ready { GOOD } else { AMBER }) } else {
+        match ui.talk.service {
+            crate::talk::Service::Absent => (sentence(ui.model.label(), &mut name), AMBER),
+            crate::talk::Service::Loading => ("Getting ready", AMBER),
+            crate::talk::Service::Ready => ("Ready to talk", GOOD),
+            crate::talk::Service::Failed => ("Not started", BAD),
+            crate::talk::Service::Stopped => ("Stopped", BAD),
+        }
+    };
+    label(f, 38, 135, standing, 2, colour);
     label(f, 38, 191, "MODE", 1, TEAL);
     let mode_rect = crate::pointer::MODE_RECT;
     f.well(mode_rect.x, mode_rect.y, mode_rect.width, mode_rect.height, GROUND);
@@ -124,16 +136,18 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
     }
 
     let stop_rect = crate::pointer::STOP_RECT;
-    let (stop_fill, stop_heading, stop_caption) = stop_colors(ui.controls().stop_enabled);
-    if ui.controls().stop_enabled {
+    // Stop stops a task, or with no task the answer under way.
+    let answering = !ui.controls().stop_enabled && ui.talk.answering();
+    let (stop_fill, stop_heading, stop_caption) = stop_colors(ui.controls().stop_enabled || answering);
+    if ui.controls().stop_enabled || answering {
         f.panel(stop_rect.x, stop_rect.y, stop_rect.width, stop_rect.height, stop_fill);
     } else {
         f.well(stop_rect.x, stop_rect.y, stop_rect.width, stop_rect.height, stop_fill);
     }
     label(f, 48, 329, "Stop", 3, stop_heading);
-    label(f, 48, 365, sentence(ui.task.state.label(), &mut name), 1, stop_caption);
+    label(f, 48, 365, if answering { "Taylor is answering" } else { sentence(ui.task.state.label(), &mut name) }, 1, stop_caption);
     key(f, 40, 410, "Alt", "+");
-    key(f, 78, 410, "S", "stops the task");
+    key(f, 78, 410, "S", if answering { "stops the answer" } else { "stops the task" });
 
     f.panel(316, 94, 624, 352, PANEL);
     label(f, 335, 116, "Work", 2, TEAL);
@@ -305,6 +319,15 @@ fn transcript(f: &mut Frame<'_>, talk: &crate::talk::Talk) {
     const ROWS: i32 = 16;
     let mut digits = [0u8; 20];
     label(f, 339, 190, "Talking with Taylor", 2, TEXT);
+    // Whether anything can answer, said where the conversation is, in the same words every time.
+    let (model, colour) = match talk.service {
+        crate::talk::Service::Absent => ("Model: none", SOFT),
+        crate::talk::Service::Loading => ("Model: loading", AMBER),
+        crate::talk::Service::Ready => ("Model: ready", GOOD),
+        crate::talk::Service::Failed => ("Model: not started", BAD),
+        crate::talk::Service::Stopped => ("Model: stopped", BAD),
+    };
+    label(f, 790, 196, model, 1, colour);
     // Rows each turn needs: its text wrapped, at least one, and a gap after it.
     let rows = |t: &crate::talk::Turn| (t.text.as_str().len().div_ceil(ACROSS).max(1) + t.cut as usize) as i32 + 1;
     let turns = talk.turns();

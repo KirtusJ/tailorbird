@@ -8,6 +8,8 @@ description = "Native PCP OS Tailorbird UI prototype; no model or tool backend"
 
 [features]
 live-work-demo = []
+# A stand-in for a model service, for checking the channel. Not a model; on no release image.
+talk-test-worker = []
 
 [lib]
 name = "tailorbird_ui"
@@ -25,6 +27,13 @@ path = "src/work_demo_main.rs"
 test = false
 bench = false
 required-features = ["live-work-demo"]
+
+[[bin]]
+name = "talk-test-worker"
+path = "src/talk_test_worker_main.rs"
+test = false
+bench = false
+required-features = ["talk-test-worker"]
 
 [target.'cfg(target_os = "none")'.dependencies]
 pcp-game-guest = { path = "../pcp-os/store/native/guest" }
