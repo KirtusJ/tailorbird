@@ -36,11 +36,12 @@ def capture_folder(output):
 
 class Qemu:
     def __init__(self, kernel: pathlib.Path, guest: pathlib.Path, folder: pathlib.Path, machine: str,
-                 boot_line: str = "auto=tailorbird then=off desktop=1024x768 ui_scale=1", display_args=None):
+                 boot_line: str = "auto=tailorbird then=off desktop=1024x768 ui_scale=1", display_args=None,
+                 *, cpu="max", memory_mib=256):
         self.folder = folder
         self.serial_path = folder / "serial.log"
         cmd = [
-            "qemu-system-x86_64", "-machine", machine, "-cpu", "max", "-m", "256M",
+            "qemu-system-x86_64", "-machine", machine, "-cpu", cpu, "-m", f"{memory_mib}M",
             "-kernel", str(kernel), "-initrd", str(guest),
             "-append", boot_line,
             "-display", "none", *(display_args if display_args is not None else ["-vga", "std"]),
