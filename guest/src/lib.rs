@@ -536,7 +536,11 @@ impl Ui {
                 // be sent once a model is there; pressing Enter again on the same unsent words does
                 // not repeat them in the conversation.
                 if !self.input.is_empty() {
-                    let repeated = self.talk.turns().iter().rev().find(|t| t.who == talk::Who::Person)
+                    // Only while it still cannot be sent: once the model is ready and no answer is under
+                    // way, the same words, still in the field, are sent on Enter. (Before, words first
+                    // typed while the model was loading could never be sent without being changed.)
+                    let can_send = self.talk.service == talk::Service::Ready && !self.talk.answering();
+                    let repeated = !can_send && self.talk.turns().iter().rev().find(|t| t.who == talk::Who::Person)
                         .is_some_and(|t| !t.sent && t.text.as_str() == self.input.as_str());
                     self.talk_shown = true;
                     self.show_projects = false;
@@ -602,6 +606,8 @@ impl Ui {
             self.ask_service(talk::Request::Forget { conversation: ended });
         }
         self.talk_shown = true;
+        // The conversation is what is shown and what Enter goes to, also when projects were open.
+        self.show_projects = false;
         self.notice("NEW CONVERSATION - THE EARLIER ONE IS NOT KEPT");
         true
     }
@@ -1047,6 +1053,44 @@ mod tests {
             assert_eq!(u.notice.as_str(), words);
             assert_eq!(u.input.as_str(), "hello");
         }
+    }
+    /// Both found by the automated review of tailorbird#19.
+    #[test]
+    fn words_typed_while_the_model_was_loading_are_sent_by_enter_once_it_is_ready() {
+        let mut u = Ui::new();
+        u.talk.service_is(talk::Service::Loading);
+        typed(&mut u, "hello");
+        assert!(u.intent(Action::Submit).is_none());
+        // Enter again while it still loads adds nothing to the conversation and sends nothing.
+        let turns = u.talk.turns().len();
+        assert!(u.intent(Action::Submit).is_none());
+        assert_eq!((u.talk.turns().len(), u.for_service()), (turns, None));
+        assert_eq!(u.notice.as_str(), "MODEL STILL LOADING - NOT SENT");
+        // The model is ready. The same words, never changed, go on the next Enter.
+        u.talk.service_is(talk::Service::Ready);
+        assert_eq!(u.input.as_str(), "hello");
+        assert!(u.intent(Action::Submit).is_none());
+        assert_eq!(u.notice.as_str(), "SENT TO TAYLOR'S MODEL ON THIS COMPUTER");
+        assert!(matches!(u.for_service(), Some(talk::Request::Say(m)) if m.text.as_str() == "hello"));
+        assert_eq!(u.input.as_str(), "");
+        // The same after an answer that was under way has ended.
+        u.service_took();
+        typed(&mut u, "again");
+        assert!(u.intent(Action::Submit).is_none());
+        assert_eq!(u.notice.as_str(), "TAYLOR IS STILL ANSWERING - NOT SENT");
+        assert_eq!(u.talk.receive(talk::Incoming::Done { conversation: 1, reply: 1 }), talk::Taken::Shown);
+        assert!(u.intent(Action::Submit).is_none());
+        assert_eq!(u.notice.as_str(), "SENT TO TAYLOR'S MODEL ON THIS COMPUTER");
+    }
+    #[test]
+    fn a_new_conversation_leaves_the_projects_so_that_enter_sends() {
+        let mut u = Ui::new();
+        u.talk.service_is(talk::Service::Ready);
+        typed(&mut u, "one");
+        let _ = u.intent(Action::Submit);
+        u.show_projects = true;
+        assert!(u.new_conversation());
+        assert!(u.talk_shown && !u.show_projects);
     }
     #[test]
     fn requests_nobody_carries_are_never_dropped_and_a_message_with_no_room_for_what_follows_is_not_taken() {
