@@ -51,7 +51,7 @@ def run(kernel, guest, out):
     glyphs = reader["kernel_glyphs"]()
     reports = []
     for action in ("cut-at-confirmation", "clean-shutdown", "cut-after-made", "missing-store",
-                   "wrong-volume-id", "kernel-stop"):
+                   "wrong-volume-id", "kernel-stop", "hardware-stop-screen"):
         folder = out / action
         folder.mkdir()
         shutil.copyfile(kernel, folder / "k")
@@ -63,7 +63,10 @@ def run(kernel, guest, out):
         if action != "missing-store":
             devices += ["-drive", f"if=none,id=store,format=raw,file={disk}",
                         "-device", "ide-hd,drive=store,bus=ide.0,unit=0,serial=PCP-VM-STORE"]
-        vm = Qemu(Path("k"), Path("t.elf"), folder, "pc", cmd, display_args=devices)
+        simulated_hardware_path = action == "hardware-stop-screen"
+        vm = Qemu(Path("k"), Path("t.elf"), folder, "pc", cmd, display_args=devices,
+                  cpu="max,-hypervisor" if simulated_hardware_path else "max",
+                  memory_mib=128 if simulated_hardware_path else 256)
 
         def wait(check, description):
             deadline = time.monotonic() + 40
@@ -99,6 +102,25 @@ def run(kernel, guest, out):
                 wait(lambda: "t.elf ended STOPPED" in vm.serial(), "kernel Stop from Projects")
                 power_question("shutdown-question")
                 vm.key("ret")
+            elif simulated_hardware_path:
+                vm.key("esc")
+                wait(lambda: "t.elf ended DONE" in vm.serial(), "return to desktop")
+                power_question("shutdown-question")
+                vm.key("ret")
+
+                def stopped(rows):
+                    text = " ".join(" ".join(row.split()) for row in rows if row.strip())
+                    return all(part in text for part in (
+                        "PCP OS has stopped.", "Nothing is running and nothing more will be written.",
+                        "This kernel cannot switch the computer off. Hold its power button until it goes dark."))
+
+                screen("stopped", stopped)
+                before = (folder / "stopped.ppm").read_bytes()
+                vm.key("ret")
+                assert vm.proc.poll() is None
+                vm.screenshot("after-key")
+                assert (folder / "after-key.ppm").read_bytes() == before
+                assert "ALL SELF-TESTS PASS" in vm.serial()
             elif not refused:
                 for ch in NOTE:
                     vm.key("spc" if ch == " " else ch)
@@ -126,7 +148,7 @@ def run(kernel, guest, out):
                 assert vm.proc.poll() is None
                 vm.proc.kill()
                 assert vm.proc.wait(timeout=10) < 0
-            elif not refused:
+            elif not refused and not simulated_hardware_path:
                 assert vm.proc.wait(timeout=30) == 33
                 assert "ALL SELF-TESTS PASS" in vm.serial()
             made = "CREATED after the person allowed it" in vm.serial()
@@ -136,6 +158,7 @@ def run(kernel, guest, out):
         assert disk.read_bytes() == initial, f"{action}: existing volume bytes changed"
         assert nvme.read_bytes() == baseline, f"{action}: unselected NVMe disk changed"
         reports.append({"action": action, "exit": vm.proc.returncode, "mounted_files": None if refused else 1,
+                        "manual_power_off_screen": simulated_hardware_path,
                         "confirmed_creation": made, "store_sha256": hashlib.sha256(initial).hexdigest(),
                         "unselected_4k_nvme_sha256": nvme_digest})
         (out / "result.json").write_text(json.dumps({"kernel": image, "guest": digest, "boots": reports}, indent=2))
