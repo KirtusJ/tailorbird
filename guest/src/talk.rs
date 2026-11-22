@@ -40,6 +40,7 @@ pub const TURNS: usize = 24;
 pub const NO_MODEL: &str = "No model is running on this computer, so Taylor cannot answer yet.";
 pub const STILL_LOADING: &str = "Taylor's model is still loading. Your message was not sent; send it again when ready.";
 pub const NOT_STARTED: &str = "Taylor's model could not be started, so Taylor cannot answer.";
+pub const TOO_LONG: &str = "That message is longer than can be sent at once, so none of it was sent.";
 pub const BUSY: &str = "Taylor is still answering. Stop that answer first, or wait.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -110,7 +111,11 @@ impl Talk {
 
     fn push(&mut self, who: Who, words: &str, reply: u64, state: Reply, sent: bool) {
         if self.count == TURNS {
-            self.turns.copy_within(1.., 0);
+            // The oldest turn makes room, except the answer still under way: that one is kept however
+            // far the conversation rolls on, so that what arrives for it, and its end, still find it.
+            let active = |t: &Turn| self.pending.is_some_and(|reply| t.who == Who::Taylor && t.reply == reply && t.state == Reply::Streaming);
+            let oldest = if active(&self.turns[0]) { 1 } else { 0 };
+            self.turns.copy_within(oldest + 1.., oldest);
             self.count -= 1;
             self.dropped += 1;
         }
@@ -135,7 +140,10 @@ impl Talk {
         if words.is_empty() {
             return None;
         }
+        // What crosses to the model service is the whole message or nothing: one longer than the
+        // record holds is kept on the screen as far as a turn shows, marked cut, and not sent.
         let why_not = match (self.service, self.pending) {
+            _ if words.len() > crate::INPUT_LIMIT => Some(TOO_LONG),
             (Service::Absent, _) => Some(NO_MODEL),
             (Service::Loading, _) => Some(STILL_LOADING),
             (Service::Failed, _) => Some(NOT_STARTED),
@@ -296,6 +304,62 @@ mod tests {
         assert_eq!((third.conversation, third.reply), (2, 3));
         assert_eq!(talk.receive(Incoming::Done { conversation: 1, reply: 3 }), Taken::Stray);
         assert!(talk.answering());
+    }
+
+    #[test]
+    fn an_answer_under_way_is_never_rolled_out_of_the_conversation() {
+        // C3's case: with an answer under way, twelve more messages (each kept with its reason) fill
+        // the conversation and would have evicted the answer, leaving its chunks and its end as strays
+        // and the conversation answering for ever.
+        for ending in 0..3 {
+            let mut talk = Talk::new();
+            talk.service_is(Service::Ready);
+            talk.say("first", true).unwrap();
+            for _ in 0..TURNS {
+                assert_eq!(talk.say("while busy", true), None);
+            }
+            assert_eq!(talk.turns().len(), TURNS);
+            assert!(talk.dropped > 0 && talk.answering());
+            assert_eq!(talk.receive(Incoming::Chunk { conversation: 1, reply: 1, text: "still here" }), Taken::Shown);
+            let state = match ending {
+                0 => {
+                    assert_eq!(talk.receive(Incoming::Done { conversation: 1, reply: 1 }), Taken::Shown);
+                    Reply::Complete
+                }
+                1 => {
+                    assert_eq!(talk.receive(Incoming::Failed { conversation: 1, reply: 1 }), Taken::Shown);
+                    Reply::Failed
+                }
+                _ => {
+                    assert_eq!(talk.cancel(), Some((1, 1)));
+                    Reply::Cancelled
+                }
+            };
+            assert!(!talk.answering());
+            let answer = talk.turns().iter().find(|t| t.who == Who::Taylor).unwrap();
+            assert_eq!((answer.text.as_str(), answer.state), ("still here", state));
+            // Once it has ended it is a turn like any other, and rolls out in its turn.
+            talk.service_is(Service::Absent);
+            for _ in 0..TURNS {
+                talk.say("later", true);
+            }
+            assert!(talk.turns().iter().all(|t| t.who != Who::Taylor));
+        }
+    }
+
+    #[test]
+    fn a_message_too_long_to_send_whole_is_not_sent_in_part() {
+        let mut talk = Talk::new();
+        talk.service_is(Service::Ready);
+        let long = [b'a'; crate::INPUT_LIMIT + 1];
+        assert_eq!(talk.say(core::str::from_utf8(&long).unwrap(), true), None);
+        let turns = talk.turns();
+        assert_eq!((turns[0].who, turns[0].sent, turns[0].text.as_str().len()), (Who::Person, false, crate::INPUT_LIMIT + 1));
+        assert_eq!((turns[1].who, turns[1].text.as_str()), (Who::System, TOO_LONG));
+        assert!(!talk.answering());
+        // Exactly the most is sent whole.
+        let out = talk.say(core::str::from_utf8(&long[1..]).unwrap(), true).unwrap();
+        assert_eq!(out.text.as_str().len(), crate::INPUT_LIMIT);
     }
 
     #[test]
