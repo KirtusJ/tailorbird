@@ -14,7 +14,7 @@ use tailorbird_ui::{model_session::{Memory,greedy,template_supported,CONTEXT,REP
 pcp_game_guest::entry!(worker_main);
 #[no_mangle] pub extern "C" fn worker_main()->!{
     let mut link=match Link::open(){Ok(l)=>l,Err(e)=>fail(e)};
-    if let Err(e)=run(&mut link){let _=link.send(Kind::NotStarted,None,b"");fail(e);}
+    if let Err(e)=run(&mut link){link.finish_with_error();fail(e);}
     exit(0)
 }
 fn fail(reason:&str)->!{log(b"Taylor model worker: ");log(reason.as_bytes());log(b"\n");exit(2)}
@@ -63,7 +63,7 @@ fn run(link:&mut Link)->Result<()>{
             PrefillEvent::TokenProcessed { completed, total } => {
                 match reading.token_processed(completed, total, time_us) {
                     Some(packet) => link.report_reading((got.conversation, got.reply), packet),
-                    None => !link.failed && !link.state.stopped,
+                    None => !link.failed() && !link.state.stopped,
                 }
             }
         }){
@@ -82,13 +82,13 @@ fn run(link:&mut Link)->Result<()>{
                 if turn.answer.len()+text.len()>REPLY_BYTES{output_ok=false;return;}
                 for part in tailorbird_ui::model_inbox::chunks(text){
                     match link.send(Kind::Chunk,active,part.as_bytes()){
-                        Ok(true)=>turn.answer.push_str(part),Ok(false)=>{output_ok=false;break;},Err(_)=>{link.failed=true;output_ok=false;break;}
+                        Ok(true)=>turn.answer.push_str(part),Ok(false)|Err(_)=>{output_ok=false;break;}
                     }
                 }
             }).is_err()||!output_ok{failed=true;break;}
             match decoder.step(id,||link.keep(active,&mut ticks)){Ok(logits)=>token=greedy(logits,&tokenizer),Err(_)=>{failed=true;break;}}
         }
-        if link.failed{return Err("conversation channel failed during inference");}
+        if link.failed(){return Err("conversation channel failed during inference");}
         link.poll(active)?;
         if link.state.forget_active {memory.forget(got.conversation);} else {memory.finish(turn).map_err(|_|"conversation commit refused")?;}
         if let Some(id)=link.state.forgotten.take(){memory.forget(id);}

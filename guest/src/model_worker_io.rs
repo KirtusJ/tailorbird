@@ -1,8 +1,11 @@
 //! Unsafe native boundary for the opt-in model worker. The trusted kernel owns
 //! the immutable, sealed, non-executable model pages for this process's lifetime.
 use alloc::vec::Vec;
-use pcp_game_guest::{call,open};
-use tailorbird_ui::{wire::{pack,Kind,Packed,Record},model_inbox::Inbox,model_reading::ProgressOutput};
+#[cfg(not(test))]
+use {pcp_game_guest::{call, open}, tailorbird_ui as ui};
+#[cfg(test)]
+use {super::{call, open}, crate as ui};
+use ui::{wire::{pack,Kind,Packed,Record},model_inbox::Inbox,model_reading::ProgressOutput};
 pub type Result<T>=core::result::Result<T,&'static str>;
 
 pub struct Mapping {address:usize,length:usize,pub manifest:Vec<u8>,pub pin:[u8;32]}
@@ -49,13 +52,37 @@ fn pin(s:&str)->Result<[u8;32]>{
 }
 pub fn sleep()->Result<()>{let duration=[0u64,1_000_000];if call(35,duration.as_ptr() as usize,0,0,0,0,0)==0{Ok(())}else{Err("worker sleep refused")}}
 
-pub struct Link {fd:isize,buffer:[u8;512],at:usize,have:usize,progress:ProgressOutput,pub state:Inbox,pub failed:bool}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Phase { Starting, Ready, Closed }
+
+pub struct Link {fd:isize,buffer:[u8;512],at:usize,have:usize,progress:ProgressOutput,pub state:Inbox,phase:Phase}
 impl Link {
     pub fn open()->Result<Self>{let fd=open(b"/dev/talk\0",2|0x800);if fd<0{return Err("no conversation channel");}
-        Ok(Self{fd,buffer:[0;512],at:0,have:0,progress:ProgressOutput::default(),state:Inbox::new(),failed:false})}
+        Ok(Self{fd,buffer:[0;512],at:0,have:0,progress:ProgressOutput::default(),state:Inbox::new(),phase:Phase::Starting})}
+
+    pub fn failed(&self) -> bool { self.phase == Phase::Closed }
+
+    // A short record can already be visible to the reader when an operation fails.
+    // Once the stream loses framing, no subsequent operation may append bytes to it.
+    fn transport<T>(&mut self, operation: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
+        if self.failed() { return Err("conversation channel closed"); }
+        let result = operation(self);
+        if result.is_err() { self.phase = Phase::Closed; }
+        result
+    }
+
+    pub fn finish_with_error(&mut self) {
+        if self.phase == Phase::Starting {
+            let _ = self.send(Kind::NotStarted, None, b"");
+        }
+        self.phase = Phase::Closed;
+    }
     /// Bounded bytes per poll; one queued SAY. Malformed/unexpected service records
     /// terminate the connection, rather than interpreting their payload as requests.
     pub fn poll(&mut self,active:Option<(u64,u64)>)->Result<()>{
+        self.transport(|link| link.poll_once(active))
+    }
+    fn poll_once(&mut self,active:Option<(u64,u64)>)->Result<()>{
         self.pump_progress(None)?;
         for _ in 0..1024 {
             if self.at==self.have {
@@ -79,28 +106,29 @@ impl Link {
         })
     }
     pub fn report_reading(&mut self, ids: (u64,u64), packet: Packed) -> bool {
-        if self.poll(Some(ids)).is_err() {
-            self.failed = true;
-        }
-        if self.failed || self.state.stopped {
-            return false;
-        }
-        if self.pump_progress(Some(packet)).is_err() {
-            self.failed = true;
-        }
-        !self.failed
+        self.transport(|link| {
+            link.poll_once(Some(ids))?;
+            if link.state.stopped { return Ok(false); }
+            link.pump_progress(Some(packet))?;
+            Ok(true)
+        }).unwrap_or(false)
     }
     pub fn keep(&mut self,active:Option<(u64,u64)>,ticks:&mut usize)->bool{
         *ticks=ticks.wrapping_add(1);
-        if *ticks%4096==0 && self.poll(active).is_err(){self.failed=true;}
-        !self.failed&&!self.state.stopped
+        if *ticks%4096==0 && self.poll(active).is_err(){return false;}
+        !self.failed()&&!self.state.stopped
     }
     pub fn send(&mut self,kind:Kind,ids:Option<(u64,u64)>,body:&[u8])->Result<bool>{
+        let sent = self.transport(|link| link.write_record(kind, ids, body))?;
+        if sent && kind == Kind::Ready { self.phase = Phase::Ready; }
+        Ok(sent)
+    }
+    fn write_record(&mut self,kind:Kind,ids:Option<(u64,u64)>,body:&[u8])->Result<bool>{
         let (conversation,reply)=ids.unwrap_or((0,0));
         let p=pack(Record{kind,history:false,conversation,reply,body}).ok_or("outgoing record refused")?;
         let mut written=0;let mut waits=0;
         while written<p.bytes().len(){
-            self.poll(ids)?;
+            self.poll_once(ids)?;
             // A partially written record must finish to preserve framing. After it,
             // the caller observes Stop and sends no further record for that reply.
             if self.state.stopped&&ids.is_some()&&written==0{return Ok(false);}
