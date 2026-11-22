@@ -1,0 +1,44 @@
+name: Random project trials
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-project:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        seed: [2026112203, 97177, 41041]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          submodules: true
+          persist-credentials: false
+      - name: Build the UI and proposal-enabled kernel
+        run: |
+          rustup toolchain install 1.97.0 --profile minimal --component rust-src --target x86_64-unknown-none
+          export RUSTUP_TOOLCHAIN=1.97.0
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 lld binutils
+          sh build.sh
+          git -C pcp-os fetch --depth=1 origin 1af35d14ab5d37aaee3963be20380fff65d53a12
+          git -C pcp-os checkout --detach 1af35d14ab5d37aaee3963be20380fff65d53a12
+          PCPOS_KERNEL_FEATURES=proposals sh pcp-os/PCP_OS_Rust/crates/pcpos-kernel/run.sh build
+      - name: Refuse, create, browse and reopen randomized content
+        run: |
+          python3 guest/tests/random_projects.py \
+            pcp-os/PCP_OS_Rust/crates/pcpos-kernel/target/pcpos-kernel.elf32 \
+            target/x86_64-unknown-none/release/tailorbird project-results --seed ${{ matrix.seed }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: project-trial-${{ matrix.seed }}
+          path: |
+            project-results/*.json
+            project-results/*.ppm
+            project-results/serial.log
+          retention-days: 14
