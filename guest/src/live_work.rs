@@ -2,6 +2,7 @@
 //! The caller must authenticate events and read back effects before presenting
 //! them here. Nothing in this module executes an action or grants permission.
 use crate::Text;
+use crate::project_location::MAX_PATH_BYTES;
 
 pub const MAX_STEPS: usize = 6;
 pub const PREVIEW_WIDTH: usize = 64;
@@ -50,7 +51,7 @@ impl Step {
 pub enum ChangeState { Proposed, Applied }
 
 pub struct Preview {
-    pub revision: u64, pub location: Text<48>, pub change: ChangeState,
+    pub revision: u64, pub location: Text<MAX_PATH_BYTES>, pub change: ChangeState,
     /// An overview snapshot, not exact artifact/source bytes or an executable.
     pub pixels: [u32; PREVIEW_PIXELS],
 }
@@ -152,7 +153,7 @@ impl Work {
                 item.state = StepState::Done; self.detail.clear();
             }
             Update::Preview { revision, location, change, pixels } if self.phase == Phase::Running => {
-                let Some(location) = exact::<48>(location) else { return false; };
+                let Some(location) = exact::<MAX_PATH_BYTES>(location) else { return false; };
                 if revision == 0 || pixels.len() != PREVIEW_PIXELS || pixels.iter().any(|p| p & 0xff000000 != 0) { return false; }
                 if let Some(old) = &self.preview {
                     if revision <= old.revision || old.location != location
@@ -194,6 +195,20 @@ mod tests {
     fn started() -> Work {
         let mut w = work(); assert!(w.observe(7, 1, Update::Begin));
         assert!(w.observe(7, 2, Update::Start { step: 0 })); w
+    }
+    #[test]
+    fn exact_project_destination_accepts_120_bytes_but_never_truncates_or_retargets() {
+        let mut w = started();
+        let location = std::format!("{}/p/z", "a".repeat(116));
+        let pixels = [0u32; PREVIEW_PIXELS];
+        assert_eq!(location.len(), 120);
+        assert!(w.observe(7, 3, Update::Preview { revision: 1, location: &location, change: ChangeState::Proposed, pixels: &pixels }));
+        assert_eq!(w.preview().unwrap().location.as_str(), location);
+        for other in [std::format!("{location}x"), std::format!("{}/p/x", "a".repeat(116))] {
+            assert!(!w.observe(7, 4, Update::Preview { revision: 2, location: &other, change: ChangeState::Proposed, pixels: &pixels }));
+            assert_eq!(w.preview().unwrap().location.as_str(), location);
+            assert_eq!(w.sequence(), 3);
+        }
     }
     #[test]
     fn progress_is_measured_and_completion_is_explicit() {

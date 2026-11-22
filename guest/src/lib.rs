@@ -40,6 +40,8 @@ pub mod live_view;
 pub mod live_demo;
 /// Exact project destinations; no filesystem access or permission authority.
 pub mod project_location;
+/// Program-held single-file job and exact result binding for the fresh backend.
+pub mod file_job;
 pub const LOG_LIMIT: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

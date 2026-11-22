@@ -75,3 +75,15 @@ This is tested location data, not a connected setting or filesystem feature: it 
 checks no availability or collisions, and supplies no permission or durability guarantee. Z3 owns
 the settings, project list, kernel namespace and Files integration; C3 owns this destination-binding
 logic. Preview, kernel request and result opening must eventually use the same exact destination.
+
+`guest/src/file_job.rs` holds the first single-file job outside model text: exact request, project,
+destination, ordered steps, immutable proposal binding, and kernel result. A successful write or a
+generated claim of completion does not enable Open. The controller must read the current launch's
+kernel receipt, validate its wire form and supply matching identity/digests. A confirmed creation
+enables that exact target; only a complete read with matching length, digest and EOF marks it verified.
+Stop and uncertain transport preserve already-known effects. The controller still owns the actual
+proposed bytes, hashing, device transport and viewer. This module does not authenticate caller-supplied
+events, enforce permissions or establish model correctness. Z3 is integrating the visible settings,
+confined project list and read-only text viewer separately. Build-folder changes apply on the next
+launch; the current job retains its original destination. The live-work renderer can show all 120
+destination bytes across two rows; an independent pinned-font check covers all four supported sizes.
