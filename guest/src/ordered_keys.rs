@@ -34,6 +34,15 @@ impl OrderedKeyboard {
     /// code: US-PC set-1 key index; down: true on press/repeat, false on release.
     /// Unsupported/extended keys are not a replacement for a locale-aware IME.
     pub fn event(&mut self, code: usize, down: bool, ui: &mut Ui) -> KeyOutcome {
+        // A key that takes back the first Alt+G takes its words off the screen as well, even a key
+        // that does nothing else, such as Shift on its own: the screen is drawn again (Director B3
+        // saw the prompt stay up after it no longer applied).
+        let armed = ui.give_up_armed;
+        let outcome = self.key(code, down, ui);
+        if armed && !ui.give_up_armed && outcome == KeyOutcome::Unchanged { KeyOutcome::Redraw } else { outcome }
+    }
+
+    fn key(&mut self, code: usize, down: bool, ui: &mut Ui) -> KeyOutcome {
         if code >= self.held.len() {
             return KeyOutcome::Unchanged;
         }
@@ -644,6 +653,19 @@ mod tests {
         keys.event(alt, true, &mut ui);
         assert_eq!(tap(&mut keys, &mut ui, g), KeyOutcome::Redraw);
         assert!(ui.give_up_armed);
+        keys.event(alt, false, &mut ui);
+
+        // A key that does nothing else, Shift alone, still takes the first press back and has the
+        // screen drawn again without its words; the next Alt+G only asks again.
+        assert_eq!(keys.event(42, true, &mut ui), KeyOutcome::Redraw);
+        assert_eq!((ui.give_up_armed, ui.notice.as_str()), (false, ""));
+        assert_eq!(keys.event(42, false, &mut ui), KeyOutcome::Unchanged);
+        keys.event(alt, true, &mut ui);
+        assert_eq!(tap(&mut keys, &mut ui, g), KeyOutcome::Redraw);
+        assert_eq!((ui.give_up_armed, ui.notice.as_str()), (true, crate::note::GIVE_UP_ASK));
+        keys.event(alt, false, &mut ui);
+        keys.event(alt, true, &mut ui);
+        assert_eq!(tap(&mut keys, &mut ui, g), KeyOutcome::GiveUp);
         keys.event(alt, false, &mut ui);
 
         // With Shift or Ctrl it is another chord and does nothing.

@@ -14,6 +14,9 @@ Predicates, fixed before the first run.
  G4 Alt+N after that asks PCP OS nothing: no further proposal appears in PCP OS's log, Tailorbird
     says the confirmed words again, and nothing was made in the whole run (no proposal is recorded
     as CREATED and Tailorbird never says a file was made).
+ G7 a key that does nothing else still takes the prompt off the screen: with the first Alt+G the
+    screen changes (the prompt is there); Shift alone then puts it back, pixel for pixel, as it was
+    before; and PCP OS has been told nothing.
  G5 Esc ends Tailorbird and the emulator ends with status 33.
  G6 (control, with --older: a kernel with proposals built before the give-up record existed) Alt+G
     twice gets no confirmation: Tailorbird says "PCP OS did not confirm whether Taylor can still make
@@ -72,6 +75,17 @@ def run(kernel, guest, output, older):
             raise RuntimeError(f"no first frame; see {output}")
         for char in "note":
             vm.key(char)
+        def shot(tag):
+            time.sleep(1)
+            vm.screenshot(tag)
+            return (output / (tag + ".ppm")).read_bytes()
+
+        plain = shot("g7-before")
+        vm.key("alt", "g")
+        prompted = shot("g7-prompt")
+        vm.key("shift")
+        if prompted == plain or shot("g7-after-shift") != plain or GAVE in vm.serial():
+            problems.append("G7: the prompt did not appear, or stayed on the screen after Shift took the first press back")
         vm.key("alt", "g")
         time.sleep(1)
         if GAVE in vm.serial() or not asked(1):
