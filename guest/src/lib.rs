@@ -2054,6 +2054,10 @@ mod tests {
 
 }
 
+/// SHA-256, to bind a proposal to the kernel's receipt for it.
+pub mod sha256;
+/// The record of a proposal and the kernel's receipt, as bytes.
+pub mod kernel_proposal;
 /// Drawing on the guest's display: rectangles and the kernel's own typeface.
 pub mod frame;
 /// The picture drawn from the state.
