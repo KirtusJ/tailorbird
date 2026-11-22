@@ -1,0 +1,20 @@
+name: Model reference evidence
+on:
+  pull_request:
+    paths:
+      - 'qa/model-reference/**'
+      - '.github/workflows/model-reference.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  replay-recorded-outcomes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify evidence digests and replay passing and failing outcomes
+        run: python3 qa/model-reference/replay.py

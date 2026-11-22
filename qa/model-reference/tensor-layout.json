@@ -1,0 +1,15 @@
+{
+  "source": "https://github.com/ggml-org/llama.cpp/tree/a956a852c/ggml",
+  "tensor_bytes_by_type": {
+    "Q8_0": 146105344,
+    "Q5_0": 266742784,
+    "F32": 286208,
+    "Q6_K": 42900480,
+    "Q4_K": 29417472
+  },
+  "total_tensor_bytes": 485452288,
+  "bytes_before_tensors": 5947776,
+  "last_tensor_end": 491400064,
+  "file_bytes": 491400064,
+  "profile_sha256": "5724d0b83d786e1cb2b8bde75e1333c45f162233e351855888a1e167c2a50d95"
+}
