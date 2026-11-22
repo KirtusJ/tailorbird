@@ -1,7 +1,7 @@
 # Pass this configuration only when linking a freestanding PCP OS guest.
 [target.x86_64-unknown-linux-gnu]
-linker = "ld"
 rustflags = [
+  "-C", "linker=ld",
   "-C", "relocation-model=static",
   "-C", "code-model=large",
   "-C", "no-redzone=yes",
