@@ -14,6 +14,55 @@ import time
 
 from qemu_smoke import Qemu
 
+ASK = "Page 1 of 1. To allow: press F12, then Enter. Esc refuses. Arrows turn pages."
+CONFIRM = "Now press Enter to allow it. Any other key refuses."
+
+
+def panel(folder, name, document, last):
+    """Every line the kernel's question must show for this one file, in order, and nothing else."""
+    return ["PCP OS ASKS YOU",
+            "Taylor wants to make a new file. Nothing has been made yet.",
+            f"Folder: {folder} File: {name}",
+            f"Size: {len(document) + 1} characters. It will last until the computer is switched off.",
+            document,
+            "(end of the file)",
+            last]
+
+
+def exact(rows, expected):
+    """Whether the rows read off the display are exactly the expected lines.
+
+    The display wraps a long line at a word, so the last expected line may arrive as two rows; no
+    other difference is allowed: not a longer name, not a line more, not another page count.
+    A substring test here accepted a changed body, file name, folder and page count (Director 2).
+    """
+    seen = [row.strip() for row in rows or [] if row.strip()]
+    if seen[:len(expected) - 1] != expected[:-1]:
+        return False
+    return " ".join(seen[len(expected) - 1:]) == expected[-1] and len(seen) - len(expected) in (0, 1)
+
+
+def selftest_exact():
+    folder, name, document = "taylor/my-first-project", "note-1.txt", "garden note"
+    good = panel(folder, name, document, ASK)
+    shown = ["  " + line for line in good[:-1]] + ["  Page 1 of 1. To allow: press F12, then Enter. Esc refuses. Arrows turn", "  pages."]
+    assert exact(shown, good) and exact(["  " + line for line in good], good)
+    changed = {
+        "a longer body": panel(folder, name, "garden notebook", ASK),
+        "a file name with a suffix": panel(folder, name + ".bak", document, ASK),
+        "another folder": panel(folder + "-other", name, document, ASK),
+        "another page count": panel(folder, name, document, ASK.replace("Page 1 of 1.", "Page 1 of 10.")),
+        "the panel of another note": panel(folder, "note-2.txt", document, ASK),
+        "the second screen in place of the first": panel(folder, name, document, CONFIRM),
+    }
+    for what, lines in changed.items():
+        assert not exact(["  " + line for line in lines], good), what
+    extra = good[:5] + ["secret next line"] + good[5:]
+    assert not exact(["  " + line for line in extra], good), "a line more before the end"
+    assert not exact(["  " + line for line in good[:2] + good[3:]], good), "no folder and file line"
+    assert not exact(["  " + line for line in good] + ["  more"], good), "a line after the last"
+    assert not exact([], good) and not exact(None, good)
+
 
 def run(kernel, guest, output):
     output.mkdir(parents=True, exist_ok=False)
@@ -41,19 +90,15 @@ def run(kernel, guest, output):
                 time.sleep(0.1)
             raise RuntimeError(f"{description}; see {output}")
 
-        def visible(tag, required):
+        def shows(tag, expected):
             def matches():
                 vm.screenshot(tag)
-                rows = screen["read_screen"]((output / (tag + ".ppm")).read_bytes(), glyphs)
-                words = " ".join(" ".join(rows or []).split())
-                return all(part in words for part in required)
-            wait_for(matches, tag)
+                return exact(screen["read_screen"]((output / (tag + ".ppm")).read_bytes(), glyphs), expected)
+            wait_for(matches, tag + ": the question does not show exactly the file asked about")
 
         def preview(number):
             vm.key("alt", "n")
-            visible(f"preview-{number}", ["PCP OS ASKS YOU", f"Folder: {folder}",
-                                        f"File: note-{number}.txt", document,
-                                        "(end of the file)", "Page 1 of 1"])
+            shows(f"preview-{number}", panel(folder, f"note-{number}.txt", document, ASK))
 
         wait_for(lambda: "Tailorbird first frame presented" in vm.serial(), "first frame")
         for char in document:
@@ -63,7 +108,8 @@ def run(kernel, guest, output):
         wait_for(lambda: "tailorbird: Not made: you said no." in vm.serial(), "first refusal")
         preview(2)
         vm.key("f12")
-        visible("confirm", ["Now press Enter to allow it."])
+        # The second screen is still about the same file, whole, before Enter is pressed.
+        shows("confirm", panel(folder, "note-2.txt", document, CONFIRM))
         vm.key("ret")
         made = f"tailorbird: Made {folder}/note-2.txt. Kept until power-off."
         wait_for(lambda: made in vm.serial(), "second note receipt")
@@ -88,4 +134,5 @@ if __name__ == "__main__":
     parser.add_argument("guest", type=Path)
     parser.add_argument("output", type=Path)
     args = parser.parse_args()
+    selftest_exact()
     run(args.kernel.resolve(), args.guest.resolve(), args.output.resolve())
