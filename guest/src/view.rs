@@ -152,8 +152,8 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
         // visible in the separate x=20..300 sidebar.
     } else if ui.lines().is_empty() && ui.show_projects {
         match ui.browse_level {
-            0 => projects(f, &ui.projects, ui.place),
-            1 => files(f, &ui.files, ui.file_place),
+            0 => projects(f, &ui.projects, ui.place, ui.active),
+            1 => files(f, &ui.files, ui.file_place, ui.active),
             _ => viewed(f, &ui.viewed),
         }
     } else if ui.lines().is_empty() {
@@ -169,7 +169,7 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
         }
         // Taylor says who it is once, says what is so in words anyone can read, and stops.
         taylor(f, 339, 286, 4);
-        if let Some(job) = &ui.last_note {
+        if let Some(job) = ui.jobs.last() {
             // What became of the last note, from the job the kernel's receipt was checked against: what
             // happened, where the file is (whole name, on as many lines as it needs), how long it lasts.
             let (words, good) = crate::note::headline(job);
@@ -202,6 +202,14 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
             // No model, but PCP OS lets Taylor ask to make files: say the one thing that works today.
             label(f, 420, 316, "Today I can save what you type as", 2, SOFT);
             label(f, 420, 340, "a note. Type it, then press Alt+N.", 2, SOFT);
+            // Where a note will go, whole, before anything is asked.
+            if let Some(active) = ui.active {
+                label(f, 420, 370, "New notes go into the project", 1, SOFT);
+                wrapped(f, 420, 384, active.as_str(), 84);
+            }
+            let x = key(f, 339, 420, "Esc", "returns to Programs");
+            key(f, x, 420, "Alt+P", "shows your projects");
+            return footer(f, ui);
         } else {
             label(f, 420, 316, "I am not switched on yet, so I", 2, AMBER);
             label(f, 420, 340, "cannot build anything.", 2, AMBER);
@@ -267,7 +275,7 @@ fn wrapped(f: &mut Frame<'_>, x: i32, y: i32, value: &str, across: usize) {
 
 /// The project list, in the Work panel: where the projects are, each with how many files, and in words
 /// what is not known. "No projects yet" is said only of a whole list that was read and held nothing.
-fn projects(f: &mut Frame<'_>, list: &crate::projects::Projects, place: usize) {
+fn projects(f: &mut Frame<'_>, list: &crate::projects::Projects, place: usize, active: Option<crate::project_location::ProjectLocation>) {
     use crate::projects::Listing;
     let mut digits = [0u8; 20];
     label(f, 339, 190, "Your projects", 2, TEXT);
@@ -307,6 +315,9 @@ fn projects(f: &mut Frame<'_>, list: &crate::projects::Projects, place: usize) {
                 if cut {
                     label(f, 347 + 69 * 6, y, "...", 1, AMBER);
                 }
+                if active.is_some() && entry.location == active {
+                    label(f, 660, y, "new notes go here", 1, GOOD);
+                }
                 label(f, 800, y, decimal_u64(entry.files as u64, &mut digits), 1, TEXT);
                 label(f, 830, y, if entry.files == 1 { "file" } else { "files" }, 1, SOFT);
             }
@@ -339,13 +350,16 @@ fn projects(f: &mut Frame<'_>, list: &crate::projects::Projects, place: usize) {
 }
 
 /// One project's files. The size is what the list said when it was read.
-fn files(f: &mut Frame<'_>, list: &crate::projects::Files, place: usize) {
+fn files(f: &mut Frame<'_>, list: &crate::projects::Files, place: usize, active: Option<crate::project_location::ProjectLocation>) {
     use crate::projects::Listing;
     let mut digits = [0u8; 20];
     label(f, 339, 190, "Project", 2, TEXT);
     match list.state {
         Listing::Listed => {
             wrapped(f, 339, 214, list.project.as_str(), 94);
+            if active.is_some() && list.location == active {
+                label(f, 440, 196, "New notes (Alt+N) go into this project.", 1, GOOD);
+            }
             if list.count == 0 {
                 label(f, 339, 256, if list.complete { "This project has no files now." } else { "No files of it are in the part PCP OS listed." }, 1, SOFT);
             }
@@ -484,7 +498,7 @@ mod tests {
         let able = shot(&ui);
         assert_ne!(plain, able);
         let mut p = crate::note::prepare(3, 1, "hello").unwrap();
-        ui.last_note = Some(p.job);
+        assert!(ui.jobs.keep(p.job).is_ok());
         let unknown = shot(&ui);
         assert_ne!(able, unknown);
         // A job with no receipt never draws the words that rule the file out; a stated refusal does.
@@ -509,7 +523,7 @@ mod tests {
         assert_eq!(crate::note::settle(&mut declined.job, &no).as_str(), "Not made: you said no.");
         let mut refused = Ui::new();
         refused.notes = true;
-        refused.last_note = Some(declined.job);
+        assert!(refused.jobs.keep(declined.job).is_ok());
         assert!(says(&shot(&refused), "Nothing was changed.", 2, SOFT));
         p = crate::note::prepare(3, 1, "hello").unwrap();
         p.job.submitted().unwrap();
@@ -524,7 +538,7 @@ mod tests {
         r[64..96].copy_from_slice(&crate::sha256::sha256(&[content]));
         crate::note::settle(&mut p.job, &r);
         assert_eq!(crate::note::headline(&p.job), ("I made your note.", true));
-        ui.last_note = Some(p.job);
+        assert!(ui.jobs.keep(p.job).is_ok());
         let made = shot(&ui);
         assert_ne!(unknown, made);
         // Everything outside the Work panel's lower part is the same in all four.

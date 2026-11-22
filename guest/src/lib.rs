@@ -46,6 +46,8 @@ pub mod file_job;
 pub mod build_folder_snapshot;
 /// What the project list shows, summarised from one snapshot.
 pub mod projects;
+/// Every file job of this launch, kept.
+pub mod jobs;
 pub const LOG_LIMIT: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -265,8 +267,11 @@ pub struct Ui {
     pub notice: Text<84>,
     /// PCP OS lets this launch propose files to it. Read once at start; decides what Taylor says it can do.
     pub notes: bool,
-    /// The last note asked for, with what the kernel's receipt established about it. Kept, not summarised.
-    pub last_note: Option<file_job::FileJob>,
+    /// Every note asked for in this launch, each with what the kernel's receipt established about it.
+    pub jobs: jobs::Jobs,
+    /// Where Alt+N puts a note: a project the kernel's list named, or the first project under the folder
+    /// it named. None until PCP OS has said what the build folder is.
+    pub active: Option<project_location::ProjectLocation>,
     /// The Work panel shows the project list (Alt+P) instead of Taylor's greeting or the last result.
     pub show_projects: bool,
     pub projects: projects::Projects,
@@ -291,7 +296,7 @@ impl Ui {
             model: Model::Unknown, connected: false, service_epoch: 0,
             task: Task { id: 0, seq: 0, state: TaskState::Idle },
             stop_intent_task: None, permission: None, decision_pending: None, decision_choice: None,
-            effect_uncertain: false, notice: Text::new(), notes: false, last_note: None, show_projects: false, projects: projects::Projects::new(), browse_level: 0, place: 0, file_place: 0,
+            effect_uncertain: false, notice: Text::new(), notes: false, jobs: jobs::Jobs::new(), active: None, show_projects: false, projects: projects::Projects::new(), browse_level: 0, place: 0, file_place: 0,
             files: projects::Files::new(), viewed: projects::Viewed::new(),
             lines: [Line::empty(); LOG_LIMIT], count: 0, feed_hidden_rows: 0,
         }

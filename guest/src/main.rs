@@ -32,11 +32,11 @@ fn paint(display: &mut Display, ui: &Ui) {
 /// Ask PCP OS to make a note of what is typed. The person is asked by the kernel, on the kernel's own
 /// screen, while this program is stopped inside the `write`; what comes back is the kernel's receipt, and
 /// only a receipt that matches the job is reported as a file made.
-fn make_note(proposals: isize, attempt: u64, number: u32, typed: &str) -> (Text<84>, Option<tailorbird_ui::file_job::FileJob>) {
+fn make_note(proposals: isize, project: tailorbird_ui::project_location::ProjectLocation, attempt: u64, number: u32, typed: &str) -> (Text<84>, Option<tailorbird_ui::file_job::FileJob>) {
     if proposals < 0 {
         return (Text::display(note::NOT_ALLOWED), None);
     }
-    let mut prepared = match note::prepare(attempt, number, typed) {
+    let mut prepared = match note::prepare_in(project, attempt, number, typed) {
         Ok(p) => p,
         Err(words) => return (Text::display(words), None),
     };
@@ -99,15 +99,14 @@ fn read_projects(expected: Option<(BuildFolder, u64)>) -> Projects {
 
 /// One file under the build folder. If a kept job is for this very file, what is read is compared with
 /// the kernel's receipt for it and the job remembers the answer.
-fn view_file(destination: FileDestination, last_note: &mut Option<tailorbird_ui::file_job::FileJob>) -> Viewed {
+fn view_file(destination: FileDestination, jobs: &mut tailorbird_ui::jobs::Jobs) -> Viewed {
     static mut FILE: [u8; VIEW_BYTES + 1] = [0; VIEW_BYTES + 1];
     // Safety: one thread; used only inside this function.
     let file = unsafe { &mut *core::ptr::addr_of_mut!(FILE) };
     let mut path = [0u8; 256];
     let name = destination.as_str().as_bytes();
     path[..name.len()].copy_from_slice(name);
-    let job = last_note.as_mut().filter(|job| job.receipt().is_some_and(|r| r.outcome == tailorbird_ui::file_job::Outcome::Created)
-        && job.destination().as_str() == destination.as_str());
+    let job = jobs.made(&destination);
     let fd = open(&path[..name.len() + 1], 0);
     let viewed = view(destination, if fd >= 0 { Some(reader(fd)) } else { None }, file, job);
     if fd >= 0 {
@@ -141,6 +140,13 @@ pub extern "C" fn tailorbird_main() -> ! {
     let mut ordered = OrderedKeyboard::new();
     let mut ui = Ui::new();
     ui.notes = proposals >= 0;
+    // Learn from PCP OS, not from a constant, which folder this launch builds into.
+    if ui.notes {
+        let first = read_projects(None);
+        launch = same_launch(&first);
+        ui.active = note::default_project(launch.map(|(root, _)| root));
+        ui.projects = first;
+    }
     paint(&mut display, &ui);
     log(b"Tailorbird first frame presented\n");
     loop {
@@ -157,12 +163,24 @@ pub extern "C" fn tailorbird_main() -> ! {
                 KeyOutcome::Exit => exit(0),
                 KeyOutcome::Redraw => dirty = true,
                 KeyOutcome::MakeNote => {
-                    // A fresh list says which notes exist, so a name already used is not asked for again.
-                    number = note::next_number(read_list().ok(), number);
-                    let (words, job) = make_note(proposals, attempt, number, ui.input.as_str());
+                    // Where the note goes is fixed before anything is asked: the active project, and a
+                    // number a fresh list suggests. The kernel still makes it only if that name is free.
+                    let list = read_list().ok();
+                    if ui.active.is_none() {
+                        ui.active = note::default_project(None);
+                    }
+                    let (words, job) = match ui.active {
+                        _ if ui.jobs.is_full() => (Text::display(tailorbird_ui::jobs::FULL), None),
+                        Some(project) => {
+                            number = note::next_number_in(list, &project, number);
+                            make_note(proposals, project, attempt, number, ui.input.as_str())
+                        }
+                        None => (Text::display(note::NOT_TAKEN), None),
+                    };
                     ui.notice = words;
-                    if job.is_some() {
-                        ui.last_note = job;
+                    if let Some(job) = job {
+                        // Room was checked before the kernel was asked, so this cannot fail.
+                        let _ = ui.jobs.keep(job);
                     }
                     attempt += 1;
                     number += 1;
@@ -182,7 +200,13 @@ pub extern "C" fn tailorbird_main() -> ! {
                             }
                             1 => {
                                 ui.files = match (read_list(), ui.projects.rows[ui.place].location) {
-                                    (Ok(bytes), Some(project)) => Files::read(bytes, launch, project),
+                                    (Ok(bytes), Some(project)) => {
+                                        // Opening a project chooses it: new notes go there, and both
+                                        // lists and the first screen say so.
+                                        ui.active = Some(project);
+                                        number = 1;
+                                        Files::read(bytes, launch, project)
+                                    }
                                     (Err(state), _) => Files::failed(state),
                                     (_, None) => Files::failed(Listing::Unreadable),
                                 };
@@ -190,7 +214,7 @@ pub extern "C" fn tailorbird_main() -> ! {
                             }
                             _ => {
                                 ui.viewed = match ui.files.rows[ui.file_place].destination {
-                                    Some(destination) => view_file(destination, &mut ui.last_note),
+                                    Some(destination) => view_file(destination, &mut ui.jobs),
                                     None => Viewed::new(),
                                 };
                             }

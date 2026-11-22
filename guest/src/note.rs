@@ -45,12 +45,30 @@ fn file_name(number: u32, out: &mut [u8; 24]) -> &str {
 /// the build folder just read, and never less than `at_least` (what this run has already used). With no
 /// readable list it is `at_least`: the kernel still refuses a name that is taken, and says so.
 pub fn next_number(list: Option<&[u8]>, at_least: u32) -> u32 {
+    match default_project(None) {
+        Some(project) => next_number_in(list, &project, at_least),
+        None => at_least,
+    }
+}
+
+/// The first project of a build folder: the folder PCP OS named, or the usual one before it has.
+pub fn default_project(root: Option<BuildFolder>) -> Option<ProjectLocation> {
+    let root = match root {
+        Some(root) => root,
+        None => BuildFolder::new(DEFAULT_BUILD_FOLDER).ok()?,
+    };
+    ProjectLocation::new(root, PROJECT).ok()
+}
+
+/// The same for any project. A candidate only: the list may be partial or already old, and it is the
+/// kernel, making the file only if the name is free, that decides.
+pub fn next_number_in(list: Option<&[u8]>, into: &ProjectLocation, at_least: u32) -> u32 {
     use crate::build_folder_snapshot::{EntryKind, Snapshot};
     let Some(Ok(snapshot)) = list.map(Snapshot::parse) else { return at_least };
     let mut next = at_least;
     for entry in snapshot.entries() {
         let EntryKind::ProjectFile { project, destination } = entry.kind else { continue };
-        if project.build_folder() != DEFAULT_BUILD_FOLDER || project.project_name() != PROJECT {
+        if project != *into {
             continue;
         }
         let Some(digits) = destination.file_name().strip_prefix("note-").and_then(|n| n.strip_suffix(".txt")) else { continue };
@@ -68,6 +86,11 @@ pub fn next_number(list: Option<&[u8]>, at_least: u32) -> u32 {
 /// What is typed, with a new line after it, as note `number` of the current project. The job is ready to
 /// be handed to the kernel: its record is built and it knows what the receipt must say.
 pub fn prepare(attempt: u64, number: u32, typed: &str) -> Result<Prepared, &'static str> {
+    prepare_in(default_project(None).ok_or(NOT_TAKEN)?, attempt, number, typed)
+}
+
+/// The same, in the project given. The name is fixed here, before the kernel shows it to the person.
+pub fn prepare_in(project: ProjectLocation, attempt: u64, number: u32, typed: &str) -> Result<Prepared, &'static str> {
     if typed.is_empty() {
         return Err(NOTHING_TYPED);
     }
@@ -79,8 +102,6 @@ pub fn prepare(attempt: u64, number: u32, typed: &str) -> Result<Prepared, &'sta
     content[..bytes.len()].copy_from_slice(bytes);
     content[bytes.len()] = b'\n';
     let content = &content[..bytes.len() + 1];
-    let root = BuildFolder::new(DEFAULT_BUILD_FOLDER).map_err(|_| NOT_TAKEN)?;
-    let project = ProjectLocation::new(root, PROJECT).map_err(|_| NOT_TAKEN)?;
     let mut name = [0u8; 24];
     let mut job = FileJob::new(attempt, typed, project, file_name(number, &mut name)).map_err(|_| NOT_TAKEN)?;
     let mut record = [0u8; RECORD];
@@ -194,6 +215,10 @@ mod tests {
         // Never below what this run has used, and the largest number does not wrap.
         assert_eq!(next_number(Some(&list(&["taylor/my-first-project/note-2.txt"])), 9), 9);
         assert_eq!(next_number(Some(&list(&["taylor/my-first-project/note-4294967295.txt"])), 1), u32::MAX);
+        // In another project only that project's notes count, and the note is named inside it.
+        let other = ProjectLocation::new(BuildFolder::new("taylor").unwrap(), "other").unwrap();
+        assert_eq!(next_number_in(Some(&list(&["taylor/my-first-project/note-9.txt", "taylor/other/note-40.txt"])), &other, 1), 41);
+        assert_eq!(prepare_in(other, 1, 41, "x").unwrap().job.destination().as_str(), "taylor/other/note-41.txt");
     }
 
     #[test]

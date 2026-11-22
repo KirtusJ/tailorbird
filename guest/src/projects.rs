@@ -115,6 +115,7 @@ pub struct FileRow {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Files {
     pub state: Listing,
+    pub location: Option<ProjectLocation>,
     pub complete: bool,
     pub project: Text<116>,
     pub count: usize,
@@ -124,7 +125,7 @@ pub struct Files {
 
 impl Files {
     pub const fn new() -> Self {
-        Self { state: Listing::NotAsked, complete: false, project: Text::new(), count: 0,
+        Self { state: Listing::NotAsked, location: None, complete: false, project: Text::new(), count: 0,
                rows: [FileRow { name: Text::new(), destination: None, size: 0 }; ROWS], shown: 0 }
     }
 
@@ -144,6 +145,7 @@ impl Files {
         out.state = Listing::Listed;
         out.complete = snapshot.is_complete();
         out.project = Text::display(project.project_name());
+        out.location = Some(project);
         for entry in snapshot.entries() {
             if let EntryKind::ProjectFile { project: p, destination } = entry.kind {
                 if p == project {
