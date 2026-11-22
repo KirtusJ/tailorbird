@@ -10,9 +10,9 @@ home. The kernel and the guest library stay in `pcp-os`, pinned here as a submod
   request 293 (head `fe8b67a`). It is a **disconnected shell**: it
   draws, takes keys and reports NO SERVICE. No model, service, permission enforcement or installer is
   in this repository.
-- `pcp-os/`: submodule at `745e8831cb25090ce478fcf246dcf6c8a65ec7b2` (branch `z3/tailorbird-audit`:
-  master `53a551a` with pull request 134 merged). The guest needs `Display::current()` from that
-  tree's `store/native/guest`; master does not have it yet. The pin moves to master once it does.
+- `pcp-os/`: submodule at `070c9d5925a2c208c33c60db92e51156555407c8`, a commit of pcp-os `master`
+  (it has `Display::current()` since pcp-os pull request 337). The four files the build reads are
+  the same as at the earlier pin `745e883`, and the program built is the same file.
 - The connected implementation recorded in `pcp-os` issue 132 (private revisions `e725d56`,
   `6cc9946`) is **not here** and has not been seen by the people filling this repository.
 - Nothing here has been run on hardware.
@@ -26,7 +26,7 @@ Rust 1.97.0 with `rust-src` and the `x86_64-unknown-none` target, and `lld`.
     sh build.sh
 
 `build.sh` records this folder as `/tailorbird` and the compiler's sources as `/rustc/<commit>`, so the program is the same file wherever the
-repository and the compiler are installed. Measured on 21 November 2026, offline, Rust 1.97.0, pcp-os pin `745e883`:
+repository and the compiler are installed. Measured on 21 November 2026, offline, Rust 1.97.0, pcp-os pin `745e883` (unchanged by the move to `070c9d5`):
 
 | Source | Library tests | ELF bytes | SHA-256 |
 |---|---|---|---|
