@@ -60,7 +60,7 @@ pub fn prepare(attempt: u64, number: u32, typed: &str) -> Result<Prepared, &'sta
     let mut name = [0u8; 24];
     let mut job = FileJob::new(attempt, typed, project, file_name(number, &mut name)).map_err(|_| NOT_TAKEN)?;
     let mut record = [0u8; RECORD];
-    let path = job.destination().as_str();
+    let path = job.destination();
     let binding = wire::binding(1, path, content).map_err(|_| NOT_TAKEN)?;
     let length = wire::record(&mut record, attempt, 1, path, content).map_err(|_| NOT_TAKEN)?;
     job.prepare(binding).map_err(|_| NOT_TAKEN)?;

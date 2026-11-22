@@ -2,22 +2,28 @@
 //! request 344). Nothing here asks the kernel anything: it builds the record a proposal is, and reads the
 //! kernel's receipt. A receipt this module cannot read whole is refused, never guessed at.
 use crate::file_job::{Binding, Outcome, Receipt};
+use crate::project_location::FileDestination;
 use crate::sha256::sha256;
 
 /// A proposal's fixed part: version, kind, attempt, proposal number, the lengths of name and content.
 pub const HEADER: usize = 32;
 pub const RECEIPT: usize = 100;
 /// The kernel's limits. A record over them is not built, since the kernel would refuse it unseen.
-pub const MAX_NAME: usize = 120;
+pub const MAX_NAME: usize = crate::project_location::MAX_PATH_BYTES;
 pub const MAX_CONTENT: usize = 16 * 1024;
+/// Source-line admission in the kernel. Its actual display-page limit is checked separately there.
+pub const MAX_LINES: usize = 64 * 22;
+pub const LINE_COLUMNS: usize = 76;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WireError {
-    /// The name or the content is longer than the kernel takes, or the name is empty.
+    /// The content is longer than the kernel takes. Destinations are already validated.
     TooLong,
     /// The content has a character the kernel's screen cannot show exactly (anything but printable
     /// characters, spaces and new lines), so it could not ask about it.
     NotShowable,
+    /// Too many source rows after wrapping; a trailing newline adds an empty row.
+    TooManyLines,
     /// The place given to build the record in is too small.
     NoRoom,
     /// The receipt is not 100 bytes of version 1 with an outcome this program knows.
@@ -35,24 +41,30 @@ pub fn request_digest(name: &str, content: &[u8]) -> [u8; 32] {
 }
 
 /// What the receipt for this proposal must say, worked out from the bytes Tailorbird itself holds.
-pub fn binding(proposal: u64, name: &str, content: &[u8]) -> Result<Binding, WireError> {
-    check(name, content)?;
+pub fn binding(proposal: u64, destination: &FileDestination, content: &[u8]) -> Result<Binding, WireError> {
+    check(content)?;
+    let name = destination.as_str();
     Ok(Binding { proposal, content_bytes: content.len() as u32, request_digest: request_digest(name, content), content_digest: sha256(&[content]) })
 }
 
-fn check(name: &str, content: &[u8]) -> Result<(), WireError> {
-    if name.is_empty() || name.len() > MAX_NAME || content.len() > MAX_CONTENT {
+fn check(content: &[u8]) -> Result<(), WireError> {
+    if content.len() > MAX_CONTENT {
         return Err(WireError::TooLong);
     }
     if !showable(content) {
         return Err(WireError::NotShowable);
     }
+    let lines: usize = content.split(|b| *b == b'\n')
+        .map(|line| line.len().div_ceil(LINE_COLUMNS).max(1)).sum();
+    if lines > MAX_LINES { return Err(WireError::TooManyLines); }
     Ok(())
 }
 
-/// Build the record in `out` and return its length.
-pub fn record(out: &mut [u8], attempt: u64, proposal: u64, name: &str, content: &[u8]) -> Result<usize, WireError> {
-    check(name, content)?;
+/// Build the record with the same typed destination used by the preview and job.
+/// This validates syntax and source bounds, not current-launch authority or display capacity.
+pub fn record(out: &mut [u8], attempt: u64, proposal: u64, destination: &FileDestination, content: &[u8]) -> Result<usize, WireError> {
+    check(content)?;
+    let name = destination.as_str();
     let length = HEADER + name.len() + content.len();
     if out.len() < length {
         return Err(WireError::NoRoom);
@@ -95,9 +107,12 @@ pub fn receipt(bytes: &[u8]) -> Result<Receipt, WireError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::project_location::BuildFolder;
 
     const NAME: &str = "taylor/first-project/note.txt";
     const CONTENT: &[u8] = b"Hello.\nThis file was made by PCP OS after you allowed it.\n";
+
+    fn name() -> FileDestination { BuildFolder::default().parse_project_file(NAME).unwrap().1 }
 
     fn kernel_receipt(outcome: u32, launch: u64, attempt: u64, proposal: u64) -> [u8; RECEIPT] {
         // As the kernel writes it (pcp-os sys.rs `receipt`), from the same name and content.
@@ -115,7 +130,7 @@ mod tests {
     #[test]
     fn the_record_is_the_one_the_kernels_test_program_writes() {
         let mut out = [0u8; 256];
-        let length = record(&mut out, 7, 1, NAME, CONTENT).unwrap();
+        let length = record(&mut out, 7, 1, &name(), CONTENT).unwrap();
         assert_eq!(length, 32 + NAME.len() + CONTENT.len());
         assert_eq!(&out[0..8], &[1, 0, 0, 0, 1, 0, 0, 0]);
         assert_eq!(u64::from_le_bytes(out[8..16].try_into().unwrap()), 7);
@@ -127,11 +142,10 @@ mod tests {
     #[test]
     fn what_the_kernel_would_refuse_unseen_is_not_built() {
         let mut out = [0u8; 64];
-        assert_eq!(record(&mut out, 1, 1, NAME, b"a\tb"), Err(WireError::NotShowable));
-        assert_eq!(record(&mut out, 1, 1, NAME, "caf\u{e9}".as_bytes()), Err(WireError::NotShowable));
-        assert_eq!(record(&mut out, 1, 1, "", b"x"), Err(WireError::TooLong));
-        assert_eq!(record(&mut out, 1, 1, NAME, CONTENT), Err(WireError::NoRoom));
-        assert_eq!(binding(1, NAME, &[b'a'; MAX_CONTENT + 1]), Err(WireError::TooLong));
+        assert_eq!(record(&mut out, 1, 1, &name(), b"a\tb"), Err(WireError::NotShowable));
+        assert_eq!(record(&mut out, 1, 1, &name(), "caf\u{e9}".as_bytes()), Err(WireError::NotShowable));
+        assert_eq!(record(&mut out, 1, 1, &name(), CONTENT), Err(WireError::NoRoom));
+        assert_eq!(binding(1, &name(), &[b'a'; MAX_CONTENT + 1]), Err(WireError::TooLong));
     }
 
     #[test]
@@ -139,7 +153,7 @@ mod tests {
         let r = kernel_receipt(1, 3, 7, 1);
         let read = receipt(&r).unwrap();
         assert_eq!((read.launch, read.attempt, read.proposal, read.outcome, read.durable), (3, 7, 1, Outcome::Created, false));
-        let expected = binding(1, NAME, CONTENT).unwrap();
+        let expected = binding(1, &name(), CONTENT).unwrap();
         assert_eq!((read.request_digest, read.content_digest), (expected.request_digest, expected.content_digest));
         assert_eq!(receipt(&r[..99]), Err(WireError::BadReceipt));
         for (at, value) in [(0usize, 2u8), (4, 4), (4, 9), (96, 2)] {
@@ -156,6 +170,46 @@ mod tests {
     fn another_name_with_the_same_content_is_another_request() {
         assert_ne!(request_digest(NAME, CONTENT), request_digest("taylor/first-project/other.txt", CONTENT));
         assert_ne!(request_digest("ab", b"c"), request_digest("a", b"bc"));
+    }
+
+    #[test]
+    fn source_line_limit_matches_empty_trailing_and_wrapped_rows() {
+        let target = name();
+        let mut out = [0xa5; HEADER + MAX_NAME + MAX_CONTENT];
+        for content in [std::vec![], std::vec![b'\n'; MAX_LINES - 1]] {
+            assert!(binding(1, &target, &content).is_ok());
+            assert!(record(&mut out, 1, 1, &target, &content).is_ok());
+        }
+        let mut wrapped = std::vec![b'\n'; MAX_LINES - 1];
+        wrapped.extend_from_slice(&[b'x'; LINE_COLUMNS]);
+        assert!(binding(1, &target, &wrapped).is_ok());
+        assert!(record(&mut out, 1, 1, &target, &wrapped).is_ok());
+        wrapped.push(b'x');
+        for content in [std::vec![b'\n'; MAX_LINES], wrapped] {
+            out.fill(0xa5);
+            assert_eq!(binding(1, &target, &content), Err(WireError::TooManyLines));
+            assert_eq!(record(&mut out, 1, 1, &target, &content), Err(WireError::TooManyLines));
+            assert!(out.iter().all(|b| *b == 0xa5));
+        }
+        assert!(binding(1, &target, &[b'x'; MAX_CONTENT]).is_ok());
+    }
+
+    #[test]
+    fn full_typed_destination_is_identical_in_wire_binding_and_preview() {
+        let root_text = "a".repeat(116);
+        let root = BuildFolder::new(&root_text).unwrap();
+        let project = crate::project_location::ProjectLocation::new(root, "p").unwrap();
+        let target = project.file("z").unwrap();
+        assert_eq!(target.as_str().len(), MAX_NAME);
+        let mut out = [0; HEADER + MAX_NAME + 3];
+        let length = record(&mut out, 9, 2, &target, b"yes").unwrap();
+        assert_eq!(length, out.len());
+        let name_len = u32::from_le_bytes(out[24..28].try_into().unwrap()) as usize;
+        let emitted = core::str::from_utf8(&out[HEADER..HEADER + name_len]).unwrap();
+        assert_eq!(emitted, target.as_str());
+        let expected = binding(2, &target, b"yes").unwrap();
+        assert_eq!(expected.request_digest, request_digest(emitted, &out[HEADER + name_len..length]));
+        assert_ne!(expected.request_digest, binding(2, &project.file("y").unwrap(), b"yes").unwrap().request_digest);
     }
 }
 
