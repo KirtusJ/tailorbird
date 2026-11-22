@@ -1,6 +1,6 @@
 # Tailorbird
 
-<img align="right" src="tailorbird.svg" alt="Taylor, a silver parrot with a teal crest, sewing two leaves together with an amber needle and a white thread" width="120">
+<img align="right" src="tailorbird.svg" alt="Taylor, a small tailorbird with a russet cap, a green back and a long cocked tail, sewing the edge of a leaf with a thread held in her bill" width="120">
 
 Tailorbird is the PCP OS application for working with a local model worker. This repository is its
 home. The kernel and the guest library stay in `pcp-os`, pinned here as a submodule.
@@ -10,11 +10,11 @@ home. The kernel and the guest library stay in `pcp-os`, pinned here as a submod
 A draft, put up for the owner to correct ([issue 30](https://github.com/KirtusJ/tailorbird/issues/30)). Nothing here is settled until the owner says so.
 
 - **Name.** Tailorbird is the program. Taylor is who you talk to in it; she is "she".
-- **The mark.** [`tailorbird.svg`](tailorbird.svg): the same silver parrot as [Surfbird's](https://github.com/KirtusJ/surfbird), with a teal crest, sewing two leaves into one with a needle and thread. A tailorbird is a bird that builds by stitching leaves together; Taylor builds and mends on your computer.
+- **The mark.** [`tailorbird.svg`](tailorbird.svg): Taylor herself. She is a tailorbird, a small bird with a russet cap, a green back and a long tail held up, who builds by sewing leaves together with thread, using her bill as the needle. She is her own character and not Surfbird's parrot; the two marks share only the dark rounded tile, so that they sit together as programs of one system.
 - **What she is for.** To help a person who is not a professional get something built or fixed, on their own computer, without the network.
 - **How she speaks.** Plainly and briefly. She says what she did, what she could not do, and what she does not know. She helps and does not hover. She never says something happened unless PCP OS confirmed it.
 - **What she will not do.** Act without asking where PCP OS requires asking, keep an ability the person told her to give up, or claim to be more than a program running a model on this computer.
-- **Colours.** The ones the program already draws with ([`guest/src/lib.rs`](guest/src/lib.rs)): ground `#10283f`, panel `#18364f`, text `#f2f7fc`, quiet text `#9fb4c8`, teal `#41bad7`, amber `#e3a24b` for what needs attention, green `#8fe0c2` for what is well, red `#f08a72` for what is not.
+- **Colours.** The screen keeps the ones the program already draws with ([`guest/src/lib.rs`](guest/src/lib.rs)): ground `#10283f`, panel `#18364f`, text `#f2f7fc`, quiet text `#9fb4c8`, teal `#41bad7`, amber `#e3a24b` for what needs attention, green `#8fe0c2` for what is well, red `#f08a72` for what is not. Taylor's own colours in the mark are russet `#d9713c`, leaf green `#7fae5c` and cream `#f1f4e4`.
 
 ## Source and runtime
 
