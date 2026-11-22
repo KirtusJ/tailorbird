@@ -1,5 +1,12 @@
 #![no_std]
 
+#[cfg(feature = "model-worker")]
+extern crate alloc;
+#[cfg(feature = "model-worker")]
+pub mod model_session;
+#[cfg(feature = "model-worker")]
+pub mod model_inbox;
+
 #[cfg(test)]
 extern crate std;
 

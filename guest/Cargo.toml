@@ -10,6 +10,8 @@ description = "Native PCP OS Tailorbird UI prototype; no model or tool backend"
 live-work-demo = []
 # A stand-in for a model service, for checking the channel. Not a model; on no release image.
 talk-test-worker = []
+# Opt-in inference qualification worker; never enabled by the ordinary UI build.
+model-worker = ["dep:pcpos-qwen", "dep:pcpos-gguf", "dep:pcpos-model-media"]
 
 [lib]
 name = "tailorbird_ui"
@@ -34,6 +36,26 @@ path = "src/talk_test_worker_main.rs"
 test = false
 bench = false
 required-features = ["talk-test-worker"]
+
+[[bin]]
+name = "model-worker"
+path = "src/model_worker_main.rs"
+test = false
+bench = false
+required-features = ["model-worker"]
+
+[[example]]
+name = "model_prompt"
+required-features = ["model-worker"]
+
+[[example]]
+name = "model_chat"
+required-features = ["model-worker"]
+
+[dependencies]
+pcpos-qwen = { path = "../pcp-os/PCP_OS_Rust/crates/pcpos-qwen", optional = true }
+pcpos-gguf = { path = "../pcp-os/PCP_OS_Rust/crates/pcpos-gguf", optional = true }
+pcpos-model-media = { path = "../pcp-os/PCP_OS_Rust/crates/pcpos-model-media", optional = true }
 
 [target.'cfg(target_os = "none")'.dependencies]
 pcp-game-guest = { path = "../pcp-os/store/native/guest" }

@@ -25,6 +25,14 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.97.0 --profile minimal --component rust-src --target x86_64-unknown-none
+      - name: Fetch checksum-locked dependencies before offline checks
+        run: cargo fetch --locked
+      - name: Check opt-in model session and native worker link
+        env:
+          PCP_MODEL_MANIFEST_SHA256: bbdaa8cd263d9454159f12b55ec32613d18a4b7b4d75d284ad0cadc932bc1f4b
+        run: |
+          cargo test --locked --offline --features model-worker --lib
+          cargo build --locked --offline --release --target x86_64-unknown-none --features model-worker --bin model-worker
       - name: Record source and toolchain identities
         shell: bash
         run: |
