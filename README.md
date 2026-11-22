@@ -2,6 +2,7 @@
 
 Tailorbird is the PCP OS application for working with a local model worker. This repository is its
 home. The kernel and the guest library stay in `pcp-os`, pinned here as a submodule.
+The [catalogue](CATALOG.md) says what each folder is.
 
 ## Source and runtime
 
