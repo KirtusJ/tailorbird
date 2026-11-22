@@ -168,14 +168,18 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
             // happened, where the file is (whole name, on as many lines as it needs), how long it lasts.
             let (words, good) = crate::note::headline(job);
             label(f, 420, 286, words, 2, if good { GOOD } else { AMBER });
-            if good {
+            // Only a refusal the kernel's receipt states rules the file out. With no readable receipt the
+            // file may or may not exist, and the screen says so and keeps the name asked for.
+            let refused = !good && job.receipt().is_some();
+            if refused {
+                label(f, 420, 316, "Nothing was changed.", 2, SOFT);
+            } else {
                 let name = job.destination().as_str().as_bytes();
                 for (row, part) in name.chunks(80).enumerate() {
                     label(f, 420, 316 + row as i32 * 16, core::str::from_utf8(part).unwrap_or("?"), 1, TEXT);
                 }
-                label(f, 420, 352, "Kept until this computer is switched off.", 1, AMBER);
-            } else {
-                label(f, 420, 316, "Nothing was changed.", 2, SOFT);
+                label(f, 420, 352, if good { "Kept until this computer is switched off." }
+                      else { "Not confirmed: this file may or may not have been made." }, 1, AMBER);
             }
             label(f, 420, 384, "Type again and press Alt+N for another.", 1, SOFT);
             key(f, 339, 420, "Esc", "returns to Programs");
@@ -300,6 +304,30 @@ mod tests {
         ui.last_note = Some(p.job);
         let unknown = shot(&ui);
         assert_ne!(able, unknown);
+        // A job with no receipt never draws the words that rule the file out; a stated refusal does.
+        let says = |pixels: &Vec<u32>, words: &str, size: i32, colour: u32| {
+            // The row the words stand on, against the same words drawn alone on the panel's colour.
+            let mut alone = vec![PANEL; 960 * 540];
+            let mut f = Frame::new(&mut alone, 960, 540, 960, PANEL, false);
+            label(&mut f, 420, 316, words, size, colour);
+            (316..336).all(|y| (420..900).all(|x| alone[y * 960 + x] == pixels[y * 960 + x]))
+        };
+        assert!(!says(&unknown, "Nothing was changed.", 2, SOFT));
+        let mut declined = crate::note::prepare(3, 1, "hello").unwrap();
+        declined.job.submitted().unwrap();
+        let mut no = [0u8; 100];
+        no[0..4].copy_from_slice(&1u32.to_le_bytes());
+        no[4..8].copy_from_slice(&2u32.to_le_bytes());
+        no[8..16].copy_from_slice(&9u64.to_le_bytes());
+        no[16..24].copy_from_slice(&3u64.to_le_bytes());
+        no[24..32].copy_from_slice(&1u64.to_le_bytes());
+        no[32..64].copy_from_slice(&crate::kernel_proposal::request_digest("taylor/my-first-project/note-1.txt", b"hello\n"));
+        no[64..96].copy_from_slice(&crate::sha256::sha256(&[b"hello\n"]));
+        assert_eq!(crate::note::settle(&mut declined.job, &no).as_str(), "Not made: you said no.");
+        let mut refused = Ui::new();
+        refused.notes = true;
+        refused.last_note = Some(declined.job);
+        assert!(says(&shot(&refused), "Nothing was changed.", 2, SOFT));
         p = crate::note::prepare(3, 1, "hello").unwrap();
         p.job.submitted().unwrap();
         let (name, content) = ("taylor/my-first-project/note-1.txt", b"hello\n");
