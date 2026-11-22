@@ -252,6 +252,31 @@ pub extern "C" fn tailorbird_main() -> ! {
             match outcome {
                 KeyOutcome::Exit => exit(0),
                 KeyOutcome::Redraw => dirty = true,
+                KeyOutcome::GiveUp => {
+                    // The person has said, twice, that Taylor is to make no more files. The program
+                    // tells PCP OS it gives the right up, and says so on the screen only if PCP OS's
+                    // own receipt says so: from then on PCP OS refuses without asking, whatever this
+                    // program or a model later does.
+                    let record = tailorbird_ui::kernel_proposal::give_up_record(attempt);
+                    let taken = call(1, proposals as usize, record.as_ptr() as usize, record.len(), 0, 0, 0);
+                    let mut receipt = [0u8; 100];
+                    let got = if taken == record.len() as isize { call(0, proposals as usize, receipt.as_mut_ptr() as usize, receipt.len(), 0, 0, 0) } else { -1 };
+                    ui.gave_up = got == 100 && tailorbird_ui::kernel_proposal::gave_up(&receipt, attempt);
+                    ui.notice = Text::display(if ui.gave_up { note::GAVE_UP } else { note::GIVE_UP_UNCONFIRMED });
+                    log(b"tailorbird: ");
+                    log(ui.notice.as_str().as_bytes());
+                    log(b"\n");
+                    attempt += 1;
+                    dirty = true;
+                }
+                KeyOutcome::MakeNote if ui.gave_up => {
+                    // Nothing is asked of PCP OS: it would refuse, and the person is told why here.
+                    ui.talk_shown = false;
+                    ui.show_projects = false;
+                    ui.browse_level = 0;
+                    ui.notice = Text::display(note::GAVE_UP);
+                    dirty = true;
+                }
                 KeyOutcome::MakeNote => {
                     // Where the note goes is fixed before anything is asked: the active project, and a
                     // number a fresh list suggests. The kernel still makes it only if that name is free.

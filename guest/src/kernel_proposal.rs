@@ -104,6 +104,30 @@ pub fn receipt(bytes: &[u8]) -> Result<Receipt, WireError> {
     Ok(Receipt { launch: long(8), attempt: long(16), proposal: long(24), request_digest: request, content_digest: content, outcome, durable: word(96) == 1 })
 }
 
+/// The record by which this program gives up proposing files for the rest of its run: the second
+/// kind (2), 32 bytes, naming no file and carrying no text. PCP OS answers it with a receipt of
+/// outcome 7 and from then on refuses every new proposal of this run without asking the person.
+pub const GIVE_UP: usize = 32;
+pub fn give_up_record(attempt: u64) -> [u8; GIVE_UP] {
+    let mut out = [0u8; GIVE_UP];
+    out[0..4].copy_from_slice(&1u32.to_le_bytes());
+    out[4..8].copy_from_slice(&2u32.to_le_bytes());
+    out[8..16].copy_from_slice(&attempt.to_le_bytes());
+    out
+}
+
+/// Whether these bytes are PCP OS's receipt that proposing was given up by the record of that
+/// attempt: a whole receipt, version 1, outcome 7, the same attempt, proposal 0. Anything else is
+/// not a confirmation, and nothing may then be said to have been given up.
+pub fn gave_up(bytes: &[u8], attempt: u64) -> bool {
+    if bytes.len() != RECEIPT {
+        return false;
+    }
+    let word = |at: usize| u32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]]);
+    let long = |at: usize| u64::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3], bytes[at + 4], bytes[at + 5], bytes[at + 6], bytes[at + 7]]);
+    word(0) == 1 && word(4) == 7 && long(16) == attempt && long(24) == 0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,5 +250,27 @@ mod against_the_kernel {
         let hex = |d: [u8; 32]| -> std::string::String { d.iter().map(|b| std::format!("{:02x}", b)).collect() };
         assert_eq!(hex(request_digest(name, content)), "fbc17b936b4736c46543d49312eba888c378c347657646a5b65747cc89024dc1");
         assert_eq!(hex(sha256(&[content])), "b7507ea2ffd5de388cc7545bc17c37022be3b8a7d738c1b963db34717c46b110");
+    }
+
+    #[test]
+    fn giving_up_is_one_exact_record_and_only_the_kernels_receipt_confirms_it() {
+        let record = give_up_record(9);
+        assert_eq!(&record[..16], &[1, 0, 0, 0, 2, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0]);
+        assert!(record[16..].iter().all(|b| *b == 0));
+        let mut receipt = [0u8; RECEIPT];
+        receipt[0..4].copy_from_slice(&1u32.to_le_bytes());
+        receipt[4..8].copy_from_slice(&7u32.to_le_bytes());
+        receipt[8..16].copy_from_slice(&3u64.to_le_bytes());
+        receipt[16..24].copy_from_slice(&9u64.to_le_bytes());
+        assert!(gave_up(&receipt, 9));
+        assert!(!gave_up(&receipt, 8)); // another attempt's
+        assert!(!gave_up(&receipt[..99], 9) && !gave_up(&[], 9));
+        for (at, value) in [(0usize, 2u8), (4, 1), (4, 2), (24, 1)] {
+            let mut other = receipt;
+            other[at] = value;
+            assert!(!gave_up(&other, 9), "byte {at} as {value}");
+        }
+        // The proposal parser does not take it for a file's receipt either.
+        assert!(super::receipt(&receipt).is_err());
     }
 }
