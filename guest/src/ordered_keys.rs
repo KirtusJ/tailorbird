@@ -12,6 +12,8 @@ pub enum KeyOutcome {
     Unchanged,
     Redraw,
     Exit,
+    /// Alt+N, freshly pressed: make a note of what is typed. The program asks the kernel; nothing here does.
+    MakeNote,
 }
 
 pub struct OrderedKeyboard {
@@ -69,6 +71,10 @@ impl OrderedKeyboard {
             // Stop and non-consent actions retain their existing mappings.
             if (self.held[42] || self.held[54]) && (code == 30 || code == 32) {
                 return KeyOutcome::Unchanged;
+            }
+            if code == 49 {
+                // Like every command, only on a fresh press, and not with Shift.
+                return if already_down || self.held[42] || self.held[54] { KeyOutcome::Unchanged } else { KeyOutcome::MakeNote };
             }
             let action = match code {
                 50 => Some(Action::ToggleMode),
