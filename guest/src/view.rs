@@ -680,6 +680,35 @@ mod tests {
         pixels
     }
 
+    /// The queued notice is a real raster assertion, not just a string in a reducer test.
+    /// It may not claim model delivery before any channel write or service acknowledgment.
+    #[test]
+    fn queued_talk_notice_renders_exactly_and_not_as_sent() {
+        let mut ui = Ui::new();
+        ui.talk.service_is(crate::talk::Service::Ready);
+        for b in b"hello" { assert!(ui.input.push_ascii(*b)); }
+        let _ = ui.intent(crate::Action::Submit);
+        let queued = "QUEUED LOCALLY - DELIVERY UNCONFIRMED";
+        assert_eq!(ui.notice.as_str(), queued);
+        assert!(ui.for_service().is_some(), "the frame has not been carried");
+        let shown = shot(&ui);
+
+        // Keep everything else in the frame identical and draw only the notice from the
+        // actual source font at its production coordinates.
+        ui.notice = crate::Text::new();
+        let blank = shot(&ui);
+        let mut exact = blank.clone();
+        let mut frame = Frame::new(&mut exact, 960, 540, 960, GROUND, false);
+        frame.text(535, 513, queued, 1, AMBER);
+        assert_ne!(blank, exact, "the queued label must have visible pixels");
+        assert_eq!(shown, exact, "the native bitmap must show the entire exact queued notice");
+
+        let mut misleading = blank.clone();
+        let mut frame = Frame::new(&mut misleading, 960, 540, 960, GROUND, false);
+        frame.text(535, 513, "SENT TO TAYLOR'S MODEL ON THIS COMPUTER", 1, AMBER);
+        assert_ne!(shown, misleading, "an unconfirmed queued message must not look delivered");
+    }
+
     /// A reply that was stopped or failed says so without one pixel of the reply being painted over,
     /// whatever its length: after its last character where there is room, on a row of its own where
     /// there is not. Director 2 found the words drawn across the start of a reply that filled its
