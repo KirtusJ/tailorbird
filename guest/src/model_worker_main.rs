@@ -43,7 +43,10 @@ fn run(link:&mut Link)->Result<()>{
     let mut decoder=Decoder::new(&model,bytes,CONTEXT,768<<20,||link.keep(None,&mut ticks)).map_err(|_|"model working memory refused")?;
     decoder.step(prompt[0],||link.keep(None,&mut ticks)).map_err(|_|"model preflight failed")?;decoder.reset();
     drop(prompt);drop(probe);
-    link.send(Kind::Ready,None,b"")?;log(b"Taylor model worker: verified, tokenized and preflighted; scalar qualification only\n");
+    link.send(Kind::Ready,None,b"")?;
+    log(b"Taylor model worker: verified, tokenized and preflighted; Q4_K/Q6_K projections: ");
+    log(decoder.projection().name().as_bytes());
+    log(b"\n");
     loop{
         link.state.remembered=memory.conversation();
         link.poll(None)?;

@@ -99,8 +99,41 @@ mod guest {
         log(alloc::format!("Qwen four-step fixture compute_us={compute_us}\n").as_bytes());
     }
 
+    // Real release-model block layouts, including both halves of each packed byte.
+    fn verify_quantized() {
+        use pcpos_model_tensor::{Error, Projection, Row, TensorType};
+        let projection = Projection::detect();
+        let values: [f32; 512] = core::array::from_fn(|i| ((i * 31 % 251) as f32 - 125.0) / 64.0);
+        for kind in [TensorType::Q4K, TensorType::Q6K] {
+            let size = kind.block_layout().1 as usize;
+            let mut encoded = alloc::vec![0; 2 * size];
+            for (i, byte) in encoded.iter_mut().enumerate() {
+                *byte = i.wrapping_mul(37).wrapping_add(i / 7) as u8;
+            }
+            for block in encoded.chunks_exact_mut(size) {
+                if kind == TensorType::Q4K {
+                    block[..4].copy_from_slice(&[0, 0x38, 0, 0x34]);
+                } else {
+                    block[208..].copy_from_slice(&[0, 0x38]);
+                }
+            }
+            let row = Row::new(kind, values.len(), &encoded).unwrap();
+            let expected = row.dot(&values, || true).unwrap();
+            assert!(expected.is_finite() && expected != 0.0);
+            let mut checks = 0;
+            assert_eq!(projection.dot(&row, &values, || {
+                checks += 1;
+                checks < 2
+            }), Err(Error::Cancelled));
+            assert_eq!(checks, 2);
+            assert_eq!(projection.dot(&row, &values, || true).unwrap().to_bits(), expected.to_bits());
+        }
+        log(alloc::format!("Qwen Q4_K/Q6_K projections passed with {}\n", projection.name()).as_bytes());
+    }
+
     #[no_mangle]
     pub extern "C" fn probe_main() -> ! {
+        verify_quantized();
         verify(
             include_bytes!(concat!(env!("QWEN_FIXTURE_DIR"), "/qwen2.gguf")),
             include_str!("../../pcp-os/PCP_OS_Rust/crates/pcpos-qwen/tests/data/qwen2-forward.txt"),

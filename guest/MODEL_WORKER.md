@@ -43,7 +43,11 @@ The allocator is the existing Parrots guest page allocator, reused by path.
 ## Worker with hardware floating point
 
 For native speed qualification, the worker has its own optional x86-64 target.
-It uses the System V floating-point ABI and baseline SSE2. The target keeps
+It uses the System V floating-point ABI and baseline SSE2. When the processor
+offers AVX2 and the kernel enables XMM and YMM state, the same worker decodes
+eight Q4_K or Q6_K weights together. Products use f64 and retain the scalar
+addition order. At startup the worker logs the selected projection backend.
+The target keeps
 the PCP OS guest entry point, static large-address layout and disabled red zone.
 Build from the Tailorbird repository root with its pinned submodule:
 
@@ -65,8 +69,10 @@ in its image receipt. The manifest in the command selects the 0.5B reference.
 The SSE2 qualification workflow produces `model-worker` for the 0.5B reference
 and `model-worker-qwen3-8b` for the verified 8B package. The artifact records both
 manifest pins and executable hashes. The workflow checks the reference worker's
-instructions and boots two tiny decoder probes twice, reversing their order for
-the second trial, on the same QEMU CPU and PCP OS kernel. Each
+scalar and vector instructions. It boots both decoder probes on the same kernel
+with three QEMU CPU configurations covering baseline, AVX without AVX2, and AVX2.
+Each boot checks the selected backend on Q4_K and Q6_K weights and verifies
+cancellation and retry across two weight blocks. Each probe also
 compares four steps for each of Qwen2 and Qwen3 against the pinned reference
 scores. Each also interrupts prompt processing, checks the rollback, and retries
 the same prompt. The serial output gives guest-clock compute time for each model.
