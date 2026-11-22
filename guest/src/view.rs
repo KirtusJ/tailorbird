@@ -162,7 +162,7 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
         f.well(stop_rect.x, stop_rect.y, stop_rect.width, stop_rect.height, stop_fill);
     }
     label(f, 48, 329, "Stop", 3, stop_heading);
-    label(f, 48, 365, if answering { "Taylor is answering" } else { sentence(ui.task.state.label(), &mut name) }, 1, stop_caption);
+    label(f, 48, 365, if answering { "Waiting for a reply" } else { sentence(ui.task.state.label(), &mut name) }, 1, stop_caption);
     key(f, 40, 410, "Alt", "+");
     key(f, 78, 410, "S", if answering { "stops the answer" } else { "stops the task" });
 
@@ -427,7 +427,7 @@ fn transcript(f: &mut Frame<'_>, talk: &crate::talk::Talk) {
             y += 12;
         } else if text.is_empty() {
             let waiting = match turn.state {
-                Reply::Streaming => "(answering...)",
+                Reply::Streaming => "(waiting for a reply)",
                 Reply::Cancelled => "(stopped before anything was said)",
                 Reply::Failed => "(no answer: it failed)",
                 _ => "",
@@ -717,6 +717,54 @@ mod tests {
         frame.text(535, 513, "SENT TO TAYLOR'S MODEL ON THIS COMPUTER", 1, AMBER);
         assert!(misleading.iter().zip(&exact).any(|(old, new)| (old != &0) != (new != &0)),
                 "the old misleading words must have different raster coverage");
+    }
+
+    /// Pending means a locally admitted SAY, not a service-accepted or model-started reply.
+    /// The Stop control remains reachable, but its caption and the empty transcript
+    /// must not claim Taylor is already answering when the channel has written zero bytes.
+    #[test]
+    fn queued_reply_captions_are_exact_pixels_and_not_model_activity_claims() {
+        use crate::talk::{Incoming, Service, Taken};
+        let mut ui = Ui::new();
+        ui.talk.service_is(Service::Ready);
+        for b in b"hello" { assert!(ui.input.push_ascii(*b)); }
+        let _ = ui.intent(crate::Action::Submit);
+        assert_eq!(ui.notice.as_str(), "QUEUED LOCALLY - DELIVERY UNCONFIRMED");
+        assert!(matches!(ui.for_service(), Some(crate::talk::Request::Say(_))));
+        assert!(ui.talk.answering(), "pending tracks the local request, not confirmed delivery");
+        let screen = shot(&ui);
+
+        // Draw the exact production font at both actual production coordinates.
+        // Compare *all* glyph cells in each region, so surviving old wording fails too.
+        let mut expected = vec![0u32; screen.len()];
+        let mut f = Frame::new(&mut expected, 960, 540, 960, 0, false);
+        let caption_color = stop_colors(true).2;
+        let stop = "Waiting for a reply";
+        let transcript = "(waiting for a reply)";
+        label(&mut f, 48, 365, stop, 1, caption_color);
+        label(&mut f, 393, 242, transcript, 1, SOFT);
+        for (x, y, width, ink) in [
+            (48usize, 365usize, 6 * stop.len().max("Taylor is answering".len()), caption_color),
+            (393, 242, 6 * transcript.len().max("(answering...)".len()), SOFT),
+        ] {
+            let mut visible = 0;
+            for row in y..y + 12 {
+                for col in x..x + width {
+                    let at = row * 960 + col;
+                    let actual_ink = screen[at] == ink;
+                    let expected_ink = expected[at] == ink;
+                    assert_eq!(actual_ink, expected_ink,
+                        "wrong pending-caption pixel at ({col},{row}), including possible old wording");
+                    if actual_ink { visible += 1; }
+                }
+            }
+            assert!(visible > 15, "caption must actually be rasterized");
+        }
+
+        // A mismatched reply must not make the screen claim work has begun.
+        assert_eq!(ui.talk.receive(Incoming::Chunk { conversation: 1, reply: 2, text: "wrong" }), Taken::Stray);
+        assert_eq!(shot(&ui), screen);
+        assert!(matches!(ui.for_service(), Some(crate::talk::Request::Say(_))));
     }
 
     /// A reply that was stopped or failed says so without one pixel of the reply being painted over,
