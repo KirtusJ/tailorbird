@@ -37,22 +37,23 @@ fn sentence<'a>(value: &str, buf: &'a mut [u8; 40]) -> &'a str {
 /// Taylor, the tailorbird: green back, pale front, a long tail held up, and an amber crown worn like a
 /// builder's hat. Sixteen by fourteen squares, each `unit` of the layout across. Facing left, toward
 /// the words beside it.
-// Taylor carries a little hammer under one wing (the owner's wish): steel head, wooden handle.
+// Taylor carries a little hammer (the owner's wish), held out in front of her: steel head forward,
+// wooden handle in her wing.
 const TAYLOR: [&[u8; 16]; 14] = [
-    b"............G...",
-    b"...AAAA....GG...",
-    b"..AAAAAA...GG...",
-    b".AAAAAAAA.GG....",
-    b"..GGKGGGGGGG....",
-    b"SSGGGGGGGGGG....",
-    b"..GWWWGGGGG.....",
-    b"..WWWWWGGGG.SSSS",
-    b"..WWWWWWGG..SSSS",
-    b"...WWWWWGGG..A..",
-    b"....WWWW..GGGA..",
-    b".....S.S.....A..",
-    b".....S.S.....A..",
-    b"....SS.SS.......",
+    b"...............G",
+    b"......AAAA....GG",
+    b".....AAAAAA...GG",
+    b"....AAAAAAAA.GG.",
+    b".....GGKGGGGGGG.",
+    b"...SSGGGGGGGGGG.",
+    b"SS...GWWWGGGGG..",
+    b"SSAAAGGWWWGGGG..",
+    b"SS...WWWWWWGG...",
+    b"......WWWWWG....",
+    b".......WWWW.....",
+    b"........S.S.....",
+    b"........S.S.....",
+    b".......SS.SS....",
 ];
 
 fn taylor(f: &mut Frame<'_>, x: i32, y: i32, unit: i32) {
