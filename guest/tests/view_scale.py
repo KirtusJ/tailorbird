@@ -184,6 +184,30 @@ def selftest_editor_receipts():
     print("Editor receipt gate: 1 valid and 3 missing-check controls PASS", flush=True)
 
 
+
+def require_sidebar_keycap_receipts(receipts):
+    # Each real Fit/typed/Compact/Fit-again frame must bind all four physical
+    # Alt/M/Alt/S keycap glyphs to actual source RGB, with independent erasures.
+    expected = {"native_frames": 4, "erased_keycap_negatives": 16}
+    if receipts != expected:
+        raise AssertionError(f"native sidebar keycap checks incomplete: {receipts!r}")
+
+
+def selftest_sidebar_keycap_receipts():
+    complete = {"native_frames": 4, "erased_keycap_negatives": 16}
+    require_sidebar_keycap_receipts(dict(complete))
+    for key in complete:
+        missing = dict(complete)
+        missing[key] -= 1
+        try:
+            require_sidebar_keycap_receipts(missing)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError(f"missing sidebar keycap check accepted: {key}")
+    print("Sidebar keycaps: 1 complete and 2 skipped-check refusals PASS",
+          flush=True)
+
 def require_shortcut_legend_receipts(receipts):
     expected = {"native_frames": 4, "erased_stop_negatives": 4,
                 "erased_exit_negatives": 4}
@@ -526,6 +550,7 @@ def check(kernel, app, measurement, folder, small):
     empty_output_receipts = {"native_frames": 0, "erased_guidance_negatives": 0}
     task_section_receipts = {"native_frames": 0, "erased_label_negatives": 0}
     affordance_receipts = {"native_frames": 0, "erased_affordance_negatives": 0}
+    sidebar_keycap_receipts = {"native_frames": 0, "erased_keycap_negatives": 0}
 
     def stop_text_ok(rgb, mode, text, x, y, step, cell_width, cell_height, ink, background=GROUND):
         for i, ch in enumerate(text):
@@ -862,6 +887,45 @@ def check(kernel, app, measurement, folder, small):
             task_section_receipts["erased_label_negatives"] += 1
         task_section_receipts["native_frames"] += 1
 
+
+    # Native sidebar key names are a separate safety disclosure from their
+    # action words. C3 observed that "stops the task"/"changes the mode" were
+    # checked without any positive or adverse Alt/M/Alt/S cap checks.
+    # The tested source's key() draws a PANEL cap under a TEXT 6x12 glyph.
+    sidebar_keycaps = (
+        ("Mode Alt", "Alt", 44, 289),
+        ("Mode M", "M", 82, 289),
+        ("Stop Alt", "Alt", 44, 410),
+        ("Stop S", "S", 82, 410),
+    )
+
+    def sidebar_keycap_ok(rgb, mode, letters, x, y):
+        return stop_text_ok(rgb, mode, letters, x, y,
+                            6, 6, 12, TEXT, PANEL)
+
+    def erased_sidebar_keycap(rgb, mode, letters, x, y):
+        # Alter only a disposable host copy of a genuine native Q35 frame.
+        damaged = bytearray(rgb)
+        for i in range(len(letters)):
+            left, top, right, bottom = box(mode, x+i*6, y, 6, 12)
+            for yy in range(top, bottom):
+                offset = (yy*w+left)*3
+                damaged[offset:offset+(right-left)*3] = PANEL*(right-left)
+        return bytes(damaged)
+
+    def check_sidebar_keycaps(rgb, mode):
+        for name, letters, x, y in sidebar_keycaps:
+            assert sidebar_keycap_ok(rgb, mode, letters, x, y), (
+                f"native {name} keycap differs from source RGB"
+            )
+            erased = erased_sidebar_keycap(rgb, mode, letters, x, y)
+            assert erased != rgb, f"native {name} erasure removed no real ink"
+            assert not sidebar_keycap_ok(erased, mode, letters, x, y), (
+                f"erased native {name} keycap incorrectly accepted"
+            )
+            sidebar_keycap_receipts["erased_keycap_negatives"] += 1
+        sidebar_keycap_receipts["native_frames"] += 1
+
     # These four already-painted native UI disclosures are separate from the
     # previously guarded MODE state, F6 badge, request count and footer legend.
     # In particular, the actual mode-change command and 120-byte capacity
@@ -915,6 +979,7 @@ def check(kernel, app, measurement, folder, small):
         check_shortcut_legend(empty,"fit")
         check_empty_output_positive_and_negatives(empty,"fit")
         check_task_section_positive_and_negatives(empty,"fit")
+        check_sidebar_keycaps(empty,"fit")
         check_affordance_positive_and_negatives(empty,"fit")
         m.key("a")
         typed = sample("typed",lambda rgb: form(rgb,"fit") and editor(rgb,"fit") != editor(empty,"fit"))
@@ -926,6 +991,7 @@ def check(kernel, app, measurement, folder, small):
         check_shortcut_legend(typed,"fit")
         check_empty_output_positive_and_negatives(typed,"fit")
         check_task_section_positive_and_negatives(typed,"fit")
+        check_sidebar_keycaps(typed,"fit")
         check_affordance_positive_and_negatives(typed,"fit")
         m.key("f6")
         compact = sample("compact",lambda rgb: form(rgb,"compact") and
@@ -939,6 +1005,7 @@ def check(kernel, app, measurement, folder, small):
         check_shortcut_legend(compact,"compact")
         check_empty_output_positive_and_negatives(compact,"compact")
         check_task_section_positive_and_negatives(compact,"compact")
+        check_sidebar_keycaps(compact,"compact")
         check_affordance_positive_and_negatives(compact,"compact")
         if small:
             assert editor(compact,"compact") == editor(typed,"fit")
@@ -957,6 +1024,7 @@ def check(kernel, app, measurement, folder, small):
         check_shortcut_legend(fit_again,"fit")
         check_empty_output_positive_and_negatives(fit_again,"fit")
         check_task_section_positive_and_negatives(fit_again,"fit")
+        check_sidebar_keycaps(fit_again,"fit")
         check_affordance_positive_and_negatives(fit_again,"fit")
         require_stop_receipts(stop_receipts, small)
         require_mode_receipts(mode_receipts)
@@ -967,6 +1035,7 @@ def check(kernel, app, measurement, folder, small):
         require_empty_output_receipts(empty_output_receipts)
         require_task_section_receipts(task_section_receipts)
         require_affordance_receipts(affordance_receipts)
+        require_sidebar_keycap_receipts(sidebar_keycap_receipts)
         report["f6_badge_source_rgb"] = dict(f6_receipts)
         report["offline_status_source_rgb"] = dict(offline_receipts)
         report["editor_source_rgb"] = dict(editor_receipts)
@@ -974,6 +1043,7 @@ def check(kernel, app, measurement, folder, small):
         report["empty_output_guidance_source_rgb"] = dict(empty_output_receipts)
         report["task_section_source_rgb"] = dict(task_section_receipts)
         report["mode_request_affordance_source_rgb"] = dict(affordance_receipts)
+        report["sidebar_keycaps_source_rgb"] = dict(sidebar_keycap_receipts)
         report["disabled_stop_source_rgb"] = dict(stop_receipts)
         report["mode_source_rgb"] = dict(mode_receipts)
 
@@ -1084,6 +1154,7 @@ if __name__ == "__main__":
     selftest_offline_status_receipts()
     selftest_editor_receipts()
     selftest_shortcut_legend_receipts()
+    selftest_sidebar_keycap_receipts()
     selftest_empty_output_receipts()
     selftest_task_section_receipts()
     selftest_offline_refusal_receipts()
