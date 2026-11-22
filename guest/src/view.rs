@@ -115,8 +115,15 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
     // Mode and Stop are always visible even if the model is missing.
     f.panel(20, 94, 280, 352, PANEL);
     label(f, 38, 115, "TAYLOR IS", 1, TEAL);
-    label(f, 38, 135, sentence(ui.model.label(), &mut name), 2,
-          if ui.model == Model::Ready { GOOD } else { AMBER });
+    // Unknown means the connected service has not reported model readiness;
+    // it must not be presented as "Not connected" while the service is online.
+    let model_caption = if ui.connected && ui.model == Model::Unknown {
+        "Model unknown"
+    } else {
+        sentence(ui.model.label(), &mut name)
+    };
+    label(f, 38, 135, model_caption, 2,
+          if ui.connected && ui.model == Model::Ready { GOOD } else { AMBER });
     label(f, 38, 191, "MODE", 1, TEAL);
     let mode_rect = crate::pointer::MODE_RECT;
     f.well(mode_rect.x, mode_rect.y, mode_rect.width, mode_rect.height, GROUND);
@@ -306,6 +313,54 @@ mod tests {
                         &actual[start + x0..start + x1],
                         &expected[start + x0..start + x1],
                         "status pixel mismatch at {width}x{height} y={y}, service={connected}, model={model:?}",
+                    );
+                }
+            }
+        }
+    }
+
+    /// The sidebar must agree with the connection/model distinction in the
+    /// header. In particular a connected Unknown model is not "Not connected".
+    /// Compare the complete caption raster at each supported sample geometry.
+    #[test]
+    fn sidebar_model_caption_distinguishes_service_and_model() {
+        let cases = [
+            (false, Model::Unknown, "Not connected", AMBER),
+            (false, Model::Ready, "Not connected", AMBER),
+            (true, Model::Unknown, "Model unknown", AMBER),
+            (true, Model::Loading, "Model loading", AMBER),
+            (true, Model::Unavailable, "Model unavailable", AMBER),
+            (true, Model::Ready, "Model ready", GOOD),
+        ];
+        for (width, height, left, top, scale) in [
+            (960usize, 540usize, 0usize, 0usize, 1usize),
+            (1280, 720, 160, 90, 1),
+            (1920, 1080, 0, 0, 2),
+            (2560, 1440, 320, 180, 2),
+        ] {
+            for (connected, model, caption, color) in cases {
+                assert!(38 + caption.len() * 10 <= 300, "sidebar caption overflows");
+                let mut ui = Ui::new();
+                assert!(ui.observe(crate::BackendEvent::Service {
+                    connected, model, saved_mode: crate::Mode::Single,
+                }));
+                let mut actual = vec![0u32; width * height];
+                let mut expected = vec![0u32; width * height];
+                {
+                    let mut frame = Frame::new(&mut actual, width, height, width, GROUND, false);
+                    paint_frame(&mut frame, &ui);
+                }
+                {
+                    let mut frame = Frame::new(&mut expected, width, height, width, GROUND, false);
+                    frame.panel(20, 94, 280, 352, PANEL);
+                    label(&mut frame, 38, 135, caption, 2, color);
+                }
+                for y in (top + 135 * scale)..(top + 155 * scale) {
+                    let begin = y * width + left + 38 * scale;
+                    let end = y * width + left + 278 * scale;
+                    assert_eq!(
+                        &actual[begin..end], &expected[begin..end],
+                        "sidebar mismatch at {width}x{height} y={y}, service={connected}, model={model:?}"
                     );
                 }
             }
