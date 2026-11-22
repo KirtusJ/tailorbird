@@ -92,6 +92,21 @@ The mascot is named **Taylor** (owner, 22 November): the program is Tailorbird, 
   after a restart". How the user gets from Tailorbird to the new file and back, on a system that shows
   one program at a time, must be a designed path.
 
+### Where Taylor's work goes (owner, 22 November)
+
+"Ensure tailorbird has a clean, and customizable, build to directory, with projects placed in that
+directory."
+
+- Everything Taylor makes goes under **one folder the user chooses** (`taylor` unless changed in
+  Tailorbird's settings), and nowhere else.
+- **Each project has its own folder inside it** (`taylor/birthday-card/…`), named by the user or
+  suggested by Taylor and shown before anything is made. A project's files stay in its folder.
+- The kernel's question names folder and file apart, and refuses a name that reaches outside (a part
+  beginning with a dot, more than three folders deep, or the kernel's own `dev`).
+- Clean means: no scratch files or leftovers in the build folder; what is there is what was allowed.
+- To be built: the setting itself, a list of projects in Tailorbird, and (with Files) a way to open
+  the folder from the desktop. The kernel side of the naming rule exists in pcp-os pull request 344.
+
 ### The screen stays alive (C3's conditions, adopted)
 
 - The model's work is cut into bounded pieces, in loading, in reading the prompt and inside the layers,
