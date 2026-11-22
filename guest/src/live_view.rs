@@ -90,8 +90,16 @@ pub fn paint(f: &mut Frame<'_>, work: &Work) {
         f.rect(553, 230, 60, 44, GROUND);
         f.rect(561, 238, 44, 6, SOFT);
         f.rect(561, 252, 27, 5, TEAL);
-        text(f, 432, 298, "Preview will appear here", TEXT, false);
-        text(f, 400, 324, "Updates arrive as work progresses", SOFT, false);
+        let (heading, explanation) = match work.phase() {
+            Phase::Stopped => ("No preview received", "Worker stopped before a preview arrived"),
+            Phase::Failed => ("No preview received", "Work failed before a preview arrived"),
+            Phase::Disconnected => ("No preview received", "Connection lost; work status unknown"),
+            Phase::StopRequested => ("No preview received yet", "Waiting for the worker to stop"),
+            Phase::Completed => ("No preview supplied", "Work completed without a preview"),
+            _ => ("Preview will appear here", "Updates arrive as work progresses"),
+        };
+        text(f, 400, 298, heading, TEXT, false);
+        text(f, 360, 324, explanation, SOFT, false);
     }
     text(f, 24, 487, work.detail(), color, false);
     f.rect(0, 514, 960, 26, PANEL);

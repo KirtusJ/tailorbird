@@ -35,7 +35,7 @@ impl Demo {
     pub fn request_stop(&mut self) { self.work.request_stop(); }
     pub fn confirm_stop(&mut self) { self.send(Update::Stopped); }
     pub fn disconnect(&mut self) { self.work.disconnect(); }
-    pub fn fail(&mut self) { self.send(Update::Failed { reason: "Sample build check failed; preview retained" }); }
+    pub fn fail(&mut self) { self.send(Update::Failed { reason: "Sample build check failed" }); }
     pub fn key(&mut self, code: usize) -> bool {
         match code {
             0x39 => self.advance(), 0x11 => self.wait(), 0x1f => self.request_stop(),
@@ -85,5 +85,18 @@ mod tests {
         for _ in 0..4 { d.advance(); }
         assert_eq!(d.work.phase(), Phase::Completed); assert!(d.work.is_demo());
         assert_eq!(d.work.preview().unwrap().change, ChangeState::Applied);
+    }
+    #[test]
+    fn early_interruptions_never_claim_a_retained_preview() {
+        for key in [0x2e, 0x20, 0x21] {
+            let mut d = Demo::new(); d.advance();
+            if key == 0x2e { d.request_stop(); }
+            d.key(key);
+            assert!(d.work.preview().is_none());
+            assert!(!d.work.detail().contains("retained"));
+            assert!(!d.work.detail().contains("Last received preview"));
+            assert!(matches!(d.work.phase(), Phase::Stopped | Phase::Disconnected | Phase::Failed));
+            let phase = d.work.phase(); d.advance(); assert_eq!(d.work.phase(), phase);
+        }
     }
 }
