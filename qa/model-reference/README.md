@@ -55,7 +55,10 @@ The exact-input harness used for those frozen trials is retained in
 `scoring.py`: both reject duplicate JSON keys and invalid UTF-8. The runner records
 malformed stdout bytes without repair, writes the failed trial's result and
 continues the next case. `test_runner_output.py` exercises that sequence on Windows
-with controlled process output and no model. The frozen outcomes are unchanged;
+with controlled process output and no model. Trial and aggregate reports use ASCII
+JSON escapes so lone surrogates in invalid keys or values remain recordable; the
+regression also checks those reports round-trip before a later valid trial.
+The frozen outcomes are unchanged;
 no inference was rerun for this recording correction.
 
 | Corrected trial set | Valid JSON | Exact requested result |

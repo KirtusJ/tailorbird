@@ -33,6 +33,12 @@ psapi = ctypes.WinDLL('psapi',use_last_error=True)
 psapi.GetProcessMemoryInfo.argtypes = [wintypes.HANDLE,ctypes.POINTER(Memory),wintypes.DWORD]
 psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
 
+def write_report(path, report):
+    # Parsed but invalid JSON shapes can contain lone surrogates in any key or
+    # value. ASCII escapes preserve those diagnostic values without asking the
+    # UTF-8 encoder to encode them. Use this for trial and aggregate reports.
+    path.write_text(json.dumps(report,indent=2,ensure_ascii=True)+'\n',encoding='utf-8')
+
 def run(case, constrained):
     name,question,kind,filename,expected = case
     folder = ROOT/'results'/('schema' if constrained else 'free')/name
@@ -88,7 +94,7 @@ def run(case, constrained):
               'memory_samples':samples,**scored,
               'timing_lines':[s for s in log.splitlines() if 'time =' in s],
               'memory_lines':[s for s in log.splitlines() if 'buffer size' in s or 'KV self size' in s]}
-    (folder/'result.json').write_text(json.dumps(report,indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
+    write_report(folder/'result.json', report)
     print(json.dumps({k:v for k,v in report.items() if k not in ('parsed','timing_lines','memory_lines')}),flush=True)
     return report
 
@@ -116,7 +122,7 @@ if __name__ == '__main__':
         for constrained in group['modes']:
             for case in group['cases']:
                 reports.append(run(case,constrained))
-                (ROOT/'benchmark-results.json').write_text(json.dumps({
+                write_report(ROOT/'benchmark-results.json', {
                     'model_sha256':MODEL_SHA,'runner_sha256':RUNNER_SHA,
                     'scope':'Windows reference QA, exact prompt bytes; no native inference or output execution',
-                    'group':group['name'],'cases':reports},indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
+                    'group':group['name'],'cases':reports})

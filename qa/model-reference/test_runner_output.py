@@ -32,6 +32,8 @@ class TrialRecording(unittest.TestCase):
         payloads = [
             b'{"kind":"unsupported","kind":"create_text","name":"a.txt","text":"ok"}',
             b'{"kind":"create_text","name":"a.txt","text":"\xe2\x82',
+            b'{"kind":"\\ud800","name":"a.txt","text":"ok"}',
+            b'{"kind":"create_text","name":"a.txt","text":"ok","\\udfff":{"nested":"\\ud800"}}',
             b'{"kind":"create_text","name":"a.txt","text":"ok"} [end of text]',
         ]
         expected = {'kind':'create_text','name':'a.txt','text':'ok'}
@@ -44,8 +46,8 @@ class TrialRecording(unittest.TestCase):
                 reports = []
                 for n in range(len(payloads)):
                     reports.append(runner.run((str(n), 'Draft a.txt with ok.', 'create_text','a.txt','ok'),False))
-            self.assertEqual([r['json_shape_valid'] for r in reports], [False,False,True])
-            self.assertEqual([r['exact_requested_result'] for r in reports], [False,False,True])
+            self.assertEqual([r['json_shape_valid'] for r in reports], [False,False,False,False,True])
+            self.assertEqual([r['exact_requested_result'] for r in reports], [False,False,False,False,True])
             for n, raw in enumerate(payloads):
                 folder = Path(temp)/'results'/'free'/str(n)
                 self.assertEqual((folder/'stdout.bin').read_bytes(), raw)
@@ -54,6 +56,12 @@ class TrialRecording(unittest.TestCase):
                 self.assertEqual(saved, reports[n])
                 self.assertEqual((saved['json_shape_valid'], saved['exact_requested_result']), score(raw,expected))
             self.assertIsNone(reports[1]['parsed'])
+            self.assertEqual(reports[2]['parsed']['kind'], '\ud800')
+            aggregate = Path(temp)/'benchmark-results.json'
+            runner.write_report(aggregate, {'cases':reports})
+            self.assertEqual(json.loads(aggregate.read_text(encoding='utf-8')), {'cases':reports})
+            self.assertIn(b'\\ud800', aggregate.read_bytes())
+            self.assertIn(b'\\udfff', aggregate.read_bytes())
 
 
 if __name__ == '__main__':
