@@ -62,8 +62,11 @@ dependencies for the same ABI. The kernel, loader and foreground application
 use their existing toolchains. Record the worker digest from the actual build
 in its image receipt. The manifest in the command selects the 0.5B reference.
 
-The SSE2 qualification workflow builds that worker, inspects its instructions,
-and boots two tiny decoder probes on the same QEMU CPU and PCP OS kernel. Each
+The SSE2 qualification workflow produces `model-worker` for the 0.5B reference
+and `model-worker-qwen3-8b` for the verified 8B package. The artifact records both
+manifest pins and executable hashes. The workflow checks the reference worker's
+instructions and boots two tiny decoder probes twice, reversing their order for
+the second trial, on the same QEMU CPU and PCP OS kernel. Each
 compares four steps for each of Qwen2 and Qwen3 against the pinned reference
 scores. Each also interrupts prompt processing, checks the rollback, and retries
 the same prompt. The serial output gives guest-clock compute time for each model.

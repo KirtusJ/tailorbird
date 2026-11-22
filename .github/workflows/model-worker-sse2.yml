@@ -13,6 +13,7 @@ jobs:
     env:
       NIGHTLY: nightly-2026-05-01
       PCP_MODEL_MANIFEST_SHA256: bbdaa8cd263d9454159f12b55ec32613d18a4b7b4d75d284ad0cadc932bc1f4b
+      QWEN3_8B_MANIFEST: 2c02ff6f00a2ee802ce09648dfbc56dda38a64b009635f0aeb383f09e1af67dc
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -44,38 +45,54 @@ jobs:
           rustc +"$NIGHTLY" -vV | tee qualification/compiler.txt
           git rev-parse HEAD > qualification/source.txt
           git submodule status >> qualification/source.txt
-          cargo +"$NIGHTLY" build -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem -Zjson-target-spec --locked --release \
-            --target guest/targets/x86_64-pcpos-worker.json --features model-worker --bin model-worker
-          cp target/x86_64-pcpos-worker/release/model-worker qualification/
+          build_worker() {
+            local output=$1 pin=$2
+            PCP_MODEL_MANIFEST_SHA256="$pin" cargo +"$NIGHTLY" build -Zbuild-std=core,alloc \
+              -Zbuild-std-features=compiler-builtins-mem -Zjson-target-spec --locked --release \
+              --target guest/targets/x86_64-pcpos-worker.json --features model-worker --bin model-worker
+            cp target/x86_64-pcpos-worker/release/model-worker "qualification/$output"
+            test -z "$(nm -u "qualification/$output")"
+            printf '%s  %s\n' "$pin" "$output" >> qualification/model-manifests.txt
+          }
+          build_worker model-worker "$PCP_MODEL_MANIFEST_SHA256"
+          build_worker model-worker-qwen3-8b "$QWEN3_8B_MANIFEST"
+          if cmp -s qualification/model-worker qualification/model-worker-qwen3-8b; then
+            echo 'Workers for different model manifests must have different bytes' >&2
+            exit 1
+          fi
           objdump -d qualification/model-worker > "$RUNNER_TEMP/worker.s"
           grep -m1 -E '[[:space:]]mulsd[[:space:]]' "$RUNNER_TEMP/worker.s" | tee qualification/codegen.txt
           grep -m1 -E '[[:space:]]addsd[[:space:]]' "$RUNNER_TEMP/worker.s" | tee -a qualification/codegen.txt
-          test -z "$(nm -u qualification/model-worker)"
           for spec in guest/targets/x86_64-pcpos-worker.json x86_64-unknown-none; do
             name=$(basename "$spec" .json)
             cargo +"$NIGHTLY" build -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem -Zjson-target-spec --locked --release \
               --target "$spec" --features sse2-qualification --example sse2_forward
             cp "target/$name/release/examples/sse2_forward" "qualification/$name"
           done
-          sha256sum qualification/model-worker qualification/x86_64-* | tee qualification/binaries.sha256
+          (cd qualification && sha256sum model-worker model-worker-qwen3-8b x86_64-*) | tee qualification/binaries.sha256
       - name: Run both numerical probes in the same PCP OS kernel
         run: |
           RUSTUP_TOOLCHAIN=1.97.0 sh pcp-os/PCP_OS_Rust/crates/pcpos-kernel/run.sh build
           cp pcp-os/PCP_OS_Rust/crates/pcpos-kernel/target/pcpos-kernel.elf32 "$RUNNER_TEMP/kernel.elf32"
           cd qualification
           sha256sum "$RUNNER_TEMP/kernel.elf32" > kernel.sha256
-          for name in x86_64-unknown-none x86_64-pcpos-worker; do
-            cp "$name" qwen-probe
-            status=0
-            timeout 180 qemu-system-x86_64 -machine pc -accel tcg -cpu qemu64 -m 256M \
-              -kernel "$RUNNER_TEMP/kernel.elf32" -initrd qwen-probe -append 'auto=qwen-probe then=off' \
-              -display none -nic none -serial "file:$name.log" -no-reboot \
-              -device isa-debug-exit,iobase=0xf4,iosize=0x04 || status=$?
-            cat "$name.log"
-            test "$status" = 33
-            grep -Fq 'Qwen decoder passed 128 reference logits' "$name.log"
-            grep -Fq 'ALL SELF-TESTS PASS' "$name.log"
+          for trial in 1 2; do
+            order=(x86_64-unknown-none x86_64-pcpos-worker)
+            if [[ "$trial" == 2 ]]; then order=(x86_64-pcpos-worker x86_64-unknown-none); fi
+            for name in "${order[@]}"; do
+              cp "$name" qwen-probe
+              status=0
+              timeout 180 qemu-system-x86_64 -machine pc -accel tcg -cpu qemu64 -m 256M \
+                -kernel "$RUNNER_TEMP/kernel.elf32" -initrd qwen-probe -append 'auto=qwen-probe then=off' \
+                -display none -nic none -serial "file:$name-$trial.log" -no-reboot \
+                -device isa-debug-exit,iobase=0xf4,iosize=0x04 || status=$?
+              cat "$name-$trial.log"
+              test "$status" = 33
+              grep -Fq 'Qwen decoder passed 128 reference logits' "$name-$trial.log"
+              grep -Fq 'ALL SELF-TESTS PASS' "$name-$trial.log"
+            done
           done
+          rm qwen-probe
       - name: Retain worker, probes and boot records
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
