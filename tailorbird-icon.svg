@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96" role="img" aria-labelledby="title desc">
+  <title id="title">Tailorbird</title>
+  <desc id="desc">Taylor's head: a small cream-faced tailorbird in a yellow hard hat, her dark bill holding a white thread.</desc>
+  <clipPath id="tile"><rect width="96" height="96" rx="16"/></clipPath>
+  <rect width="96" height="96" rx="16" fill="#10283f"/>
+  <g clip-path="url(#tile)" stroke="#0c2033" stroke-width="3" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M40 96q-4-22 14-30 26-4 34 30z" fill="#7fae5c"/>
+    <circle cx="54" cy="52" r="25" fill="#f1f4e4"/>
+    <path d="M36 54q-18 4-30 17 16-5 32-7z" fill="#24384c"/>
+    <path d="M29 44q0-28 25-28t25 26q-26-8-50 2z" fill="#f2c230"/>
+    <path d="M54 16v24" fill="none" stroke="#c9981a" stroke-width="3"/>
+    <path d="M17 50q34-17 68-9l2 8q-34-8-67 9z" fill="#f2c230"/>
+  </g>
+  <circle cx="46" cy="55" r="4.500" fill="#0c2033"/>
+  <circle cx="44.700" cy="53.700" r="1.500" fill="#f2f7fc"/>
+  <path d="M6 71q-2 12 8 16" fill="none" stroke="#f2f7fc" stroke-width="3" stroke-linecap="round"/>
+</svg>
