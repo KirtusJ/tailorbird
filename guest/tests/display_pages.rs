@@ -22,6 +22,8 @@ struct Fixture {
     shown: usize,
     flips: Vec<usize>,
     maps: Vec<usize>,
+    negotiation: isize,
+    negotiated: bool,
 }
 thread_local! { static FB: RefCell<Option<Fixture>> = const { RefCell::new(None) }; }
 fn fixture<T>(f: impl FnOnce(&mut Fixture) -> T) -> T {
@@ -55,9 +57,16 @@ fn ioctl(fd: isize, op: usize, arg: usize) -> isize {
             }
             0
         }
+        0x5004 => {
+            assert_eq!(arg, 0);
+            assert!(!f.negotiated);
+            assert!(f.maps.is_empty());
+            f.negotiated = true;
+            f.negotiation
+        }
         0x5003 => {
-            assert_eq!(f.pages, 2);
-            assert_eq!(arg, 1 - f.shown);
+            assert!(f.pages == 2 || f.negotiation == 1);
+            assert_eq!(arg, if f.pages == 2 { 1 - f.shown } else { 0 });
             f.shown = arg;
             f.flips.push(arg);
             0
@@ -76,12 +85,13 @@ fn call(
 ) -> isize {
     assert_eq!((op, addr, prot, flags, fd, off), (9, 0, 3, 1, 42, 0));
     fixture(|f| {
+        assert!(f.negotiated);
         assert_eq!(bytes, 4 * f.pitch * f.height * f.pages);
         f.maps.push(bytes);
         unsafe { f.pixels.as_mut_ptr().add(8) as isize }
     })
 }
-fn exercise(w: usize, h: usize, pitch: usize, pages: usize, initial: usize) {
+fn exercise(w: usize, h: usize, pitch: usize, pages: usize, initial: usize, negotiation: isize) {
     let page = pitch * h;
     let count = page * pages + 16;
     FB.set(Some(Fixture {
@@ -93,6 +103,8 @@ fn exercise(w: usize, h: usize, pitch: usize, pages: usize, initial: usize) {
         shown: initial,
         flips: Vec::new(),
         maps: Vec::new(),
+        negotiation,
+        negotiated: false,
     }));
     let mut display = device::Display::current();
     let mut expected = vec![GUARD; count];
@@ -100,7 +112,7 @@ fn exercise(w: usize, h: usize, pitch: usize, pages: usize, initial: usize) {
     let mut expected_flips = Vec::new();
     for index in 0..4 {
         shown = if pages == 2 { 1 - shown } else { 0 };
-        if pages == 2 {
+        if pages == 2 || negotiation == 1 {
             expected_flips.push(shown);
         }
         let start = 8 + shown * page;
@@ -144,7 +156,22 @@ fn exercise(w: usize, h: usize, pitch: usize, pages: usize, initial: usize) {
 fn preserves_padding_and_flips_only_the_drawn_page() {
     for (w, h, pitch) in [(800, 600, 808), (1024, 768, 1024), (1920, 1080, 2048)] {
         for (pages, initial) in [(1, 0), (2, 0), (2, 1)] {
-            exercise(w, h, pitch, pages, initial);
+            for negotiation in [-25, 0, 1] {
+                exercise(w, h, pitch, pages, initial, negotiation);
+            }
         }
+    }
+}
+
+#[test]
+fn unexpected_presentation_result_refuses_before_mapping() {
+    for negotiation in [-22, 2] {
+        FB.set(Some(Fixture {
+            pixels: vec![GUARD; 32], width: 2, height: 2, pitch: 2,
+            pages: 1, shown: 0, flips: Vec::new(), maps: Vec::new(),
+            negotiation, negotiated: false,
+        }));
+        assert!(std::panic::catch_unwind(device::Display::current).is_err());
+        fixture(|f| {assert!(f.negotiated);assert!(f.maps.is_empty());assert!(f.flips.is_empty());});
     }
 }

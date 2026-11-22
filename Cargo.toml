@@ -3,6 +3,8 @@
 [workspace]
 resolver = "2"
 members = ["guest"]
+# These path dependencies inherit metadata from PCP OS's own nested workspace.
+exclude = ["pcp-os/PCP_OS_Rust", "pcp-os/PCP_OS_Rust/crates/*"]
 
 [profile.release]
 panic = "abort"
@@ -10,3 +12,9 @@ opt-level = "s"
 lto = "off" # matches PT's successful CARGO_PROFILE_RELEASE_LTO=off link
 codegen-units = 1
 overflow-checks = true
+
+# Numerical kernels are built for throughput; the UI retains its size profile.
+[profile.release.package.pcpos-qwen]
+opt-level = 3
+[profile.release.package.pcpos-model-tensor]
+opt-level = 3

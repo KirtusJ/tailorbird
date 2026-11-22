@@ -1,5 +1,14 @@
 #![no_std]
 
+#[cfg(feature = "model-worker")]
+extern crate alloc;
+#[cfg(feature = "model-worker")]
+pub mod model_session;
+#[cfg(feature = "model-worker")]
+pub mod model_inbox;
+#[cfg(feature = "model-worker")]
+pub mod model_reading;
+
 #[cfg(test)]
 extern crate std;
 
@@ -52,6 +61,8 @@ pub mod jobs;
 pub mod talk;
 /// The records of `talk` as bytes on the channel to a local model service.
 pub mod wire;
+#[cfg(all(test, feature = "model-worker"))]
+mod worker_channel_tests;
 /// Carries the conversation over a channel to the model service; no device of its own.
 pub mod link;
 pub const LOG_LIMIT: usize = 8;
