@@ -103,8 +103,11 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
     label(f, 202, 27, "builds and fixes on this computer", 2, SOFT);
     // What is behind it, said once, where the eye lands last: a lamp and two words.
     let talks = ui.talk.service == crate::talk::Service::Ready;
-    let (lamp, link) = if ui.connected { (GOOD, "Ready") } else if talks && ui.notes { (GOOD, "Talk + notes") } else if talks { (GOOD, "Talk only") }
-                       else if ui.notes { (AMBER, "Notes only") } else { (BAD, "Not ready") };
+    // Notes are something Taylor can do only while PCP OS lets this launch propose files and the
+    // launch has not given that up. Once given up, nothing on the screen may offer it again.
+    let makes = ui.notes && !ui.gave_up;
+    let (lamp, link) = if ui.connected { (GOOD, "Ready") } else if talks && makes { (GOOD, "Talk + notes") } else if talks { (GOOD, "Talk only") }
+                       else if makes { (AMBER, "Notes only") } else if ui.gave_up { (AMBER, "No new files") } else { (BAD, "Not ready") };
     f.well(764, 18, 176, 36, GROUND);
     f.rect(778, 31, 10, 10, lamp);
     label(f, 796, 26, link, 2, lamp);
@@ -184,8 +187,8 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
         transcript(f, &ui.talk);
     } else if ui.lines().is_empty() && ui.show_projects {
         match ui.browse_level {
-            0 => projects(f, &ui.projects, ui.place, ui.active),
-            1 => files(f, &ui.files, ui.file_place, ui.active),
+            0 => projects(f, &ui.projects, ui.place, ui.active, ui.gave_up),
+            1 => files(f, &ui.files, ui.file_place, ui.active, ui.gave_up),
             _ => viewed(f, &ui.viewed),
         }
     } else if ui.lines().is_empty() {
@@ -219,7 +222,7 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
                 label(f, 420, 352, if good { "Kept until this computer is switched off." }
                       else { "Not confirmed: this file may or may not have been made." }, 1, AMBER);
             }
-            label(f, 420, 384, "Type again and press Alt+N for another.", 1, SOFT);
+            label(f, 420, 384, if ui.gave_up { "Taylor makes no more files until started again." } else { "Type again and press Alt+N for another." }, 1, SOFT);
             let x = key(f, 339, 420, "Esc", "returns to Programs");
             if ui.notes {
                 key(f, x, 420, "Alt+P", "shows your projects");
@@ -230,6 +233,20 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
         if ui.connected {
             label(f, 420, 316, "Tell me in your own words what to", 2, SOFT);
             label(f, 420, 340, "build or fix. If I can, I will.", 2, SOFT);
+        } else if ui.notes && ui.gave_up {
+            // This launch gave up making files, on PCP OS's confirmation. Say what is so, and offer
+            // only what still works: talking where a model is ready, and looking at what was made.
+            if ui.talk.service == crate::talk::Service::Ready {
+                label(f, 420, 316, "Type and press Enter to talk to", 2, SOFT);
+                label(f, 420, 340, "me. I make no more files now.", 2, SOFT);
+            } else {
+                label(f, 420, 316, "You asked me to make no more", 2, SOFT);
+                label(f, 420, 340, "files. PCP OS holds me to it.", 2, SOFT);
+            }
+            label(f, 420, 370, "Start Taylor again from Programs to allow notes again.", 1, SOFT);
+            let x = key(f, 339, 420, "Esc", "returns to Programs");
+            key(f, x, 420, "Alt+P", "shows your projects");
+            return footer(f, ui);
         } else if ui.notes {
             if ui.talk.service == crate::talk::Service::Ready {
                 // A model on this computer is ready: talking works, and so do notes.
@@ -449,7 +466,7 @@ fn wrapped(f: &mut Frame<'_>, x: i32, y: i32, value: &str, across: usize) {
 
 /// The project list, in the Work panel: where the projects are, each with how many files, and in words
 /// what is not known. "No projects yet" is said only of a whole list that was read and held nothing.
-fn projects(f: &mut Frame<'_>, list: &crate::projects::Projects, place: usize, active: Option<crate::project_location::ProjectLocation>) {
+fn projects(f: &mut Frame<'_>, list: &crate::projects::Projects, place: usize, active: Option<crate::project_location::ProjectLocation>, gave_up: bool) {
     use crate::projects::Listing;
     let mut digits = [0u8; 20];
     label(f, 339, 190, "Your projects", 2, TEXT);
@@ -477,7 +494,7 @@ fn projects(f: &mut Frame<'_>, list: &crate::projects::Projects, place: usize, a
             wrapped(f, 339 + 14 * 6, 214, list.folder.as_str(), 80);
             if list.known_empty() {
                 label(f, 339, 256, "No projects yet.", 2, SOFT);
-                label(f, 339, 286, "Type something and press Alt+N to make a note.", 1, SOFT);
+                label(f, 339, 286, if gave_up { "Taylor makes no more files until started again." } else { "Type something and press Alt+N to make a note." }, 1, SOFT);
             }
             for (row, entry) in list.rows[..list.shown].iter().enumerate() {
                 let y = 244 + row as i32 * 20;
@@ -525,7 +542,7 @@ fn projects(f: &mut Frame<'_>, list: &crate::projects::Projects, place: usize, a
 }
 
 /// One project's files. The size is what the list said when it was read.
-fn files(f: &mut Frame<'_>, list: &crate::projects::Files, place: usize, active: Option<crate::project_location::ProjectLocation>) {
+fn files(f: &mut Frame<'_>, list: &crate::projects::Files, place: usize, active: Option<crate::project_location::ProjectLocation>, gave_up: bool) {
     use crate::projects::Listing;
     let mut digits = [0u8; 20];
     label(f, 339, 190, "Project", 2, TEXT);
@@ -533,7 +550,7 @@ fn files(f: &mut Frame<'_>, list: &crate::projects::Files, place: usize, active:
         Listing::Listed => {
             wrapped(f, 339, 214, list.project.as_str(), 94);
             if active.is_some() && list.location == active {
-                label(f, 440, 196, "New notes (Alt+N) go into this project.", 1, GOOD);
+                label(f, 440, 196, if gave_up { "Taylor makes no more files until started again." } else { "New notes (Alt+N) go into this project." }, 1, if gave_up { SOFT } else { GOOD });
             }
             if list.count == 0 {
                 label(f, 339, 256, if list.complete { "This project has no files now." } else { "No files of it are in the part PCP OS listed." }, 1, SOFT);
@@ -760,6 +777,43 @@ mod tests {
         }
     }
 
+    /// Once this launch has given up making files, no screen offers Alt+N or says notes can be saved:
+    /// the greeting with and without a model, and the panel after an earlier note.
+    #[test]
+    fn after_giving_up_nothing_on_the_screen_offers_a_note() {
+        let row = |pixels: &Vec<u32>, y: usize, words: &str, size: i32| {
+            let mut alone = vec![PANEL; 960 * 540];
+            let mut f = Frame::new(&mut alone, 960, 540, 960, PANEL, false);
+            label(&mut f, 420, y as i32, words, size, SOFT);
+            (y..y + 20).all(|line| (420..900).all(|x| alone[line * 960 + x] == pixels[line * 960 + x]))
+        };
+        let mut ui = Ui::new();
+        ui.notes = true;
+        let before = shot(&ui);
+        assert!(row(&before, 340, "a note. Type it, then press Alt+N.", 2));
+        ui.gave_up = true;
+        let after = shot(&ui);
+        assert!(!row(&after, 340, "a note. Type it, then press Alt+N.", 2));
+        assert!(row(&after, 316, "You asked me to make no more", 2) && row(&after, 340, "files. PCP OS holds me to it.", 2));
+        // With a model ready, talking is still offered and notes are not.
+        ui.talk.service = crate::talk::Service::Ready;
+        let talking = shot(&ui);
+        assert!(!row(&talking, 340, "me. Alt+N saves it as a note.", 2) && row(&talking, 340, "me. I make no more files now.", 2));
+        // And after a note made earlier in the launch, the panel no longer invites another.
+        let mut ui = Ui::new();
+        ui.notes = true;
+        let p = crate::note::prepare(3, 1, "hello").unwrap();
+        assert!(ui.jobs.keep(p.job).is_ok());
+        let invited = shot(&ui);
+        ui.gave_up = true;
+        assert_ne!(invited, shot(&ui));
+        // Where PCP OS never allowed notes, giving up cannot have happened and changes nothing drawn.
+        let mut never = Ui::new();
+        let plain = shot(&never);
+        never.gave_up = true;
+        assert_ne!(plain, shot(&never)); // only the lamp's words differ: "No new files" for "Not ready"
+    }
+
     /// Without a model the screen says what Taylor can do today only when PCP OS lets it, and after a
     /// note it shows that note's result in the Work panel, not the greeting.
     #[test]
@@ -878,7 +932,7 @@ mod tests {
 
                 let mut actual = vec![PANEL; width * height];
                 files(&mut Frame::new(&mut actual, width, height, width, PANEL, false),
-                      &list, 0, None);
+                      &list, 0, None, false);
 
                 let mut expected = vec![PANEL; width * height];
                 let mut digits = [0u8; 20];
