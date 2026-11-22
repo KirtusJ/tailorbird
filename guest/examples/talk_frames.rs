@@ -67,20 +67,20 @@ fn main() {
             }
             "chunk" => {
                 let (conversation, reply) = waited.expect("no reply is waited for");
-                ui.talk.receive(Incoming::Chunk { conversation, reply, text: rest });
+                ui.observed_talk(Incoming::Chunk { conversation, reply, text: rest });
             }
             "reading" => {
                 let (conversation, reply) = waited.expect("no reply is waited for");
                 let (read, of) = rest.split_once(' ').expect("reading READ OF");
-                ui.talk.receive(Incoming::Reading { conversation, reply, read: read.parse().unwrap(), of: of.parse().unwrap() });
+                ui.observed_talk(Incoming::Reading { conversation, reply, read: read.parse().unwrap(), of: of.parse().unwrap() });
             }
             "done" => {
                 let (conversation, reply) = waited.expect("no reply is waited for");
-                ui.talk.receive(Incoming::Done { conversation, reply });
+                ui.observed_talk(Incoming::Done { conversation, reply });
             }
             "failed" => {
                 let (conversation, reply) = waited.expect("no reply is waited for");
-                ui.talk.receive(Incoming::Failed { conversation, reply });
+                ui.observed_talk(Incoming::Failed { conversation, reply });
             }
             "say" => ui.notice = Text::display(rest),
             "hide" => ui.talk_shown = false,
