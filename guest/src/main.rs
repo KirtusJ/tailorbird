@@ -10,9 +10,8 @@ use pcp_game_guest::{call, exit, log, open, sleep_us, Display};
 use tailorbird_ui::{note, ordered_keys::{KeyOutcome, OrderedKeyboard}, Text, Ui};
 use tailorbird_ui::build_folder_snapshot::MAX_SNAPSHOT_BYTES;
 use tailorbird_ui::project_location::BuildFolder;
-use tailorbird_ui::projects::{Checked, Files, Listing, Opened, Projects, Viewed, VIEW_BYTES};
+use tailorbird_ui::projects::{read_whole, view, Files, Listing, Projects, Viewed, Whole, VIEW_BYTES};
 use tailorbird_ui::project_location::FileDestination;
-use tailorbird_ui::sha256::sha256;
 
 use tailorbird_ui::palette::GROUND;
 
@@ -57,52 +56,49 @@ fn make_note(proposals: isize, attempt: u64, number: u32, typed: &str) -> (Text<
 
 /// One fresh list of the build folder: opened, read to its end, closed on every path, then checked whole.
 /// A read that fills the buffer is more than a list may be, and is not shown.
-/// Everything a descriptor holds, to its end, and the descriptor closed whatever happens. `None` when a
-/// read failed or the end was not reached with room to spare: then nothing read is used.
-fn read_whole(fd: isize, into: &mut [u8]) -> Option<usize> {
-    let mut have = 0usize;
-    let ended = loop {
-        if have == into.len() {
-            break false;
-        }
-        let got = call(0, fd as usize, into[have..].as_mut_ptr() as usize, into.len() - have, 0, 0, 0);
-        if got == 0 {
-            break true;
-        }
-        if got < 0 {
-            break false;
-        }
-        have += got as usize;
-    };
-    call(3, fd as usize, 0, 0, 0, 0, 0);
-    if ended { Some(have) } else { None }
+fn reader(fd: isize) -> impl FnMut(&mut [u8]) -> isize {
+    move |into: &mut [u8]| call(0, fd as usize, into.as_mut_ptr() as usize, into.len(), 0, 0, 0)
 }
 
-/// One fresh list of the build folder, as its bytes; the state says why when there are none.
+/// One fresh list of the build folder, as its bytes, the descriptor closed whatever happened. Only a
+/// refusal of the device itself is "not offered"; any other failure is "could not be read".
 fn read_list() -> Result<&'static [u8], Listing> {
     static mut LIST: [u8; MAX_SNAPSHOT_BYTES + 1] = [0; MAX_SNAPSHOT_BYTES + 1];
     // Safety: this program has one thread, and each caller is done with the bytes before the next call.
     let list = unsafe { &mut *core::ptr::addr_of_mut!(LIST) };
     let fd = open(b"/dev/build-folder\0", 0);
-    if fd < 0 {
+    if fd == -13 || fd == -2 {
         return Err(Listing::Unavailable);
     }
-    match read_whole(fd, list) {
-        Some(have) => Ok(&list[..have]),
-        None => Err(Listing::Unreadable),
+    if fd < 0 {
+        return Err(Listing::Unreadable);
+    }
+    let whole = read_whole(reader(fd), list);
+    call(3, fd as usize, 0, 0, 0, 0, 0);
+    match whole {
+        Whole::Ended(have) => Ok(&list[..have]),
+        _ => Err(Listing::Unreadable),
     }
 }
 
+/// A list that failed keeps the folder an earlier list of this launch named, so the screen can still
+/// say where the projects are.
 fn read_projects(expected: Option<(BuildFolder, u64)>) -> Projects {
-    match read_list() {
+    let mut projects = match read_list() {
         Ok(bytes) => Projects::read(bytes, expected),
         Err(Listing::Unavailable) => Projects::unavailable(),
         Err(_) => Projects::unreadable(),
+    };
+    if projects.state == Listing::Unreadable {
+        if let Some((root, _)) = expected {
+            projects.folder = Text::display(root.as_str());
+        }
     }
+    projects
 }
 
-/// One file under the build folder, read whole and to its end. If this run's last note is this very
-/// file, what was read is compared with the kernel's receipt for it, and the job remembers the answer.
+/// One file under the build folder. If a kept job is for this very file, what is read is compared with
+/// the kernel's receipt for it and the job remembers the answer.
 fn view_file(destination: FileDestination, last_note: &mut Option<tailorbird_ui::file_job::FileJob>) -> Viewed {
     static mut FILE: [u8; VIEW_BYTES + 1] = [0; VIEW_BYTES + 1];
     // Safety: one thread; used only inside this function.
@@ -110,33 +106,14 @@ fn view_file(destination: FileDestination, last_note: &mut Option<tailorbird_ui:
     let mut path = [0u8; 256];
     let name = destination.as_str().as_bytes();
     path[..name.len()].copy_from_slice(name);
-    let job = last_note.as_mut().filter(|job| job.open_target().is_some_and(|d| d.as_str() == destination.as_str())
-        || job.readback() == tailorbird_ui::file_job::Readback::Changed && job.destination().as_str() == destination.as_str());
+    let job = last_note.as_mut().filter(|job| job.receipt().is_some_and(|r| r.outcome == tailorbird_ui::file_job::Outcome::Created)
+        && job.destination().as_str() == destination.as_str());
     let fd = open(&path[..name.len() + 1], 0);
-    if fd < 0 {
-        if let Some(job) = job {
-            let _ = job.open_unavailable();
-        }
-        return Viewed::failed(destination, Opened::Unavailable);
+    let viewed = view(destination, if fd >= 0 { Some(reader(fd)) } else { None }, file, job);
+    if fd >= 0 {
+        call(3, fd as usize, 0, 0, 0, 0, 0);
     }
-    // Probe how the read ended before deciding it was too large: a full buffer may be a larger file.
-    let Some(have) = read_whole(fd, file) else {
-        // Either a failed read or more than a text file holds. With a receipt to compare, more bytes
-        // than were made is a different file; otherwise only "too large" or "unreadable" is known.
-        if let Some(job) = job {
-            let _ = job.verify_readback(file.len() as u64, [0; 32], false);
-            let mut v = Viewed::failed(destination, Opened::TooLarge);
-            v.checked = Checked::Differs;
-            return v;
-        }
-        return Viewed::failed(destination, Opened::TooLarge);
-    };
-    let content = &file[..have];
-    let checked = match job {
-        Some(job) => if job.verify_readback(have as u64, sha256(&[content]), true).is_ok() { Checked::Matches } else { Checked::Differs },
-        None => Checked::NotThisRun,
-    };
-    Viewed::read(destination, content, checked)
+    viewed
 }
 
 /// The folder and run the first good list of this launch named; later lists must name the same.

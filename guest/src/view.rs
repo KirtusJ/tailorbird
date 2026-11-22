@@ -278,8 +278,14 @@ fn projects(f: &mut Frame<'_>, list: &crate::projects::Projects, place: usize) {
             label(f, 339, 250, "projects folder in this launch.", 2, AMBER);
         }
         Listing::Unreadable => {
-            label(f, 339, 226, "The list could not be read, so", 2, AMBER);
-            label(f, 339, 250, "nothing is shown. Alt+P twice retries.", 2, AMBER);
+            // Why is not known here (no room, a fault, bytes that do not check): no cause is named.
+            label(f, 339, 226, "The projects folder could not be", 2, AMBER);
+            label(f, 339, 250, "read, so nothing is shown.", 2, AMBER);
+            label(f, 339, 280, "Alt+P twice tries again.", 1, SOFT);
+            if !list.folder.is_empty() {
+                label(f, 339, 304, "It was last read as the folder", 1, SOFT);
+                wrapped(f, 339, 318, list.folder.as_str(), 94);
+            }
         }
         Listing::Listed => {
             label(f, 339, 214, "in the folder", 1, SOFT);
@@ -415,7 +421,7 @@ fn viewed(f: &mut Frame<'_>, file: &crate::projects::Viewed) {
         let (words, colour) = match file.checked {
             Checked::Matches => ("Checked: exactly what PCP OS made when you allowed it.", GOOD),
             Checked::Differs => ("Warning: this is NOT what PCP OS made when you allowed it.", BAD),
-            Checked::NotThisRun => ("Not made since Taylor was opened, so not checked.", SOFT),
+            Checked::NoReceipt => ("No kept receipt for this file, so it is not checked.", SOFT),
         };
         label(f, 339, y + 14, words, 1, colour);
     }

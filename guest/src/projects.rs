@@ -182,8 +182,9 @@ pub enum Checked {
     Matches,
     /// PCP OS's receipt of this run names other bytes: the file is not what was made.
     Differs,
-    /// Not made in this run, so there is no receipt to compare it with.
-    NotThisRun,
+    /// No receipt for this file is kept, so there is nothing to compare it with. This says nothing
+    /// about when the file was made.
+    NoReceipt,
 }
 
 /// One file, read whole and shown read-only: its first lines, exactly, and what is known about it.
@@ -201,7 +202,7 @@ pub struct Viewed {
 
 impl Viewed {
     pub const fn new() -> Self {
-        Self { state: Opened::NotAsked, destination: None, bytes: 0, lines: [Text::new(); VIEW_LINES], shown: 0, more: false, checked: Checked::NotThisRun }
+        Self { state: Opened::NotAsked, destination: None, bytes: 0, lines: [Text::new(); VIEW_LINES], shown: 0, more: false, checked: Checked::NoReceipt }
     }
 
     pub fn failed(destination: FileDestination, state: Opened) -> Self {
@@ -248,6 +249,74 @@ impl Viewed {
             }
         }
         v
+    }
+}
+
+/// How reading a descriptor to its end went. The count is what was really read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Whole {
+    Ended(usize),
+    /// A read failed after this many bytes. Nothing is known about the rest.
+    Failed(usize),
+    /// The buffer, one byte larger than the most allowed, was filled: the source really is larger.
+    Over,
+}
+
+/// Read until the source says it has ended. `read` fills what it is given and answers like the kernel:
+/// a count, 0 at the end, negative on failure.
+pub fn read_whole(mut read: impl FnMut(&mut [u8]) -> isize, into: &mut [u8]) -> Whole {
+    let mut have = 0usize;
+    loop {
+        if have == into.len() {
+            return Whole::Over;
+        }
+        let got = read(&mut into[have..]);
+        if got == 0 {
+            return Whole::Ended(have);
+        }
+        if got < 0 || got as usize > into.len() - have {
+            return Whole::Failed(have);
+        }
+        have += got as usize;
+    }
+}
+
+/// Show one file. `source` is `None` when it could not be opened. `buffer` is one byte longer than the
+/// most a text file may hold. `job` is the kept job for this very file, if there is one: only a whole
+/// read is compared with its receipt, only a byte really read beyond the bound proves the file is
+/// larger than what was made, and a failed open or read records that the file was unavailable.
+pub fn view(destination: FileDestination, source: Option<impl FnMut(&mut [u8]) -> isize>, buffer: &mut [u8],
+            job: Option<&mut crate::file_job::FileJob>) -> Viewed {
+    let Some(source) = source else {
+        if let Some(job) = job {
+            let _ = job.open_unavailable();
+        }
+        return Viewed::failed(destination, Opened::Unavailable);
+    };
+    match read_whole(source, buffer) {
+        Whole::Failed(_) => {
+            if let Some(job) = job {
+                let _ = job.open_unavailable();
+            }
+            Viewed::failed(destination, Opened::Unavailable)
+        }
+        Whole::Over => {
+            let mut v = Viewed::failed(destination, Opened::TooLarge);
+            if let Some(job) = job {
+                // More bytes were read than any proposal may hold, so it is not the file that was made.
+                let _ = job.verify_readback(buffer.len() as u64, [0; 32], false);
+                v.checked = Checked::Differs;
+            }
+            v
+        }
+        Whole::Ended(have) => {
+            let content = &buffer[..have];
+            let checked = match job {
+                Some(job) => if job.verify_readback(have as u64, crate::sha256::sha256(&[content]), true).is_ok() { Checked::Matches } else { Checked::Differs },
+                None => Checked::NoReceipt,
+            };
+            Viewed::read(destination, content, checked)
+        }
     }
 }
 
@@ -336,18 +405,87 @@ mod tests {
         assert_eq!([v.lines[0].as_str(), v.lines[1].as_str(), v.lines[2].as_str()], ["Hello.", "", "Second  line "]);
         // A long line continues on the next row with nothing lost; more lines than fit are said to exist.
         let long = [b'x'; VIEW_ACROSS + 3];
-        let v = Viewed::read(d, &long, Checked::NotThisRun);
+        let v = Viewed::read(d, &long, Checked::NoReceipt);
         assert_eq!((v.shown, v.lines[0].as_str().len(), v.lines[1].as_str()), (2, VIEW_ACROSS, "xxx"));
         let many = [b'\n'; VIEW_LINES + 5];
-        assert!(Viewed::read(d, &many, Checked::NotThisRun).more);
-        assert_eq!(Viewed::read(d, b"", Checked::NotThisRun).shown, 0);
+        assert!(Viewed::read(d, &many, Checked::NoReceipt).more);
+        assert_eq!(Viewed::read(d, b"", Checked::NoReceipt).shown, 0);
         // A tab, a byte above ASCII, or too much: no line is shown.
         for bad in [&b"a\tb"[..], &[0xc3, 0xa9][..]] {
-            let v = Viewed::read(d, bad, Checked::NotThisRun);
+            let v = Viewed::read(d, bad, Checked::NoReceipt);
             assert_eq!((v.state, v.shown), (Opened::NotText, 0));
         }
         let big = std::vec![b'a'; VIEW_BYTES + 1];
-        assert_eq!(Viewed::read(d, &big, Checked::NotThisRun).state, Opened::TooLarge);
+        assert_eq!(Viewed::read(d, &big, Checked::NoReceipt).state, Opened::TooLarge);
+    }
+
+    fn made_note() -> crate::file_job::FileJob {
+        let mut p = crate::note::prepare(3, 1, "hello").unwrap();
+        p.job.submitted().unwrap();
+        let mut r = [0u8; 100];
+        r[0..4].copy_from_slice(&1u32.to_le_bytes());
+        r[4..8].copy_from_slice(&1u32.to_le_bytes());
+        r[8..16].copy_from_slice(&9u64.to_le_bytes());
+        r[16..24].copy_from_slice(&3u64.to_le_bytes());
+        r[24..32].copy_from_slice(&1u64.to_le_bytes());
+        r[32..64].copy_from_slice(&crate::kernel_proposal::request_digest(p.job.destination().as_str(), b"hello\n"));
+        r[64..96].copy_from_slice(&crate::sha256::sha256(&[b"hello\n"]));
+        crate::note::settle(&mut p.job, &r);
+        assert!(p.job.open_target().is_some());
+        p.job
+    }
+
+    /// A source that hands out `content` a few bytes at a time and fails once `fail_after` bytes are out.
+    fn source(content: &[u8], fail_after: Option<usize>) -> impl FnMut(&mut [u8]) -> isize + '_ {
+        let mut at = 0usize;
+        move |into: &mut [u8]| {
+            if fail_after.is_some_and(|n| at >= n) {
+                return -5;
+            }
+            let n = into.len().min(3).min(content.len() - at).min(fail_after.map_or(usize::MAX, |f| f - at));
+            into[..n].copy_from_slice(&content[at..at + n]);
+            at += n;
+            n as isize
+        }
+    }
+
+    #[test]
+    fn a_failed_read_is_unavailable_and_only_a_real_extra_byte_is_too_large() {
+        use crate::file_job::Readback;
+        let mut buffer = std::vec![0u8; VIEW_BYTES + 1];
+        let mut job = made_note();
+        let d = *job.destination();
+        // The first read fails; then a read fails part way: neither says anything about the content.
+        for fail_after in [0, 4] {
+            let v = view(d, Some(source(b"hello\n", Some(fail_after))), &mut buffer, Some(&mut job));
+            assert_eq!((v.state, v.shown, v.checked), (Opened::Unavailable, 0, Checked::NoReceipt));
+            assert_eq!(job.readback(), Readback::Unavailable);
+            assert!(job.open_target().is_some());
+        }
+        // It could not be opened at all.
+        let v = view(d, None::<fn(&mut [u8]) -> isize>, &mut buffer, Some(&mut job));
+        assert_eq!(v.state, Opened::Unavailable);
+        assert_eq!(job.readback(), Readback::Unavailable);
+        // Then it is read whole and is what was made.
+        let v = view(d, Some(source(b"hello\n", None)), &mut buffer, Some(&mut job));
+        assert_eq!((v.state, v.checked, v.lines[0].as_str()), (Opened::Shown, Checked::Matches, "hello"));
+        assert_eq!(job.readback(), Readback::Verified);
+        // Other bytes of the same length: differs, and a later failed read does not undo that.
+        let v = view(d, Some(source(b"hellO\n", None)), &mut buffer, Some(&mut job));
+        assert_eq!((v.state, v.checked), (Opened::Shown, Checked::Differs));
+        let _ = view(d, Some(source(b"hello\n", Some(0))), &mut buffer, Some(&mut job));
+        assert_eq!(job.readback(), Readback::Changed);
+        // A file really larger than the bound: every byte of the buffer was read.
+        let big = std::vec![b'a'; VIEW_BYTES + 1];
+        let mut job = made_note();
+        let v = view(d, Some(source(&big, None)), &mut buffer, Some(&mut job));
+        assert_eq!((v.state, v.checked), (Opened::TooLarge, Checked::Differs));
+        assert_eq!(job.readback(), Readback::Changed);
+        // Exactly the bound is not too large; and with no kept receipt nothing is claimed either way.
+        let v = view(d, Some(source(&big[..VIEW_BYTES], None)), &mut buffer, None);
+        assert_eq!((v.state, v.checked), (Opened::Shown, Checked::NoReceipt));
+        let v = view(d, Some(source(&big, None)), &mut buffer, None);
+        assert_eq!((v.state, v.checked), (Opened::TooLarge, Checked::NoReceipt));
     }
 
     #[test]
