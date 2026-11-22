@@ -42,6 +42,8 @@ pub mod live_demo;
 pub mod project_location;
 /// Program-held single-file job and exact result binding for the fresh backend.
 pub mod file_job;
+/// Validated current-launch build-folder snapshots; no I/O or authority.
+pub mod build_folder_snapshot;
 pub const LOG_LIMIT: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
