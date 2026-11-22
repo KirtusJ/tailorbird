@@ -87,3 +87,9 @@ events, enforce permissions or establish model correctness. Z3 is integrating th
 confined project list and read-only text viewer separately. Build-folder changes apply on the next
 launch; the current job retains its original destination. The live-work renderer can show all 120
 destination bytes across two rows; an independent pinned-font check covers all four supported sizes.
+
+`BuildFolder::parse_project_file(full_path)` lets a browser recover the selected project and exact
+file destination from a returned name. It requires the current folder plus a component separator,
+then exactly one project and one filename; similar prefixes, outside paths and unsupported layouts
+are rejected. The returned values do not prove that the entry exists or that listing succeeded.
+An unavailable, incomplete or unsupported listing must not be presented as an empty folder.

@@ -29,6 +29,8 @@ pub enum LocationError {
     ReservedRoot,
     TooDeep,
     TooLong,
+    OutsideBuildFolder,
+    NotProjectFile,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,6 +107,24 @@ impl BuildFolder {
     }
 
     pub fn as_str(&self) -> &str { self.0.as_str() }
+
+    /// Parse an exact file name from a listing under this launch's build folder.
+    /// A file belongs to one project directly below the root. Root-level files
+    /// or deeper layouts return `NotProjectFile`; a browser must not turn an
+    /// unsupported or incomplete listing into a claim that the folder is empty.
+    /// This parses names only: it does not list, open, authorize or verify a file.
+    pub fn parse_project_file(&self, path: &str) -> Result<(ProjectLocation, FileDestination), LocationError> {
+        if path.len() > MAX_PATH_BYTES { return Err(LocationError::TooLong); }
+        let relative = path.strip_prefix(self.as_str())
+            .and_then(|rest| rest.strip_prefix('/'))
+            .ok_or(LocationError::OutsideBuildFolder)?;
+        let (project_name, file_name) = relative.split_once('/')
+            .ok_or(LocationError::NotProjectFile)?;
+        if file_name.contains('/') { return Err(LocationError::NotProjectFile); }
+        let project = ProjectLocation::new(*self, project_name)?;
+        let destination = project.file(file_name)?;
+        Ok((project, destination))
+    }
 }
 
 impl Default for BuildFolder {
@@ -157,6 +177,69 @@ impl FileDestination {
     pub fn as_str(&self) -> &str { self.path.as_str() }
     pub fn project_folder(&self) -> &str { &self.as_str()[..self.project_len] }
     pub fn file_name(&self) -> &str { &self.as_str()[self.project_len + 1..] }
+}
+
+#[cfg(test)]
+mod listing_tests {
+    use super::*;
+
+    #[test]
+    fn listed_file_retains_its_project_and_exact_open_target() {
+        for folder in ["taylor", "work/taylor"] {
+            let root = BuildFolder::new(folder).unwrap();
+            let path = std::format!("{folder}/garden/note-1.txt");
+            let (project, destination) = root.parse_project_file(&path).unwrap();
+            assert_eq!(project.build_folder(), folder);
+            assert_eq!(project.project_name(), "garden");
+            assert_eq!(destination.project_folder(), project.as_str());
+            assert_eq!(destination.file_name(), "note-1.txt");
+            assert_eq!(destination.as_str(), path);
+            let new_default = BuildFolder::new("elsewhere").unwrap();
+            assert_eq!(new_default.parse_project_file(&path), Err(LocationError::OutsideBuildFolder));
+            assert_eq!(destination.as_str(), path);
+        }
+    }
+
+    #[test]
+    fn raw_prefixes_and_host_paths_are_not_inside_the_selected_folder() {
+        let root = BuildFolder::default();
+        for path in ["taylor", "taylor-old/garden/note.txt", "taylor2/garden/note.txt",
+                     "/taylor/garden/note.txt", "other/taylor/garden/note.txt",
+                     "taylor\\garden\\note.txt", "D:/taylor/garden/note.txt"] {
+            assert_eq!(root.parse_project_file(path), Err(LocationError::OutsideBuildFolder), "{path}");
+        }
+        let nested = BuildFolder::new("work/taylor").unwrap();
+        assert_eq!(nested.parse_project_file("work/taylor-old/garden/note.txt"), Err(LocationError::OutsideBuildFolder));
+        let (a, _) = root.parse_project_file("taylor/garden/note.txt").unwrap();
+        let (b, _) = root.parse_project_file("taylor/garden-next/note.txt").unwrap();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn unsupported_layouts_and_names_are_reported_without_repair() {
+        let root = BuildFolder::default();
+        for path in ["taylor/note.txt", "taylor/garden/sub/note.txt", "taylor/garden/sub/"] {
+            assert_eq!(root.parse_project_file(path), Err(LocationError::NotProjectFile));
+        }
+        for path in ["taylor//note.txt", "taylor/garden/", "taylor/../note.txt",
+                     "taylor/garden/..", "taylor/Garden/note.txt", "taylor/garden/bad name.txt",
+                     "taylor/garden/note.txt ", "taylor/garden/caf\u{e9}.txt", "taylor/garden/note\0.txt"] {
+            assert!(root.parse_project_file(path).is_err(), "{path}");
+        }
+    }
+
+    #[test]
+    fn full_length_listing_targets_are_not_clipped_or_aliased() {
+        let folder = "a".repeat(116);
+        let root = BuildFolder::new(&folder).unwrap();
+        let path = std::format!("{folder}/p/z");
+        assert_eq!(path.len(), MAX_PATH_BYTES);
+        let (_, target) = root.parse_project_file(&path).unwrap();
+        assert_eq!(target.as_str(), path);
+        let (_, other) = root.parse_project_file(&std::format!("{folder}/p/y")).unwrap();
+        assert_ne!(target, other);
+        assert_eq!(root.parse_project_file(&std::format!("{path}x")), Err(LocationError::TooLong));
+    }
 }
 
 #[cfg(test)]
