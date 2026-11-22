@@ -79,13 +79,17 @@ pub fn paint(f: &mut Frame<'_>, work: &Work) {
             _ => "Preview so far",
         };
         text(f, 308, 150, status, color, false);
+        text(f, 684, 150, "Revision", SOFT, false);
+        number(f, 756, 150, preview.revision, TEXT);
         // Bounded overview bitmap; caller retains original full artifact.
         for y in 0..PREVIEW_HEIGHT { for x in 0..PREVIEW_WIDTH {
             f.rect((388+x*6) as i32, (181+y*6) as i32, 6, 6, preview.pixels[y*PREVIEW_WIDTH+x]);
         }}
-        text(f, 308, 433, preview.location.as_str(), TEXT, false);
-        text(f, 308, 454, "Revision", SOFT, false);
-        number(f, 388, 454, preview.revision, TEXT);
+        // Show all 120 target bytes in two rows; never shorten a path to fit.
+        // The revision lives above the bitmap so it cannot overwrite row two.
+        for (row, part) in preview.location.as_str().as_bytes().chunks(76).enumerate() {
+            text(f, 308, 433 + row*16, core::str::from_utf8(part).unwrap(), TEXT, false);
+        }
     } else {
         f.rect(553, 230, 60, 44, GROUND);
         f.rect(561, 238, 44, 6, SOFT);

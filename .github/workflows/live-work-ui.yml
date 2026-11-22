@@ -28,6 +28,10 @@ jobs:
         run: cargo run --locked --offline --example live_work_frames -- render-output
       - name: Check literal demo disclosure independently of the renderer
         run: python3 guest/tests/demo_disclosure.py render-output
+      - name: Render and verify the entire longest project destination
+        run: |
+          cargo run --locked --offline --example project_location_frames -- project-location-output
+          python3 guest/tests/project_location_display.py project-location-output
       - name: Build the separate sample-event guest
         id: demo
         run: |
@@ -46,6 +50,7 @@ jobs:
           name: live-work-ui-render-and-guest
           path: |
             render-output/
+            project-location-output/
             target/x86_64-unknown-none/release/tailorbird-work-demo
           if-no-files-found: error
           retention-days: 14
