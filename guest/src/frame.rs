@@ -15,6 +15,12 @@ pub struct Frame<'a> {
     divisor: usize,
 }
 
+/// `amount` parts in 255 of `over`, the rest `under`, in each of red, green and blue.
+pub fn mix(under: u32, over: u32, amount: u32) -> u32 {
+    let part = |s: u32| (((under >> s & 255) * (255 - amount) + (over >> s & 255) * amount + 127) / 255) << s;
+    part(16) | part(8) | part(0)
+}
+
 impl<'a> Frame<'a> {
     pub fn new(
         pixels: &'a mut [u32],
@@ -66,6 +72,66 @@ impl<'a> Frame<'a> {
         for row in self.y(y.max(0) as usize)..self.y((y + h).max(0) as usize) {
             let offset = row * self.pitch;
             self.pixels[offset + left..offset + right].fill(color);
+        }
+    }
+
+    /// A raised surface in the desktop's manner: a faint light edge along the top, a short fall of
+    /// light under it, and a thin outline. Drawn row by row at the display's own resolution, so it is
+    /// as fine at 1440p as the display allows.
+    pub fn panel(&mut self, x: i32, y: i32, w: i32, h: i32, color: u32) {
+        self.surface(x, y, w, h, color, true);
+    }
+
+    /// A sunken surface for something to be typed into or chosen: darker along the top, lighter below.
+    pub fn well(&mut self, x: i32, y: i32, w: i32, h: i32, color: u32) {
+        self.surface(x, y, w, h, color, false);
+    }
+
+    /// A key's cap: raised, but one flat colour under its letters.
+    pub fn cap(&mut self, x: i32, y: i32, w: i32, h: i32, color: u32) {
+        self.surface(x, y, w, h, color, true);
+        let (left, right) = (self.x(x.max(0) as usize), self.x((x + w).max(0) as usize));
+        let (top, bottom) = (self.y(y.max(0) as usize), self.y((y + h).max(0) as usize));
+        if right > left + 2 && bottom > top + 2 {
+            for row in top + 1..bottom - 1 {
+                let offset = row * self.pitch;
+                self.pixels[offset + left + 1..offset + right - 1].fill(color);
+            }
+        }
+    }
+
+    fn surface(&mut self, x: i32, y: i32, w: i32, h: i32, color: u32, raised: bool) {
+        if w <= 0 || h <= 0 {
+            return;
+        }
+        let (left, right) = (self.x(x.max(0) as usize), self.x((x + w).max(0) as usize));
+        let (top, bottom) = (self.y(y.max(0) as usize), self.y((y + h).max(0) as usize));
+        if right <= left + 2 || bottom <= top + 2 {
+            return;
+        }
+        let rows = bottom - top;
+        // The light falls over at most twelve rows of the layout: a sheen at the edge, not a wash.
+        // (six for a sunken one), so that words set a little below the edge stand on one flat colour.
+        let reach = if raised { 12 } else { 6 };
+        let fall = (rows * 2 / 5).min(self.y((y.max(0) + reach) as usize).saturating_sub(top)).max(1);
+        let (light, dark) = (0xFFFFFF, 0x000000);
+        let outline = mix(color, light, if raised { 30 } else { 18 });
+        for row in top..bottom {
+            let n = row - top;
+            let fill = if row == top {
+                if raised { mix(color, light, 56) } else { mix(color, dark, 70) }
+            } else if row + 1 == bottom {
+                if raised { mix(color, dark, 40) } else { mix(color, light, 26) }
+            } else if n < fall {
+                let strength = (20 * (fall - n) / fall) as u32;
+                if raised { mix(color, light, strength) } else { mix(color, dark, strength * 2) }
+            } else {
+                color
+            };
+            let offset = row * self.pitch;
+            self.pixels[offset + left..offset + right].fill(fill);
+            self.pixels[offset + left] = outline;
+            self.pixels[offset + right - 1] = outline;
         }
     }
 

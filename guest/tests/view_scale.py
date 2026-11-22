@@ -13,14 +13,6 @@ import time
 from qemu_smoke import Qemu, crop
 
 # Computed directly from the kernel's 20x40 coverage masks and Tailorbird palette.
-TITLE = {
-    "fit": "a35240f2eea7b8ccc7536d9d8e8402659126f5dc8862590605fbb60544fb0322",
-    "compact": "a68f1e7a3d3da0f769d39c88478ab179460ca11b4b0def00437561838a995b2f",
-}
-# Source-bound to the fixed model-free 800x600 scale kernel and Tailorbird
-# renderer. Measured from all four original native title crops in #262 CI.
-# Unlike a one-pixel color presence test, this guards the entire title.
-SMALL_TITLE = "56fe7c0141736d9bb2a83328588454cc773da555d7038c6935c09b6df7d2420b"
 TEAL = bytes.fromhex("41bad7")
 PANEL = bytes.fromhex("18364f")
 TEXT = bytes.fromhex("f2f7fc")
@@ -222,13 +214,13 @@ def selftest_shortcut_legend_receipts():
 def require_empty_output_receipts(receipts):
     # The local offline preview must disclose its empty event feed and keep
     # manual OS / Escape navigation legible at both tested resolutions.
-    expected = {"native_frames": 4, "erased_guidance_negatives": 12}
+    expected = {"native_frames": 4, "erased_guidance_negatives": 20}
     if receipts != expected:
         raise AssertionError(f"empty-output guidance checks incomplete: {receipts!r} != {expected!r}")
 
 
 def selftest_empty_output_receipts():
-    complete = {"native_frames": 4, "erased_guidance_negatives": 12}
+    complete = {"native_frames": 4, "erased_guidance_negatives": 20}
     require_empty_output_receipts(dict(complete))
     for key in complete:
         missing = dict(complete)
@@ -244,7 +236,7 @@ def selftest_empty_output_receipts():
 
 
 def require_task_section_receipts(receipts):
-    expected = {"native_frames": 4, "erased_label_negatives": 16}
+    expected = {"native_frames": 4, "erased_label_negatives": 20}
     if receipts != expected:
         raise AssertionError(
             f"native task-section label checks incomplete: {receipts!r} != {expected!r}"
@@ -252,7 +244,7 @@ def require_task_section_receipts(receipts):
 
 
 def selftest_task_section_receipts():
-    complete = {"native_frames": 4, "erased_label_negatives": 16}
+    complete = {"native_frames": 4, "erased_label_negatives": 20}
     require_task_section_receipts(dict(complete))
     for key in complete:
         missing = dict(complete)
@@ -498,15 +490,12 @@ def check(kernel, app, measurement, folder, small):
         return crop(rgb,w,box(mode,x,y,width,height))
 
     def form(rgb, mode):
-        title = area(rgb,mode,22,16,180,30)
-        expected = SMALL_TITLE if small else TITLE[mode]
-        if small and area(rgb,mode,3,5,1,1) != PANEL:
-            return False
-        return hashlib.sha256(title).hexdigest() == expected
+        # The name, letter by letter from the kernel's typeface in the 15 by 30 cell view.rs draws it in.
+        return stop_text_ok(rgb,mode,"Tailorbird",22,12,15,15,30,TEAL,PANEL)
 
     def erased_title_with_one_teal_pixel(rgb, mode):
         """Host-only negative: nearly empty headline that passed the old oracle."""
-        left, top, right, bottom = box(mode,22,16,180,30)
+        left, top, right, bottom = box(mode,22,12,150,30)
         damaged = bytearray(rgb)
         row = PANEL * (right-left)
         for y in range(top,bottom):
@@ -520,7 +509,7 @@ def check(kernel, app, measurement, folder, small):
 
     glyphs = kernel_glyphs()
     doubled = double_glyphs()
-    caption = "NO TASK"
+    caption = "No task"
     offline_refusal_receipts = {"native_frames": 0, "erased_notice_negatives": 0,
                                "unchanged_other_pixels": 0}
     stop_receipts = {"native_frames": 0, "erased_letter_negatives": 0,
@@ -568,16 +557,16 @@ def check(kernel, app, measurement, folder, small):
 
     def stop_caption_ok(rgb, mode):
         # Includes the 1920px Fit 2x font; old tests only checked Compact.
-        return stop_text_ok(rgb,mode,caption,48,361,6,6,10,SOFT)
+        return stop_text_ok(rgb,mode,caption,48,365,6,6,12,SOFT)
 
     def stop_heading_ok(rgb, mode):
         # The STOP heading uses the independent double-size source font at
         # 800px, 1080p Fit and 1080p Compact, with exact per-cell bounds.
-        return stop_text_ok(rgb,mode,"STOP",48,331,18,18,30,TEXT)
+        return stop_text_ok(rgb,mode,"Stop",48,329,15,15,30,TEXT)
 
     def erased_stop_cell(rgb, mode, i):
         # Deliberately damage only a HOST COPY of an original captured P6.
-        left, top, right, bottom = box(mode,48+i*6,361,6,10)
+        left, top, right, bottom = box(mode,48+i*6,365,6,12)
         damaged = bytearray(rgb)
         for y in range(top,bottom):
             offset = (y*w+left)*3
@@ -585,8 +574,8 @@ def check(kernel, app, measurement, folder, small):
         return bytes(damaged)
 
     def erased_stop_text(rgb, mode, heading):
-        text, y, step, cw, ch = (("STOP",331,18,18,30) if heading
-                                 else (caption,361,6,6,10))
+        text, y, step, cw, ch = (("Stop",329,15,15,30) if heading
+                                 else (caption,365,6,6,12))
         damaged = bytearray(rgb)
         for i in range(len(text)):
             left, top, right, bottom = box(mode,48+i*step,y,cw,ch)
@@ -620,18 +609,18 @@ def check(kernel, app, measurement, folder, small):
 
     def mode_heading_ok(rgb, mode):
         # Heading uses PANEL background, while the button state uses GROUND.
-        return stop_text_ok(rgb,mode,"MODE",38,187,12,12,20,TEAL,PANEL)
+        return stop_text_ok(rgb,mode,"MODE",38,191,6,6,12,TEAL,PANEL)
 
     def mode_state_ok(rgb, mode):
         # Offline native guest begins in SINGLE REQUEST; F6 changes only view.
-        return stop_text_ok(rgb,mode,"SINGLE REQUEST",48,232,12,12,20,TEXT)
+        return stop_text_ok(rgb,mode,"Single request",48,237,10,10,20,TEXT)
 
     def erased_mode_text(rgb, mode, heading):
-        text, x, y, background = (("MODE",38,187,PANEL) if heading
-                                  else ("SINGLE REQUEST",48,232,GROUND))
+        text, x, y, cw, ch, background = (("MODE",38,191,6,12,PANEL) if heading
+                                          else ("Single request",48,237,10,20,GROUND))
         damaged = bytearray(rgb)
         for i in range(len(text)):
-            left, top, right, bottom = box(mode,x+i*12,y,12,20)
+            left, top, right, bottom = box(mode,x+i*cw,y,cw,ch)
             for row in range(top,bottom):
                 offset = (row*w+left)*3
                 damaged[offset:offset+(right-left)*3] = background*(right-left)
@@ -653,16 +642,17 @@ def check(kernel, app, measurement, folder, small):
     def f6_badge_ok(rgb, mode):
         # Source: guest/main.rs paints exact F6: FIT or F6: COMPACT in TEAL
         # at logical (418, 513), using Frame::text's 6x10 single-scale glyphs.
-        label = "F6: COMPACT" if mode == "compact" else "F6: FIT"
-        return stop_text_ok(rgb, mode, label, 418, 513, 6, 6, 10, TEAL)
+        label = "compact" if mode == "compact" else "fit"
+        return (stop_text_ok(rgb, mode, "F6", 293, 516, 6, 6, 12, TEXT, PANEL)
+                and stop_text_ok(rgb, mode, label, 314, 516, 6, 6, 12, SOFT))
 
     def erased_f6_badge(rgb, mode):
         # Damage a HOST COPY. Existing cross-view badge inequality remains
         # satisfied by an entirely erased Compact badge in original frames.
-        label = "F6: COMPACT" if mode == "compact" else "F6: FIT"
+        label = "compact" if mode == "compact" else "fit"
         damaged = bytearray(rgb)
         for i in range(len(label)):
-            left, top, right, bottom = box(mode, 418+i*6, 513, 6, 10)
+            left, top, right, bottom = box(mode, 314+i*6, 516, 6, 12)
             for row in range(top, bottom):
                 offset = (row*w + left)*3
                 damaged[offset:offset+(right-left)*3] = GROUND*(right-left)
@@ -681,35 +671,35 @@ def check(kernel, app, measurement, folder, small):
     # starts connected=false, Model::Unknown. This is a display identity
     # check, not a claim about a trusted service or an authenticated model.
     offline_labels = (
-        ("NO SERVICE", 737, 27, BAD),
-        ("CONNECTION", 38, 115, TEAL),
-        ("NOT CONNECTED", 38, 147, AMBER),
+        ("Not ready", 796, 26, 10, 20, BAD, GROUND),
+        ("TAYLOR IS", 38, 115, 6, 12, TEAL, PANEL),
+        ("Not connected", 38, 135, 10, 20, AMBER, PANEL),
     )
 
-    def offline_label_ok(rgb, mode, label, x, y, ink):
+    def offline_label_ok(rgb, mode, label, x, y, cw, ch, ink, ground):
         # The first label occupies the top PANEL; the latter two the
         # left-sidebar PANEL. All use the actual guest Frame::text 2x cells.
-        return stop_text_ok(rgb, mode, label, x, y, 12, 12, 20, ink, PANEL)
+        return stop_text_ok(rgb, mode, label, x, y, cw, cw, ch, ink, ground)
 
-    def erased_offline_label(rgb, mode, label, x, y):
+    def erased_offline_label(rgb, mode, label, x, y, cw, ch, ground):
         # Host-only mutation of an original native P6; never modify the
         # guest or pretend this adverse frame was produced by QEMU.
         altered = bytearray(rgb)
         for i in range(len(label)):
-            left, top, right, bottom = box(mode, x+i*12, y, 12, 20)
+            left, top, right, bottom = box(mode, x+i*cw, y, cw, ch)
             for yy in range(top, bottom):
                 offset = (yy*w + left)*3
-                altered[offset:offset+(right-left)*3] = PANEL*(right-left)
+                altered[offset:offset+(right-left)*3] = ground*(right-left)
         return bytes(altered)
 
     def check_offline_positive_and_negatives(rgb, mode):
-        for label, x, y, ink in offline_labels:
-            assert offline_label_ok(rgb, mode, label, x, y, ink), (
+        for label, x, y, cw, ch, ink, ground in offline_labels:
+            assert offline_label_ok(rgb, mode, label, x, y, cw, ch, ink, ground), (
                 f"native offline status {label!r} differs from pinned source RGB"
             )
-            erased = erased_offline_label(rgb, mode, label, x, y)
+            erased = erased_offline_label(rgb, mode, label, x, y, cw, ch, ground)
             assert erased != rgb, f"offline status {label!r} erasure removed no ink"
-            assert not offline_label_ok(erased, mode, label, x, y, ink), (
+            assert not offline_label_ok(erased, mode, label, x, y, cw, ch, ink, ground), (
                 f"erased offline status {label!r} accepted"
             )
             offline_receipts["erased_label_negatives"] += 1
@@ -723,7 +713,7 @@ def check(kernel, app, measurement, folder, small):
         return stop_text_ok(rgb, mode, character, 140, 460, 10, 10, 20, TEXT, PANEL)
 
     def editor_count_ok(rgb, mode, digit):
-        return stop_text_ok(rgb, mode, digit, 70, 489, 6, 6, 10, TEXT, PANEL)
+        return stop_text_ok(rgb, mode, digit, 70, 489, 6, 6, 12, TEXT, PANEL)
 
     def substitute_editor_cell(rgb, mode, x, y, cell_w, cell_h, character):
         left, top, right, bottom = box(mode, x, y, cell_w, cell_h)
@@ -752,7 +742,7 @@ def check(kernel, app, measurement, folder, small):
         )
         editor_receipts["case_negatives"] += 1
         if digit == "1":
-            reset = substitute_editor_cell(rgb, mode, 70, 489, 6, 10, "0")
+            reset = substitute_editor_cell(rgb, mode, 70, 489, 6, 12, "0")
             assert reset != rgb, "BYTES reset adverse control did not change pixels"
             assert not editor_count_ok(reset, mode, digit), (
                 "wrong request byte count host copy accepted"
@@ -763,33 +753,38 @@ def check(kernel, app, measurement, folder, small):
     # This keyboard legend describes the visible normal-mode Stop and
     # launcher-return shortcuts. Full source RGB proves the displayed words,
     # NOT whether trusted service or kernel actually admits those commands.
+    # Each key is a cap (its name on PANEL) followed by what it does (on GROUND); view.rs `key`.
     shortcut_legend = (
-        "ENTER SUBMIT   ALT R RETRY   ALT M MODE   ALT S STOP   ESC EXIT"
+        ("send", (("Enter", 26, TEXT, PANEL), ("sends", 65, SOFT, GROUND))),
+        ("retry", (("Alt+R", 113, TEXT, PANEL), ("retries", 152, SOFT, GROUND))),
+        ("exit", (("Esc", 212, TEXT, PANEL), ("leaves", 239, SOFT, GROUND))),
     )
 
     def shortcut_legend_ok(rgb, mode):
-        return stop_text_ok(rgb, mode, shortcut_legend, 22, 513,
-                            6, 6, 10, SOFT)
+        return all(stop_text_ok(rgb, mode, text, x, 516, 6, 6, 12, ink, ground)
+                   for _, parts in shortcut_legend for text, x, ink, ground in parts)
 
     def erased_shortcut(rgb, mode, token):
-        # Host-only negative: erase one entire safety-relevant shortcut while
-        # preserving the original QEMU capture and all neighboring badges.
-        assert shortcut_legend.count(token) == 1
-        start = shortcut_legend.index(token)
+        # Host-only negative: erase one entire shortcut, cap and words, while
+        # preserving the original QEMU capture and all neighboring keys.
+        parts = dict(shortcut_legend)[token]
         altered = bytearray(rgb)
-        for i in range(len(token)):
-            left, top, right, bottom = box(mode, 22+(start+i)*6, 513, 6, 10)
-            for yy in range(top, bottom):
-                offset = (yy*w+left)*3
-                altered[offset:offset+(right-left)*3] = GROUND*(right-left)
+        for text, x, _, ground in parts:
+            for i in range(len(text)):
+                left, top, right, bottom = box(mode, x+i*6, 516, 6, 12)
+                for yy in range(top, bottom):
+                    offset = (yy*w+left)*3
+                    altered[offset:offset+(right-left)*3] = ground*(right-left)
         return bytes(altered)
 
     def check_shortcut_legend(rgb, mode):
         assert shortcut_legend_ok(rgb, mode), (
-            "native footer Stop/Exit keyboard legend differs from exact source RGB"
+            "native footer keyboard legend differs from exact source RGB"
         )
-        for token, key in (("ALT S STOP", "erased_stop_negatives"),
-                           ("ESC EXIT", "erased_exit_negatives")):
+        # The receipt keeps its old name for the first: the footer's Stop key moved to the sidebar
+        # ("stops the task", checked with the task-section labels); here it is the key that sends.
+        for token, key in (("send", "erased_stop_negatives"),
+                           ("exit", "erased_exit_negatives")):
             changed = erased_shortcut(rgb, mode, token)
             assert changed != rgb, f"{token} erasure removed no real native ink"
             assert not shortcut_legend_ok(changed, mode), (
@@ -804,9 +799,11 @@ def check(kernel, app, measurement, folder, small):
     # with no permission inspector. An empty/misleading output pane used
     # to pass even with valid title, Stop, F6 and editor pixels.
     empty_output_labels = (
-        ("NO TASK EVENTS RECEIVED", 339, 205, 12, 20, SOFT),
-        ("MANUAL OS USE REMAINS AVAILABLE", 339, 246, 6, 10, GOOD),
-        ("ESC RETURNS TO THE PCP OS LAUNCHER", 339, 270, 6, 10, SOFT),
+        ("Hi, I'm Taylor. Nothing is running.", 420, 286, 10, 20, TEXT),
+        ("I am not switched on yet, so I", 420, 316, 10, 20, AMBER),
+        ("cannot build anything.", 420, 340, 10, 20, AMBER),
+        ("The rest of PCP OS works without me.", 420, 384, 10, 20, GOOD),
+        ("returns to Programs", 370, 420, 6, 12, SOFT),
     )
 
     def empty_output_label_ok(rgb, mode, text, x, y, cell_w, cell_h, ink):
@@ -840,10 +837,11 @@ def check(kernel, app, measurement, folder, small):
     # Four distinct live headings and Stop-key disclosure fields. Source
     # typeface and exact positions are pinned to guest/main.rs.
     task_section_labels = (
-        ("LOCAL TASK SURFACE", 260, 23, 12, 20, TEXT),
-        ("TASK OUTPUT", 335, 116, 12, 20, TEAL),
-        ("NO TASK", 337, 150, 6, 10, SOFT),
-        ("ALT S STOP TASK", 38, 408, 6, 10, SOFT),
+        ("builds and fixes on this computer", 202, 27, 10, 20, SOFT),
+        ("PCP OS > Programs > Tailorbird (Esc returns to Programs)", 22, 52, 6, 12, SOFT),
+        ("Work", 335, 116, 10, 20, TEAL),
+        ("No task", 337, 150, 6, 12, SOFT),
+        ("stops the task", 97, 410, 6, 12, SOFT),
     )
 
     def task_section_label_ok(rgb, mode, text, x, y, cell_w, cell_h, ink):
@@ -869,14 +867,14 @@ def check(kernel, app, measurement, folder, small):
     # In particular, the actual mode-change command and 120-byte capacity
     # must remain legible even while the model and service are unavailable.
     affordance_labels = (
-        ("ALT M CHANGE MODE", 40, 287, SOFT),
-        ("REQUEST", 32, 469, TEAL),
-        ("BYTES", 32, 489, TEAL),
+        ("changes the mode", 97, 289, SOFT),
+        ("ASK", 32, 472, TEAL),
+        ("USED", 32, 489, TEAL),
         ("/120", 102, 489, SOFT),
     )
 
     def affordance_label_ok(rgb, mode, label, x, y, ink):
-        return stop_text_ok(rgb, mode, label, x, y, 6, 6, 10, ink, PANEL)
+        return stop_text_ok(rgb, mode, label, x, y, 6, 6, 12, ink, PANEL)
 
     def check_affordance_positive_and_negatives(rgb, mode):
         for label, x, y, ink in affordance_labels:
@@ -885,7 +883,7 @@ def check(kernel, app, measurement, folder, small):
             )
             # Change only a host copy of the native screenshot; do not alter
             # the original guest P6 or assert that QEMU rendered the damage.
-            erased = erased_empty_output_label(rgb, mode, label, x, y, 6, 10)
+            erased = erased_empty_output_label(rgb, mode, label, x, y, 6, 12)
             assert erased != rgb, f"no real native ink removed for {label!r}"
             assert not affordance_label_ok(erased, mode, label, x, y, ink), (
                 f"erased native mode/request affordance {label!r} accepted"
@@ -897,7 +895,7 @@ def check(kernel, app, measurement, folder, small):
         return area(rgb,mode,140,460,10,20)
 
     def badge(rgb, mode):
-        return area(rgb,mode,418,513,72,10)
+        return area(rgb,mode,289,513,80,17)
 
     try:
         m = Qemu(kernel, app, folder, "q35", f"image={measurement} desktop={w}x{h} ui_scale=1",
