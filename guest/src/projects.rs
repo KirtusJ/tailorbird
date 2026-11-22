@@ -5,6 +5,9 @@ use crate::build_folder_snapshot::{EntryKind, Snapshot};
 use crate::project_location::{BuildFolder, FileDestination, ProjectLocation};
 use crate::Text;
 
+#[cfg(test)]
+mod corpus;
+
 /// Rows of a list the screen has room for beside the folder's whole name and what is not shown.
 pub const ROWS: usize = 6;
 

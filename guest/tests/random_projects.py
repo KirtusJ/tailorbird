@@ -29,7 +29,7 @@ def fonts():
     return kernel_glyphs(), double_glyphs()
 
 
-def caption(frame, text, x, y, ink, background):
+def caption(frame, text, x, y, ink, background, well_top=None):
     # Native Fit at 800x600 maps 960x540 into the central 800x450 pixels.
     size, pixels, _ = frame
     if size != (800, 600):
@@ -39,7 +39,18 @@ def caption(frame, text, x, y, ink, background):
     top, bottom = screen_y(y), screen_y(y + 12)
     for col, char in enumerate(text):
         left, right = screen_x(x + 6*col), screen_x(x + 6*(col+1))
-        expected = stop_cell_rgb(*fonts(), char, right-left, bottom-top, ink, background)
+        width = right-left
+        expected = bytearray(stop_cell_rgb(*fonts(), char, width, bottom-top, ink, background))
+        if well_top is not None:
+            # The file text starts in the last scanline of the inset's six-unit shading.
+            start = screen_y(well_top)
+            fall = screen_y(well_top + 6) - start
+            for row in range(top, min(bottom, start + fall)):
+                strength = 2 * (20 * (start + fall - row) // fall)
+                shade = bytes((c * (255-strength) + 127) // 255 for c in background)
+                colored = stop_cell_rgb(*fonts(), char, width, bottom-top, ink, shade)
+                at = (row-top)*width*3
+                expected[at:at+width*3] = colored[at:at+width*3]
         if crop(pixels, size[0], (left, top, right, bottom)) != expected:
             return False
     return True
@@ -111,7 +122,7 @@ def run(kernel, guest, out, seed):
             def matches_open():
                 frame = vm.screenshot("opened-" + name)
                 return (caption(frame, f"{FOLDER}/{name} ", 339, 184, TEXT, PANEL)
-                        and caption(frame, doc+" ", 343, 231, TEXT, GROUND)
+                        and caption(frame, doc+" ", 343, 231, TEXT, GROUND, well_top=226)
                         and caption(frame, CHECKED, 339, 380, GOOD, PANEL))
             until(matches_open, f"Open must show full path, content and matching receipt for {name}")
         vm.key("esc")
