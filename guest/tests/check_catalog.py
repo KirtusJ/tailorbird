@@ -8,6 +8,9 @@ repository. Its predicates K1 to K7 are stated there and are not restated or cha
 settings differ, and only after the check's own controls have run with its own settings:
  - the folder whose second level must be catalogued is `guest`;
  - no path is allowed to hold session context.
+At the pin ce5aed77 the link predicate K6 reads inline links only: a reference-style link
+("[words][label]" with "[label]: path") to a missing path is not caught (B3). pcp-os pull
+request 411 adds that; this check gains it when the pin moves to a master that has it.
 The submodule entry is scanned as its name; what is inside pcp-os is checked in pcp-os.
 Exit 0 only if all hold. Standard library and git only.
 """

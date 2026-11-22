@@ -19,5 +19,5 @@ jobs:
           submodules: true
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - name: The catalogue is the tree, links hold, no session context
+      - name: The catalogue is the tree, inline relative links hold, no session context
         run: python3 guest/tests/check_catalog.py
