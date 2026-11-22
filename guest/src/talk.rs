@@ -77,6 +77,8 @@ pub enum Incoming<'a> {
     Chunk { conversation: u64, reply: u64, text: &'a str },
     Done { conversation: u64, reply: u64 },
     Failed { conversation: u64, reply: u64 },
+    /// How far the service has got in reading the message this reply answers.
+    Reading { conversation: u64, reply: u64, read: u64, of: u64 },
 }
 
 /// Something this program has to tell the model service. Made by the conversation, carried by
@@ -118,13 +120,19 @@ pub struct Talk {
     /// While the model is loading: how many of its bytes the service says it has checked, and of
     /// how many. Only what the service said; None when it has said nothing or is not loading.
     pub checked: Option<(u64, u64)>,
+    /// While an answer is awaited and none of it has arrived: how many tokens of the message the
+    /// service says it has read, and of how many. Only what the service said.
+    pub reading: Option<(u64, u64)>,
+    /// Whether anything of the reply awaited has arrived, were it a piece with no text in it. Once
+    /// it has, the reading is over and stays over (C3).
+    begun: bool,
 }
 
 const EMPTY: Turn = Turn { who: Who::System, text: Text::new(), cut: false, reply: 0, state: Reply::None, sent: false };
 
 impl Talk {
     pub const fn new() -> Self {
-        Self { service: Service::Absent, conversation: 1, next_reply: 1, turns: [EMPTY; TURNS], count: 0, dropped: 0, pending: None, strays: 0, checked: None }
+        Self { service: Service::Absent, conversation: 1, next_reply: 1, turns: [EMPTY; TURNS], count: 0, dropped: 0, pending: None, strays: 0, checked: None, reading: None, begun: false }
     }
 
     pub fn turns(&self) -> &[Turn] { &self.turns[..self.count] }
@@ -182,6 +190,8 @@ impl Talk {
         let reply = self.next_reply;
         self.next_reply += 1;
         self.pending = Some(reply);
+        self.reading = None;
+        self.begun = false;
         self.push(Who::Taylor, "", reply, Reply::Streaming, false);
         Some(Outgoing { conversation: self.conversation, reply, history, text: Text::display(words) })
     }
@@ -197,13 +207,35 @@ impl Talk {
     /// for is shown; anything else (late, after a stop, from an earlier chat) is counted and dropped.
     pub fn receive(&mut self, incoming: Incoming<'_>) -> Taken {
         let (conversation, reply) = match incoming {
-            Incoming::Chunk { conversation, reply, .. } | Incoming::Done { conversation, reply } | Incoming::Failed { conversation, reply } => (conversation, reply),
+            Incoming::Chunk { conversation, reply, .. } | Incoming::Done { conversation, reply } | Incoming::Failed { conversation, reply }
+            | Incoming::Reading { conversation, reply, .. } => (conversation, reply),
         };
-        let Some(turn) = self.pending_turn(conversation, reply) else {
+        // Reading is said before anything of the answer. Once some of it is here, or for another
+        // reply, it is a stray like anything late.
+        if let Incoming::Reading { read, of, .. } = incoming {
+            // Within one reply the count never goes back and the total never changes: a record
+            // that says otherwise is not shown (Director 2). The first one fixes the total.
+            let in_step = match self.reading {
+                Some((before, total)) => read >= before && of == total,
+                None => true,
+            };
+            if !self.begun && in_step && self.pending_turn(conversation, reply).is_some() {
+                self.reading = Some((read, of));
+                return Taken::Shown;
+            }
             self.strays += 1;
             return Taken::Stray;
-        };
+        }
+        if self.pending_turn(conversation, reply).is_none() {
+            self.strays += 1;
+            return Taken::Stray;
+        }
+        // Whatever else arrives for the reply, the reading is over.
+        self.reading = None;
+        self.begun = true;
+        let Some(turn) = self.pending_turn(conversation, reply) else { return Taken::Stray };
         match incoming {
+            Incoming::Reading { .. } => {}
             Incoming::Chunk { text, .. } => {
                 for b in text.bytes() {
                     let shown = if (0x20..=0x7e).contains(&b) { b } else if b == b'\n' { b' ' } else { b'?' };
@@ -229,6 +261,7 @@ impl Talk {
     /// that arrives for it afterwards is a stray. Returns the reply stopped, to tell the service.
     pub fn cancel(&mut self) -> Option<(u64, u64)> {
         let reply = self.pending.take()?;
+        self.reading = None;
         if let Some(turn) = self.turns[..self.count].iter_mut().rev().find(|t| t.reply == reply && t.state == Reply::Streaming) {
             turn.state = Reply::Cancelled;
         }
@@ -241,6 +274,7 @@ impl Talk {
         self.checked = None;
         if service != Service::Ready {
             if let Some(reply) = self.pending.take() {
+                self.reading = None;
                 if let Some(turn) = self.turns[..self.count].iter_mut().rev().find(|t| t.reply == reply && t.state == Reply::Streaming) {
                     turn.state = Reply::Failed;
                 }
@@ -262,6 +296,7 @@ impl Talk {
         self.count = 0;
         self.dropped = 0;
         self.pending = None;
+        self.reading = None;
         ended
     }
 }
@@ -269,6 +304,48 @@ impl Talk {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reading_is_shown_only_before_the_answer_begins_and_only_for_the_reply_awaited() {
+        let mut talk = Talk::new();
+        talk.service_is(Service::Ready);
+        let sent = talk.say("hello", true).unwrap();
+        let (c, r) = (sent.conversation, sent.reply);
+        assert_eq!(talk.reading, None);
+        assert_eq!(talk.receive(Incoming::Reading { conversation: c, reply: r, read: 3, of: 40 }), Taken::Shown);
+        assert_eq!(talk.reading, Some((3, 40)));
+        // For another reply or another conversation it is a stray and changes nothing.
+        assert_eq!(talk.receive(Incoming::Reading { conversation: c, reply: r + 1, read: 9, of: 40 }), Taken::Stray);
+        assert_eq!(talk.receive(Incoming::Reading { conversation: c + 1, reply: r, read: 9, of: 40 }), Taken::Stray);
+        assert_eq!(talk.reading, Some((3, 40)));
+        // Going back, or another total, is not shown: what was shown stays. The same count again is.
+        for (read, of) in [(2u64, 40u64), (3, 41), (5, 39), (0, 40)] {
+            assert_eq!(talk.receive(Incoming::Reading { conversation: c, reply: r, read, of }), Taken::Stray, "{read} of {of}");
+            assert_eq!(talk.reading, Some((3, 40)));
+        }
+        assert_eq!(talk.receive(Incoming::Reading { conversation: c, reply: r, read: 3, of: 40 }), Taken::Shown);
+        assert_eq!(talk.receive(Incoming::Reading { conversation: c, reply: r, read: 9, of: 40 }), Taken::Shown);
+        assert_eq!(talk.reading, Some((9, 40)));
+        // The first of the answer ends it, and reading that arrives afterwards is a stray.
+        assert_eq!(talk.receive(Incoming::Chunk { conversation: c, reply: r, text: "Hi" }), Taken::Shown);
+        assert_eq!(talk.reading, None);
+        assert_eq!(talk.receive(Incoming::Reading { conversation: c, reply: r, read: 40, of: 40 }), Taken::Stray);
+        assert_eq!(talk.reading, None);
+        assert_eq!(talk.receive(Incoming::Done { conversation: c, reply: r }), Taken::Shown);
+        // Stop, a new chat, the service ending and a failed reply each leave no reading behind.
+        for end in 0..4 {
+            let sent = talk.say("again", true).unwrap();
+            let (c, r) = (sent.conversation, sent.reply);
+            assert_eq!(talk.receive(Incoming::Reading { conversation: c, reply: r, read: 1, of: 2 }), Taken::Shown);
+            match end {
+                0 => { talk.cancel(); }
+                1 => { talk.new_chat(); }
+                2 => { talk.service_is(Service::Stopped); talk.service_is(Service::Ready); }
+                _ => { talk.receive(Incoming::Failed { conversation: c, reply: r }); }
+            }
+            assert_eq!(talk.reading, None, "ending {end}");
+        }
+    }
 
     #[test]
     fn without_a_model_the_message_is_kept_and_the_reason_is_a_system_turn() {

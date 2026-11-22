@@ -13,7 +13,11 @@ Predicates, fixed before the first run.
  T4 Alt+S during an answer stops it: the reply is marked stopped with fewer bytes than the whole
     answer, and the worker says it was told and stopped.
  T5 a reply the worker fails is marked failed with 0 bytes.
- T6 (reply 5) when the worker ends in the middle of an answer the service is reported stopped (not "did not
+ T13 a message the worker reads slowly: while it says it has read 3 of 7 tokens (made-up numbers)
+     the screen is exactly the renderer's picture with that count where the reply will be, and not
+     the picture with no count, another count, another total, or the answer begun; the reply then
+     arrives whole.
+ T6 (reply 6) when the worker ends in the middle of an answer the service is reported stopped (not "did not
     start": it had been ready), that reply is failed with what had arrived, and a later message
     starts no reply.
  T7 Esc ends Tailorbird, PCP OS ends the worker's run, and the emulator ends with status 33.
@@ -246,21 +250,39 @@ def run(kernel, guest, worker, output, with_worker, tool):
                 "one character fewer": full_row[:-2] + ["chunk " + whole_row[:83], "failed"],
                 "its last character changed": full_row[:-2] + ["chunk " + whole_row[:83] + "X", "failed"],
                 "complete, not failed": full_row[:-1] + ["done"]})
+        # T13: while the worker says how far its reading has got, the reply's place says so.
+        reading = None
+        read_answer = OPENING + "read"
+        type_and_send("read")
+        if wait_for("test worker: says it has read 3 of 7 tokens (made-up numbers)") and full_row:
+            time.sleep(1.5)
+            vm.screenshot("reading")
+            reading = full_row + ["type read", "enter", "took", "reading 3 7"]
+            screens.same("reading", reading, {
+                "no progress said: only answering": reading[:-1],
+                "another count": reading[:-1] + ["reading 4 7"],
+                "another total": reading[:-1] + ["reading 3 8"],
+                "the answer already begun": reading + ["chunk This"]})
+        if not wait_for("tailorbird: reply 5 kept %d bytes and is complete" % len(read_answer)):
+            problems.append("T13: the reply after the reading was not kept whole: %r" % replies()[-1:])
+        if any("was not asked how far" in line for line in lines()):
+            problems.append("T13: the worker says the message did not ask for progress")
+        time.sleep(1.0)
         # T6
         type_and_send("leave")
         wait_for("tailorbird: model service: stopped")
-        wait_for("tailorbird: reply 5 kept 16 bytes and is failed")
+        wait_for("tailorbird: reply 6 kept 16 bytes and is failed")
         type_and_send("anyone")
         time.sleep(2)
         vm.screenshot("service-stopped")
         if full_row:
-            ended = full_row + ["type leave", "enter", "took", "chunk " + (OPENING + "leave")[:16], "gone", "type anyone", "enter"]
+            ended = full_row + ["type read", "enter", "took", "reading 3 7", "reading 7 7", "chunk " + read_answer, "done"] + ["type leave", "enter", "took", "chunk " + (OPENING + "leave")[:16], "gone", "type anyone", "enter"]
             screens.same("service-stopped", ended, {
                 "the model still ready": [step for step in ended if step != "gone"],
                 "the last message changed": ended[:-2] + ["type anyonf", "enter"],
                 "the failed reply complete": [("done" if step == "failed" else step) for step in ended],
                 "one character of what arrived before it stopped changed": [("chunk This is the tesT" if step == "chunk " + (OPENING + "leave")[:16] else step) for step in ended]})
-        if any(line.startswith("tailorbird: reply 6") for line in replies()):
+        if any(line.startswith("tailorbird: reply 7") for line in replies()):
             problems.append("T6: a reply began after the service had stopped")
         # T7
         vm.key("esc")

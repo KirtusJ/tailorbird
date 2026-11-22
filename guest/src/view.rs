@@ -395,7 +395,20 @@ fn transcript(f: &mut Frame<'_>, talk: &crate::talk::Talk) {
             label(f, 393, y, core::str::from_utf8(part).unwrap_or("?"), 1, if turn.who == Who::System { SOFT } else { TEXT });
             y += 12;
         }
-        if text.is_empty() {
+        if text.is_empty() && turn.state == Reply::Streaming && talk.reading.is_some() {
+            // What the service said of its reading, and nothing worked out from it.
+            let (read, of) = talk.reading.unwrap_or((0, 1));
+            let mut line = crate::Text::<84>::new();
+            // "Preparing the reply", not "reading your message": the count is of everything the model
+            // reads before it can answer, which includes the conversation so far (C3).
+            for part in ["(preparing the reply: ", decimal_u64(read, &mut digits), " of "] {
+                for b in part.bytes() { line.push_ascii(b); }
+            }
+            let mut more = [0u8; 20];
+            for b in decimal_u64(of, &mut more).bytes().chain(b" tokens read)".iter().copied()) { line.push_ascii(b); }
+            label(f, 393, y, line.as_str(), 1, SOFT);
+            y += 12;
+        } else if text.is_empty() {
             let waiting = match turn.state {
                 Reply::Streaming => "(answering...)",
                 Reply::Cancelled => "(stopped before anything was said)",
@@ -652,6 +665,49 @@ mod tests {
     /// whatever its length: after its last character where there is room, on a row of its own where
     /// there is not. Director 2 found the words drawn across the start of a reply that filled its
     /// last row exactly (84, 168, ... characters).
+    /// While the service reads the message, the reply's place says how far it has got, in the
+    /// service's own two numbers, and nothing else on the screen changes.
+    #[test]
+    fn reading_progress_is_drawn_where_the_answer_will_be_and_nowhere_else() {
+        use crate::talk::{Incoming, Service};
+        let mut ui = Ui::new();
+        ui.talk.service_is(Service::Ready);
+        for b in b"go" { assert!(ui.input.push_ascii(*b)); }
+        let _ = ui.intent(crate::Action::Submit);
+        let waiting = shot(&ui);
+        assert_eq!(ui.talk.receive(Incoming::Reading { conversation: 1, reply: 1, read: 37, of: 212 }), crate::talk::Taken::Shown);
+        let reading = shot(&ui);
+        // Drawn independently: the row emptied to the colour of one of its blank cells, then the words.
+        let width = 960;
+        let mut expected = waiting.clone();
+        let blank = waiting[242 * width + 393 + 6 * 80];
+        for y in 242..254 {
+            for x in 393..393 + 6 * 84 {
+                expected[y * width + x] = blank;
+            }
+        }
+        // (A new frame starts from its ground everywhere, so the words are drawn on one of their
+        // own and that row copied over.)
+        let mut alone = vec![0u32; expected.len()];
+        label(&mut Frame::new(&mut alone, width, expected.len() / width, width, blank, false), 393, 242, "(preparing the reply: 37 of 212 tokens read)", 1, SOFT);
+        for y in 242..254 {
+            for x in 393..393 + 6 * 84 {
+                expected[y * width + x] = alone[y * width + x];
+            }
+        }
+        let differ: std::vec::Vec<(usize, usize)> = (0..expected.len()).filter(|i| reading[*i] != expected[*i]).map(|i| (i % width, i / width)).collect();
+        assert!(differ.is_empty(), "the screen while reading is not the waiting screen with that one row changed: {} pixels, x {:?}..{:?}, y {:?}..{:?}", differ.len(),
+                differ.iter().map(|d| d.0).min(), differ.iter().map(|d| d.0).max(), differ.iter().map(|d| d.1).min(), differ.iter().map(|d| d.1).max());
+        assert!(reading != waiting);
+        // Another count is another picture; the first of the answer removes the line.
+        ui.talk.receive(Incoming::Reading { conversation: 1, reply: 1, read: 38, of: 212 });
+        assert!(shot(&ui) != reading);
+        ui.talk.receive(Incoming::Chunk { conversation: 1, reply: 1, text: "Hi" });
+        let answered = shot(&ui);
+        ui.talk.reading = Some((38, 212));
+        assert!(shot(&ui) == answered, "reading is never drawn once the answer has begun");
+    }
+
     #[test]
     fn how_a_reply_ended_is_never_drawn_over_the_reply() {
         use crate::talk::{Incoming, Service};
