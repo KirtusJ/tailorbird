@@ -9,6 +9,12 @@ before any code that can change files or the system is written.
 Visual in what it does; clear in what it did; able to act on the whole system when explicitly allowed;
 "can we build it, can we fix it: if we can, yes".
 
+And on 22 November, as the rebuild began: "taylor the tailorbird should be helpful, and interactive, but
+not overbearing". Read here as rules of manner: it answers and offers, and does not interrupt, nag,
+take the screen unasked, or ask again for what was refused. The kernel's question appears only when
+the user's own request has led to a proposal. (Whether "Taylor" is the character's name is the
+owner's to confirm.)
+
 ## What PCP OS gives us today (read from the kernel at `070c9d5`)
 
 - One program at a time has the display and the keyboard. There is no second running program to talk
