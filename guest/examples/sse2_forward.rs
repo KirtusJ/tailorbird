@@ -25,7 +25,8 @@ mod guest {
     fn verify(bytes: &[u8], reference: &str) {
         let index = Index::parse(bytes, bytes.len() as u64).unwrap();
         let model = Model::admit(&index).unwrap();
-        let mut decoder = Decoder::new(&model, bytes, 32, 1 << 20, || true).unwrap();
+        let mut decoder = Decoder::for_inference(&model, bytes, 32, 1 << 20, || true).unwrap();
+        log(alloc::format!("Qwen inference backend: {}\n", decoder.projection_name()).as_bytes());
         let mut positions = 0;
         let mut compute_us = 0;
         let mut prompt = [0; 4];
@@ -131,9 +132,48 @@ mod guest {
         log(alloc::format!("Qwen Q4_K/Q6_K projections passed with {}\n", projection.name()).as_bytes());
     }
 
+    // Expected float bits come from the official b12387 Haswell ggml CPU library.
+    fn verify_packed() {
+        use pcpos_model_tensor::{packed::{PackedKernel, Q8Block}, Error, TensorType};
+        let Some(kernel) = PackedKernel::detect() else { return; };
+        let input: alloc::vec::Vec<_> = (0..4*768).map(|i| {
+            let j = i % 768;
+            let x = if j/256 == 0 { 0.0 } else { ((j*73%257) as f32 - 128.0) / 16.0 };
+            if i/768 % 2 == 0 { x } else { -x }
+        }).collect();
+        let mut scratch = alloc::vec![Q8Block::ZERO; 12];
+        for (kind,expected) in [(TensorType::Q4K,0x460b2519u32),(TensorType::Q6K,0xc7d837c8)] {
+            let size = kind.block_layout().1 as usize;
+            let mut weights = alloc::vec![0; 3*size];
+            let mut seed = 713u32;
+            for byte in &mut weights {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                *byte = (seed >> 24) as u8;
+            }
+            let scales = [0x3c00u16,0xb860,0x0800,0x32aa];
+            for (i,b) in weights.chunks_exact_mut(size).enumerate() {
+                if kind == TensorType::Q4K {
+                    b[..2].copy_from_slice(&scales[i].to_le_bytes());
+                    b[2..4].copy_from_slice(&scales[i+1].to_le_bytes());
+                } else {
+                    b[208..210].copy_from_slice(&scales[i].to_le_bytes());
+                }
+            }
+            let mut out = [0.0; 4];
+            let mut polls = 0;
+            assert_eq!(kernel.project::<4>(kind,&weights,&input,&mut out,&mut scratch,
+                &mut || {polls+=1; polls<14}),Err(Error::Cancelled));
+            assert!(kernel.project::<4>(kind,&weights,&input,&mut out,&mut scratch,&mut ||true).unwrap());
+            let expected = f32::from_bits(expected);
+            assert_eq!(out,[expected,-expected,expected,-expected]);
+        }
+        log(b"Qwen upstream Q8_K dots, four prompt positions, Stop and retry passed\n");
+    }
+
     #[no_mangle]
     pub extern "C" fn probe_main() -> ! {
         verify_quantized();
+        verify_packed();
         verify(
             include_bytes!(concat!(env!("QWEN_FIXTURE_DIR"), "/qwen2.gguf")),
             include_str!("../../pcp-os/PCP_OS_Rust/crates/pcpos-qwen/tests/data/qwen2-forward.txt"),
