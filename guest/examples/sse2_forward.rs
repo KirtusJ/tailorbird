@@ -16,7 +16,8 @@ mod heap;
 mod guest {
     use pcp_game_guest::{exit, log, sleep_us, time_us};
     use pcpos_gguf::Index;
-    use pcpos_qwen::forward::{Decoder, Error};
+    use pcpos_qwen::forward::{Decoder, Error, PrefillEvent};
+    use tailorbird_ui::{model_reading::ReadingProgress, wire::{self, Kind, Reader}};
     use pcpos_qwen::Model;
 
     pcp_game_guest::entry!(probe_main);
@@ -64,6 +65,37 @@ mod guest {
         assert_eq!(interrupted, Err(Error::Cancelled));
         assert_eq!(decoder.position(), 0);
         assert_eq!(decoder.prefill(&prompt, || true).unwrap(), final_scores);
+        // Exercise the real decoder notifications and the worker's rate limiter
+        // with a deterministic clock. Cancel at a reported boundary and retry.
+        for (wanted, stop_at) in [(false, None), (true, Some(3)), (true, None)] {
+            decoder.reset();
+            let mut progress = ReadingProgress::new(wanted, 4, 9);
+            let mut reports = 0;
+            let result = decoder.prefill_with_progress(&prompt, |event| {
+                if let PrefillEvent::TokenProcessed { completed, total } = event {
+                    let elapsed = || { assert!(wanted); completed as u64 * 250_000 };
+                    if let Some(packet) = progress.token_processed(completed, total, elapsed) {
+                        let mut reader = Reader::new();
+                        for &b in packet.bytes() { reader.take(b); }
+                        let r = reader.record().unwrap();
+                        reports += 1;
+                        assert_eq!((r.kind, r.conversation, r.reply), (Kind::Reading, 4, 9));
+                        assert_eq!(wire::progress(r.body), Some((reports, 4)));
+                    }
+                    return Some(completed) != stop_at;
+                }
+                true
+            });
+            if stop_at.is_some() {
+                assert_eq!(result, Err(Error::Cancelled));
+                assert_eq!(decoder.position(), 0);
+                assert_eq!(reports, 3);
+            } else {
+                assert_eq!(result.unwrap(), final_scores);
+                assert_eq!(reports, if wanted { 4 } else { 0 });
+            }
+        }
+        log(b"Qwen worker prefill progress passed opt-in, Stop and retry\n");
         log(alloc::format!("Qwen four-step fixture compute_us={compute_us}\n").as_bytes());
     }
 

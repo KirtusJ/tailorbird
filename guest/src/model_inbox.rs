@@ -1,6 +1,6 @@
 //! Shared, host-tested request state for the native model worker. No device I/O.
 use crate::wire::{Kind,Reader,Step,MOST};
-pub struct Request{pub conversation:u64,pub reply:u64,pub history:bool,pub body:[u8;MOST],pub length:usize}
+pub struct Request{pub conversation:u64,pub reply:u64,pub history:bool,pub progress:bool,pub body:[u8;MOST],pub length:usize}
 pub struct Inbox{reader:Reader,pub pending:Option<Request>,pub stopped:bool,pub remembered:u64,pub forgotten:Option<u64>,pub forget_active:bool}
 impl Default for Inbox{fn default()->Self{Self::new()}}
 impl Inbox{
@@ -13,7 +13,7 @@ impl Inbox{
                     Kind::Say=>{
                         if self.pending.is_some(){return Err("multiple queued requests");}
                         let mut body=[0;MOST];body[..r.body.len()].copy_from_slice(r.body);
-                        self.pending=Some(Request{conversation:r.conversation,reply:r.reply,history:r.history,body,length:r.body.len()});
+                        self.pending=Some(Request{conversation:r.conversation,reply:r.reply,history:r.history,progress:self.reader.progress_wanted(),body,length:r.body.len()});
                     },
                     Kind::Stop=>{
                         if active==Some((r.conversation,r.reply)){self.stopped=true;}

@@ -138,6 +138,12 @@ impl Link {
                             Kind::Done => {
                                 ui.talk.receive(Incoming::Done { conversation, reply });
                             }
+                            Kind::Reading => {
+                                // The reader has already refused a body that does not add up.
+                                if let Some((read, of)) = wire::progress(record.body) {
+                                    ui.talk.receive(Incoming::Reading { conversation, reply, read, of });
+                                }
+                            }
                             Kind::Failed => {
                                 ui.talk.receive(Incoming::Failed { conversation, reply });
                             }
@@ -296,6 +302,31 @@ mod tests {
         let last = ui.talk.turns().last().unwrap();
         assert_eq!((last.who, last.text.as_str(), last.state), (Who::Taylor, "I can keep notes.", Reply::Complete));
         assert!(!ui.talk.answering());
+    }
+
+    #[test]
+    fn the_message_asks_for_reading_progress_and_what_the_service_says_of_it_is_kept_until_the_answer_begins() {
+        let mut ui = Ui::new();
+        let mut link = Link::new(true, &mut ui);
+        let mut channel = Channel::new();
+        channel.says(Kind::Ready, 0, 0, b"");
+        turn(&mut link, &mut ui, &mut channel);
+        typed(&mut ui, "hello");
+        let _ = ui.intent(Action::Submit);
+        turn(&mut link, &mut ui, &mut channel);
+        // The record that left carries the request for progress.
+        assert_eq!(channel.to_service[4] & wire::PROGRESS_WANTED, wire::PROGRESS_WANTED);
+        channel.from_service.extend(wire::reading(1, 1, 12, 90).unwrap().bytes());
+        while !channel.from_service.is_empty() {
+            turn(&mut link, &mut ui, &mut channel);
+        }
+        assert_eq!(ui.talk.reading, Some((12, 90)));
+        channel.says(Kind::Chunk, 1, 1, b"Hi");
+        while !channel.from_service.is_empty() {
+            turn(&mut link, &mut ui, &mut channel);
+        }
+        assert_eq!(ui.talk.reading, None);
+        assert_eq!(ui.talk.turns().last().unwrap().text.as_str(), "Hi");
     }
 
     #[test]

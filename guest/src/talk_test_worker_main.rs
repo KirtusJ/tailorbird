@@ -33,6 +33,14 @@ fn pause(milliseconds: u64) {
     }
 }
 
+/// Sixteen bytes that say how far: so many, of so many.
+fn progress(so_far: u64, of: u64) -> [u8; 16] {
+    let mut body = [0u8; 16];
+    body[..8].copy_from_slice(&so_far.to_le_bytes());
+    body[8..].copy_from_slice(&of.to_le_bytes());
+    body
+}
+
 /// What one whole record was, copied out of the reader.
 struct Got {
     kind: Kind,
@@ -40,6 +48,8 @@ struct Got {
     reply: u64,
     body: [u8; 480],
     length: usize,
+    /// For a SAY: whether it asks to be told how far the reading has got.
+    progress: bool,
 }
 
 /// Read until one record is whole. `waiting`: wait for bytes, or return None when there are none now.
@@ -64,7 +74,7 @@ fn next(fd: isize, reader: &mut Reader, waiting: bool) -> Option<Got> {
                 let Some(record) = reader.record() else { exit(3) };
                 let mut body = [0u8; 480];
                 body[..record.body.len()].copy_from_slice(record.body);
-                return Some(Got { kind: record.kind, conversation: record.conversation, reply: record.reply, body, length: record.body.len() });
+                return Some(Got { kind: record.kind, conversation: record.conversation, reply: record.reply, body, length: record.body.len(), progress: reader.progress_wanted() });
             }
         }
     }
@@ -111,6 +121,18 @@ pub extern "C" fn worker_main() -> ! {
         if said == b"fail" {
             send(fd, Kind::Failed, got.conversation, got.reply, b"");
             continue;
+        }
+        // `read`: before answering, say how far the reading has got, twice, as a model would while
+        // it reads; only if the message asked for that. The numbers are made up: nothing is read.
+        if said == b"read" {
+            if got.progress {
+                send(fd, Kind::Reading, got.conversation, got.reply, &progress(3, 7));
+                log(b"test worker: says it has read 3 of 7 tokens (made-up numbers)\n");
+                pause(5000);
+                send(fd, Kind::Reading, got.conversation, got.reply, &progress(7, 7));
+            } else {
+                log(b"test worker: was not asked how far the reading has got, and does not say\n");
+            }
         }
         let mut answer = [b'W'; 480];
         let opening = b"This is the test worker, not a model. You said: ";

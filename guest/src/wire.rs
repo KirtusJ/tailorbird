@@ -10,7 +10,7 @@
 //! | 0..2 | `TB` |
 //! | 2 | version, 1 |
 //! | 3 | kind |
-//! | 4 | flags (SAY: bit 0, answer with the conversation so far in mind; otherwise 0) |
+//! | 4 | flags (SAY: bit 0, answer with the conversation so far in mind; bit 1, say how far the reading of this message has got; otherwise 0) |
 //! | 5 | 0 |
 //! | 6..8 | length of what follows, little-endian, at most 480 |
 //! | 8..16 | conversation, little-endian |
@@ -18,16 +18,22 @@
 //!
 //! From this program: SAY (the person's message), STOP (the person stopped that reply), FORGET (that
 //! conversation is over; keep nothing of it). From the service: LOADING, READY, NOT_STARTED (about
-//! itself), and CHUNK, DONE, FAILED (about one reply).
+//! itself), and READING, CHUNK, DONE, FAILED (about one reply).
 //!
 //! Who a record is about is part of whether it is a record at all (agreed with C3, who writes the
 //! service): LOADING, READY and NOT_STARTED carry conversation 0 and reply 0; FORGET carries a
-//! conversation and reply 0; SAY, STOP, CHUNK, DONE and FAILED carry both, neither 0.
+//! conversation and reply 0; SAY, STOP, READING, CHUNK, DONE and FAILED carry both, neither 0.
 //!
 //! LOADING has no body, or sixteen bytes: how many of the model's bytes the service has checked so
 //! far and how many there are, each little-endian, the first no more than the second and the second
 //! not 0. It says how far a check has got. It never means ready: only READY does, and the service
 //! sends READY only when it can answer.
+//!
+//! READING has sixteen bytes, of the same form: how many tokens of the message (with whatever the
+//! service puts around it) it has read so far and how many there are. The service sends it only for
+//! a reply whose SAY had bit 1 of the flags set, and only before that reply's first CHUNK. A reader
+//! that does not know READING refuses it like any unknown kind, and one that does not know bit 1
+//! refuses that SAY: the two ends of a channel are built from one revision.
 //!
 //! What the service is expected to do, which this module cannot enforce: send a CHUNK only at the
 //! boundary of whole UTF-8 characters, holding back the bytes of an unfinished one (an answer is as
@@ -66,6 +72,7 @@ pub enum Kind {
     Chunk = 32,
     Done = 33,
     Failed = 34,
+    Reading = 35,
 }
 
 impl Kind {
@@ -80,6 +87,7 @@ impl Kind {
             32 => Kind::Chunk,
             33 => Kind::Done,
             34 => Kind::Failed,
+            35 => Kind::Reading,
             _ => return None,
         })
     }
@@ -89,6 +97,7 @@ impl Kind {
         match self {
             Kind::Say | Kind::Chunk => length <= MOST,
             Kind::Loading => length == 0 || length == PROGRESS,
+            Kind::Reading => length == PROGRESS,
             _ => length == 0,
         }
     }
@@ -135,7 +144,7 @@ pub fn pack(record: Record<'_>) -> Option<Packed> {
     if record.history && record.kind != Kind::Say {
         return None;
     }
-    if record.kind == Kind::Loading && !record.body.is_empty() && progress(record.body).is_none() {
+    if matches!(record.kind, Kind::Loading | Kind::Reading) && !record.body.is_empty() && progress(record.body).is_none() {
         return None;
     }
     let mut bytes = [0u8; HEADER + MOST];
@@ -151,9 +160,22 @@ pub fn pack(record: Record<'_>) -> Option<Packed> {
     Some(Packed { bytes, length: HEADER + record.body.len() })
 }
 
-/// The person's message, as the record the service reads.
+/// Bit 1 of a SAY's flags: the service is asked to say how far its reading of this message has got.
+pub const PROGRESS_WANTED: u8 = 2;
+
+/// The person's message, as the record the service reads. It asks for reading progress.
 pub fn say(outgoing: &Outgoing) -> Option<Packed> {
-    pack(Record { kind: Kind::Say, history: outgoing.history, conversation: outgoing.conversation, reply: outgoing.reply, body: outgoing.text.as_str().as_bytes() })
+    let mut packed = pack(Record { kind: Kind::Say, history: outgoing.history, conversation: outgoing.conversation, reply: outgoing.reply, body: outgoing.text.as_str().as_bytes() })?;
+    packed.bytes[4] |= PROGRESS_WANTED;
+    Some(packed)
+}
+
+/// How far the reading of a message has got, as the record this program reads. For a service.
+pub fn reading(conversation: u64, reply: u64, read: u64, of: u64) -> Option<Packed> {
+    let mut body = [0u8; PROGRESS];
+    body[..8].copy_from_slice(&read.to_le_bytes());
+    body[8..].copy_from_slice(&of.to_le_bytes());
+    pack(Record { kind: Kind::Reading, history: false, conversation, reply, body: &body })
 }
 
 pub fn stop(conversation: u64, reply: u64) -> Option<Packed> {
@@ -207,7 +229,7 @@ impl Reader {
         if at >= 4 && kind.is_none() {
             return false;
         }
-        if at >= 5 && (b[4] > 1 || b[4] == 1 && kind != Some(Kind::Say)) || at >= 6 && b[5] != 0 {
+        if at >= 5 && (b[4] > (1 | PROGRESS_WANTED) || b[4] != 0 && kind != Some(Kind::Say)) || at >= 6 && b[5] != 0 {
             return false;
         }
         if at >= 8 {
@@ -241,7 +263,7 @@ impl Reader {
         }
         if self.have >= HEADER && self.have == HEADER + self.body_length() {
             // Progress that does not add up is not a record either.
-            if self.bytes[3] == Kind::Loading as u8 && self.have > HEADER && progress(&self.bytes[HEADER..self.have]).is_none() {
+            if (self.bytes[3] == Kind::Loading as u8 || self.bytes[3] == Kind::Reading as u8) && self.have > HEADER && progress(&self.bytes[HEADER..self.have]).is_none() {
                 self.broken = true;
                 return Step::Broken;
             }
@@ -249,6 +271,11 @@ impl Reader {
             return Step::Whole;
         }
         Step::More
+    }
+
+    /// Whether the SAY the last byte completed asks for reading progress. For a service.
+    pub fn progress_wanted(&self) -> bool {
+        self.whole && self.bytes[3] == Kind::Say as u8 && self.bytes[4] & PROGRESS_WANTED != 0
     }
 
     /// The record the last byte completed.
@@ -259,7 +286,7 @@ impl Reader {
         let b = &self.bytes;
         Some(Record {
             kind: Kind::of(b[3])?,
-            history: b[4] == 1,
+            history: b[4] & 1 == 1,
             conversation: u64::from_le_bytes([b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]]),
             reply: u64::from_le_bytes([b[16], b[17], b[18], b[19], b[20], b[21], b[22], b[23]]),
             body: &b[HEADER..self.have],
@@ -271,6 +298,59 @@ impl Reader {
 mod tests {
     use super::*;
     use crate::Text;
+
+    #[test]
+    fn reading_is_a_record_only_with_progress_that_adds_up_and_a_reply_to_be_about() {
+        let packed = reading(4, 7, 37, 212).unwrap();
+        let (records, broken) = read_all(packed.bytes());
+        assert!(!broken);
+        assert_eq!(records.len(), 1);
+        assert_eq!((records[0].0, records[0].2, records[0].3, progress(&records[0].4)), (Kind::Reading, 4, 7, Some((37, 212))));
+        // More read than there is, nothing to read, no reply, no conversation: none is made.
+        assert!(reading(4, 7, 213, 212).is_none() && reading(4, 7, 0, 0).is_none() && reading(4, 0, 1, 2).is_none() && reading(0, 7, 1, 2).is_none());
+        // The same refused when read: a body of another length, and counts that do not add up.
+        let mut short = packed.bytes().to_vec();
+        short[6] = 8;
+        assert!(read_all(&short[..HEADER + 8]).1);
+        let mut over = packed.bytes().to_vec();
+        over[HEADER..HEADER + 8].copy_from_slice(&213u64.to_le_bytes());
+        assert!(read_all(&over).1);
+    }
+
+    #[test]
+    fn a_say_asks_for_reading_progress_and_no_other_record_may_carry_a_flag() {
+        for history in [false, true] {
+            let outgoing = Outgoing { conversation: 1, reply: 1, history, text: Text::display("hello") };
+            let packed = say(&outgoing).unwrap();
+            assert_eq!(packed.bytes()[4], history as u8 | PROGRESS_WANTED);
+            let mut reader = Reader::new();
+            let mut whole = false;
+            for byte in packed.bytes() {
+                whole = reader.take(*byte) == Step::Whole;
+            }
+            assert!(whole && reader.progress_wanted());
+            let record = reader.record().unwrap();
+            assert_eq!((record.kind, record.history, record.body), (Kind::Say, history, &b"hello"[..]));
+        }
+        // A SAY packed without the bit does not ask (an earlier program's).
+        let plain = pack(Record { kind: Kind::Say, history: true, conversation: 1, reply: 1, body: b"x" }).unwrap();
+        let mut reader = Reader::new();
+        for byte in plain.bytes() {
+            reader.take(*byte);
+        }
+        assert!(!reader.progress_wanted());
+        // Any flag on a record that is not a SAY, and any flag beyond the two, is refused.
+        for (kind, conversation, reply, body) in [(Kind::Chunk, 1, 1, &b"x"[..]), (Kind::Stop, 1, 1, b""), (Kind::Ready, 0, 0, b"")] {
+            for flag in [1u8, 2, 3] {
+                let mut bytes = pack(Record { kind, history: false, conversation, reply, body }).unwrap().bytes().to_vec();
+                bytes[4] = flag;
+                assert!(read_all(&bytes).1, "{kind:?} with flag {flag}");
+            }
+        }
+        let mut bytes = plain.bytes().to_vec();
+        bytes[4] = 4;
+        assert!(read_all(&bytes).1);
+    }
 
     fn read_all(bytes: &[u8]) -> (std::vec::Vec<(Kind, bool, u64, u64, std::vec::Vec<u8>)>, bool) {
         let mut reader = Reader::new();

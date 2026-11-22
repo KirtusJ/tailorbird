@@ -110,6 +110,10 @@ pub fn decide(allowed: bool, full: bool, folder: Option<BuildFolder>, active: Op
         None => default_project(folder).ok_or(NO_ROOM_FOR_NAME)?,
     };
     let next = next_number_in(list, &project, number).ok_or(NO_NUMBER)?;
+    // The project's name can fit while the note's whole name does not (a longer number needs more
+    // room too). Then PCP OS is not asked, and the person is told that, not that it refused.
+    let mut name = [0u8; 24];
+    project.file(file_name(next, &mut name)).map_err(|_| NO_ROOM_FOR_NAME)?;
     Ok((project, next, next.checked_add(1)))
 }
 
@@ -271,6 +275,21 @@ mod tests {
         assert_eq!((project.as_str(), number, next), ("taylor/my-first-project", 1, Some(2)));
         // A folder whose name leaves no room: said, and no other folder stands in.
         assert_eq!(decide(true, false, Some(long), None, None, Some(1)), Err(NO_ROOM_FOR_NAME));
+        // A folder name that leaves room for the project but not for the note in it (found by the
+        // automated review of tailorbird#17): 92 characters hold note-1.txt to note-9.txt and not
+        // note-10.txt; 93 hold none. The same for a project chosen and not the first one.
+        let folder = |n: usize| BuildFolder::new(core::str::from_utf8(&[b'a'; 101][..n]).unwrap()).unwrap();
+        assert_eq!(decide(true, false, Some(folder(92)), None, None, Some(9)).map(|d| d.1), Ok(9));
+        assert_eq!(decide(true, false, Some(folder(92)), None, None, Some(9)).unwrap().0.file("note-9.txt").unwrap().as_str().len(), 120);
+        assert_eq!(decide(true, false, Some(folder(92)), None, None, Some(10)), Err(NO_ROOM_FOR_NAME));
+        assert_eq!(decide(true, false, Some(folder(93)), None, None, Some(1)), Err(NO_ROOM_FOR_NAME));
+        let chosen = default_project(folder(101)).unwrap();
+        assert_eq!(decide(true, false, Some(folder(101)), Some(chosen), None, Some(1)), Err(NO_ROOM_FOR_NAME));
+        // Whatever decide accepts, prepare_in can build: the two never disagree.
+        for n in [1usize, 50, 92] {
+            let (project, number, _) = decide(true, false, Some(folder(n)), None, None, Some(1)).unwrap();
+            assert!(prepare_in(project, 1, number, "x").is_ok());
+        }
         // The last number there is can be asked for once; after it there is none, and nothing wraps.
         assert_eq!(decide(true, false, Some(root), Some(project), None, Some(u32::MAX)).map(|d| (d.1, d.2)), Ok((u32::MAX, None)));
         assert_eq!(decide(true, false, Some(root), Some(project), None, None), Err(NO_NUMBER));

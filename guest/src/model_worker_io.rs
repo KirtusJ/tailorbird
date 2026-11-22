@@ -2,7 +2,7 @@
 //! the immutable, sealed, non-executable model pages for this process's lifetime.
 use alloc::vec::Vec;
 use pcp_game_guest::{call,open};
-use tailorbird_ui::{wire::{pack,Kind,Record},model_inbox::Inbox};
+use tailorbird_ui::{wire::{pack,Kind,Packed,Record},model_inbox::Inbox,model_reading::ProgressOutput};
 pub type Result<T>=core::result::Result<T,&'static str>;
 
 pub struct Mapping {address:usize,length:usize,pub manifest:Vec<u8>,pub pin:[u8;32]}
@@ -49,13 +49,14 @@ fn pin(s:&str)->Result<[u8;32]>{
 }
 pub fn sleep()->Result<()>{let duration=[0u64,1_000_000];if call(35,duration.as_ptr() as usize,0,0,0,0,0)==0{Ok(())}else{Err("worker sleep refused")}}
 
-pub struct Link {fd:isize,buffer:[u8;512],at:usize,have:usize,pub state:Inbox,pub failed:bool}
+pub struct Link {fd:isize,buffer:[u8;512],at:usize,have:usize,progress:ProgressOutput,pub state:Inbox,pub failed:bool}
 impl Link {
     pub fn open()->Result<Self>{let fd=open(b"/dev/talk\0",2|0x800);if fd<0{return Err("no conversation channel");}
-        Ok(Self{fd,buffer:[0;512],at:0,have:0,state:Inbox::new(),failed:false})}
+        Ok(Self{fd,buffer:[0;512],at:0,have:0,progress:ProgressOutput::default(),state:Inbox::new(),failed:false})}
     /// Bounded bytes per poll; one queued SAY. Malformed/unexpected service records
     /// terminate the connection, rather than interpreting their payload as requests.
     pub fn poll(&mut self,active:Option<(u64,u64)>)->Result<()>{
+        self.pump_progress(None)?;
         for _ in 0..1024 {
             if self.at==self.have {
                 let n=call(0,self.fd as usize,self.buffer.as_mut_ptr() as usize,self.buffer.len(),0,0,0);
@@ -65,6 +66,29 @@ impl Link {
             let b=self.buffer[self.at];self.at+=1;
             self.state.take(b,active)?;
         }Ok(())
+    }
+    fn pump_progress(&mut self, packet: Option<Packed>) -> Result<()> {
+        let fd = self.fd;
+        self.progress.pump(packet, |bytes| {
+            let n = call(1, fd as usize, bytes.as_ptr() as usize, bytes.len(), 0, 0, 0);
+            match n {
+                -11 => Ok(0),
+                n if n > 0 => Ok(n as usize),
+                _ => Err("conversation progress write failed"),
+            }
+        })
+    }
+    pub fn report_reading(&mut self, ids: (u64,u64), packet: Packed) -> bool {
+        if self.poll(Some(ids)).is_err() {
+            self.failed = true;
+        }
+        if self.failed || self.state.stopped {
+            return false;
+        }
+        if self.pump_progress(Some(packet)).is_err() {
+            self.failed = true;
+        }
+        !self.failed
     }
     pub fn keep(&mut self,active:Option<(u64,u64)>,ticks:&mut usize)->bool{
         *ticks=ticks.wrapping_add(1);
@@ -80,7 +104,8 @@ impl Link {
             // A partially written record must finish to preserve framing. After it,
             // the caller observes Stop and sends no further record for that reply.
             if self.state.stopped&&ids.is_some()&&written==0{return Ok(false);}
-            let rest=&p.bytes()[written..];let n=call(1,self.fd as usize,rest.as_ptr() as usize,rest.len(),0,0,0);
+            let rest=&p.bytes()[written..];
+            let n=if self.progress.pending(){-11}else{call(1,self.fd as usize,rest.as_ptr() as usize,rest.len(),0,0,0)};
             if n== -11 {waits+=1;if waits>200{return Err("conversation output remained full");}sleep()?;continue;}
             if n<=0||n as usize>rest.len(){return Err("conversation write failed");}written+=n as usize;
         // The complete record was sent, even if Stop arrived during its tail.

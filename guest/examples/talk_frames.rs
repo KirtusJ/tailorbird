@@ -69,6 +69,11 @@ fn main() {
                 let (conversation, reply) = waited.expect("no reply is waited for");
                 ui.talk.receive(Incoming::Chunk { conversation, reply, text: rest });
             }
+            "reading" => {
+                let (conversation, reply) = waited.expect("no reply is waited for");
+                let (read, of) = rest.split_once(' ').expect("reading READ OF");
+                ui.talk.receive(Incoming::Reading { conversation, reply, read: read.parse().unwrap(), of: of.parse().unwrap() });
+            }
             "done" => {
                 let (conversation, reply) = waited.expect("no reply is waited for");
                 ui.talk.receive(Incoming::Done { conversation, reply });

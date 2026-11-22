@@ -28,6 +28,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends lld qemu-system-x86
       - name: Export and check the two decoder fixtures
         run: |
+          cargo +1.97.0 test --locked --release --lib --features model-worker
           export QWEN_FIXTURE_DIR="$RUNNER_TEMP/fixtures"
           mkdir "$QWEN_FIXTURE_DIR"
           echo "QWEN_FIXTURE_DIR=$QWEN_FIXTURE_DIR" >> "$GITHUB_ENV"
@@ -89,6 +90,7 @@ jobs:
               cat "$name-$trial.log"
               test "$status" = 33
               grep -Fq 'Qwen decoder passed 128 reference logits' "$name-$trial.log"
+              test "$(grep -Fc 'Qwen worker prefill progress passed opt-in, Stop and retry' "$name-$trial.log")" = 2
               grep -Fq 'ALL SELF-TESTS PASS' "$name-$trial.log"
             done
           done

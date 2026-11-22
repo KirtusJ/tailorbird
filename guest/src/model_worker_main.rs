@@ -5,9 +5,10 @@ extern crate alloc;
 #[path="../../pcp-os/store/apps/parrots-all-the-way-down/guest/src/heap.rs"] mod heap;
 mod model_worker_io;
 use model_worker_io::{Link,Mapping,Result,sleep};
-use pcp_game_guest::{exit,log};
+use pcp_game_guest::{exit,log,time_us};
 use pcpos_model_media::{Manifest,VerifiedSlices};
-use pcpos_qwen::{Model,forward::Decoder,tokenizer::{Tokenizer,Utf8Stream,MAX_TOKEN_BYTES}};
+use pcpos_qwen::{Model,forward::{Decoder,PrefillEvent},tokenizer::{Tokenizer,Utf8Stream,MAX_TOKEN_BYTES}};
+use tailorbird_ui::model_reading::ReadingProgress;
 use tailorbird_ui::{model_session::{Memory,greedy,template_supported,CONTEXT,REPLY_TOKENS,REPLY_BYTES},wire::Kind};
 
 pcp_game_guest::entry!(worker_main);
@@ -56,7 +57,16 @@ fn run(link:&mut Link)->Result<()>{
             Ok(p)=>p,Err(_)=>{if link.state.forget_active{memory.forget(got.conversation);}if !link.state.stopped{notice(link,active,b"This message cannot fit the current conversation. Start a new chat or use Single mode.")?;}continue;}
         };
         decoder.reset();let mut ended=false;
-        let mut token=match decoder.prefill(&prompt,||link.keep(active,&mut ticks)){
+        let mut reading = ReadingProgress::new(got.progress, got.conversation, got.reply);
+        let mut token=match decoder.prefill_with_progress(&prompt, |event| match event {
+            PrefillEvent::Poll => link.keep(active, &mut ticks),
+            PrefillEvent::TokenProcessed { completed, total } => {
+                match reading.token_processed(completed, total, time_us) {
+                    Some(packet) => link.report_reading((got.conversation, got.reply), packet),
+                    None => !link.failed && !link.state.stopped,
+                }
+            }
+        }){
             Ok(logits)=>greedy(logits,&tokenizer),Err(_)=>None,
         };
         let mut failed=token.is_none();
