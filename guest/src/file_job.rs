@@ -168,7 +168,9 @@ impl FileJob {
 
     pub fn open_unavailable(&mut self) -> Result<(), JobError> {
         if !self.receipt.is_some_and(|r| r.outcome == Outcome::Created) { return Err(JobError::WrongState); }
-        self.readback = Readback::Unavailable;
+        // Losing access is not evidence that a previously changed file matches
+        // again. Only a complete matching read may clear that known mismatch.
+        if self.readback != Readback::Changed { self.readback = Readback::Unavailable; }
         self.stage = Stage::Created;
         Ok(())
     }
@@ -307,8 +309,14 @@ mod tests {
             assert_eq!(j.receipt().unwrap().outcome,Outcome::Created);
         }
         j.open_unavailable().unwrap();
-        assert_eq!(j.readback(),Readback::Unavailable); assert_eq!(j.stage(),Stage::Created);
+        assert_eq!(j.readback(),Readback::Changed); assert_eq!(j.stage(),Stage::Created);
+        assert!(j.open_target().is_none());
         j.verify_readback(5,[4;32],true).unwrap();
         assert_eq!(j.readback(),Readback::Verified); assert!(j.open_target().is_some());
+        let mut unavailable=waiting(); unavailable.record_receipt(receipt()).unwrap();
+        unavailable.open_unavailable().unwrap();
+        assert_eq!(unavailable.readback(),Readback::Unavailable);
+        assert_eq!(unavailable.stage(),Stage::Created);
+        assert!(unavailable.open_target().is_some()); // explicit retry; never marked verified
     }
 }
