@@ -38,6 +38,8 @@ pub mod pointer;
 pub mod live_work;
 pub mod live_view;
 pub mod live_demo;
+/// Exact project destinations; no filesystem access or permission authority.
+pub mod project_location;
 pub const LOG_LIMIT: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
