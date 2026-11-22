@@ -23,7 +23,10 @@ This checks the frozen file digests, re-scores all **32** recorded outputs, chec
 the exact-input inference prompts against vocabulary-only token runs, and exercises
 11 adverse scoring cases. A passing check means the recorded successes **and
 failures** are reproduced. It does not mean the model passed the tasks. It performs
-no inference and downloads nothing. The workflow has the same scope.
+no inference and downloads nothing. The workflow has the same scope on Linux and
+Windows. This directory disables Git line-ending conversion so evidence hashes
+refer to the same bytes on both platforms; the first Windows Git checkout exposed
+that portability issue, and this rule fixes it without relaxing the digest checks.
 
 `reference.json` contains exact prompt text, raw stdout encoded as base64, complete
 stderr, commands, expected results, timing/memory observations and every outcome.
