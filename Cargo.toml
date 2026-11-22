@@ -3,6 +3,8 @@
 [workspace]
 resolver = "2"
 members = ["guest"]
+# A library taken from the pcp-os checkout by its place here is counted a member; only the guest is built.
+default-members = ["guest"]
 
 [profile.release]
 panic = "abort"

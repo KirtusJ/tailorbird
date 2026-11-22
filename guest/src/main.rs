@@ -16,9 +16,20 @@ use tailorbird_ui::project_location::FileDestination;
 use tailorbird_ui::palette::GROUND;
 
 fn paint(display: &mut Display, ui: &Ui) {
+    static mut BENCH: tailorbird_ui::workbench::Workbench = tailorbird_ui::workbench::Workbench::new();
+    // Safety: this program has one thread and the picture is used only inside this function.
+    let bench = unsafe { &mut *core::ptr::addr_of_mut!(BENCH) };
+    let made = tailorbird_ui::view::shows_bench(ui);
+    if made {
+        // Each made thing is turned a little differently; the same thing is always drawn the same.
+        bench.draw(ui.jobs.len() as i32 * 97, 1, tailorbird_ui::palette::PANEL);
+    }
     display.draw(|pixels, width, height, pitch| {
         let mut f = Frame::new(pixels, width, height, pitch, GROUND, ui.compact_view);
         paint_frame(&mut f, ui);
+        if made {
+            tailorbird_ui::view::paint_bench(&mut f, bench);
+        }
     });
 }
 

@@ -294,6 +294,21 @@ fn range(f: &mut Frame<'_>, top: usize, shown: usize, total: usize, what: &str) 
     label(f, x + what.len() as i32 * 6 + 6, 392, "(Page Up/Down)", 1, SOFT);
 }
 
+/// Where the workbench picture goes in the Work panel, and whether this screen has a made thing to show.
+pub const BENCH_AT: (i32, i32) = (772, 296);
+pub fn shows_bench(ui: &Ui) -> bool {
+    !ui.show_projects && ui.lines().is_empty() && !ui.controls().permission_visible
+        && ui.jobs.last().is_some_and(|job| crate::note::headline(job).1)
+}
+
+/// Lay the workbench picture over the frame already painted: one square of the frame's own scale for
+/// each of its pixels.
+pub fn paint_bench(f: &mut Frame<'_>, bench: &crate::workbench::Workbench) {
+    for (i, pixel) in bench.pixels.iter().enumerate() {
+        f.rect(BENCH_AT.0 + (i % crate::workbench::WIDTH) as i32, BENCH_AT.1 + (i / crate::workbench::WIDTH) as i32, 1, 1, *pixel);
+    }
+}
+
 /// A name whole, on as many rows of `across` characters as it needs (12 apart).
 fn wrapped(f: &mut Frame<'_>, x: i32, y: i32, value: &str, across: usize) {
     for (row, part) in value.as_bytes().chunks(across).enumerate() {

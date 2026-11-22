@@ -48,6 +48,8 @@ pub mod build_folder_snapshot;
 pub mod projects;
 /// Every file job of this launch, kept.
 pub mod jobs;
+/// A small lit object drawn by Heliograph: a trial of the renderer inside this program.
+pub mod workbench;
 pub const LOG_LIMIT: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

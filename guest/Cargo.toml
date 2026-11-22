@@ -26,5 +26,9 @@ test = false
 bench = false
 required-features = ["live-work-demo"]
 
+[dependencies]
+# The store's own 3D renderer, as a library: it draws into memory this program gives it and nothing else.
+heliograph = { path = "../pcp-os/store/engines/heliograph" }
+
 [target.'cfg(target_os = "none")'.dependencies]
 pcp-game-guest = { path = "../pcp-os/store/native/guest" }
