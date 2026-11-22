@@ -78,13 +78,16 @@ real question is asked by the kernel.
 1. **What can a "built" thing be?** PCP OS has no compiler on board. Candidates: (a) a small sandboxed
    script or bytecode that a PCP OS runtime draws with; (b) documents and data only at first. Without
    an answer "build it" means "write text files".
-2. **Can a model run here at all, then usefully?** Measured by B3 at `070c9d5`: boot modules must end
-   below 128 MiB; the kernel uses one pool of memory below 1 GiB; a 256 MiB machine had about 138 MiB
-   free when Tailorbird started. The Qwen2.5-0.5B-Instruct file the host example uses is about 469 MiB.
-   So **the kernel cannot hold such a model today**: it needs memory above 1 GiB, a way to load a file
-   that size, and a budget that covers weights, context, working memory, the display and a reserve for
-   Stop, consent and receipts. A machine with no model or too little memory must still reach the
-   desktop. Not measured: the laptop's memory map, speed, vector instructions.
+2. **Can a model run here at all, then usefully?** Measured by B3 at `070c9d5` on emulated UEFI: free
+   memory when Tailorbird starts was about 138, 394 and 906 MiB on machines of 256, 512 and 1,024 MiB;
+   the kernel uses one pool of memory below 1 GiB; boot modules must end below 128 MiB. The
+   Qwen2.5-0.5B-Instruct file the host example uses is about 469 MiB. So on 1 GiB there is room for
+   the raw weights, but **no way to load a file that size** (the 128 MiB window), and the full budget
+   (the Coder weights, context cache, working memory, the display, and a reserve for Stop, consent and
+   receipts) has not been measured, so whether memory above 1 GiB is needed is not yet known. At
+   2,048 MiB the kernel failed a start-up check before any program ran (pcp-os pull request 342). A
+   machine with no model or too little memory must still reach the desktop. Not measured: the laptop's
+   memory map, speed, vector instructions.
 3. **"Take over the system when allowed":** which effects beyond files (settings, starting programs,
    devices) may ever be proposed, and which never.
 4. **No pointer.** Everything above is keyboard only until the kernel has one.
