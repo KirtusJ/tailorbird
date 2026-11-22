@@ -72,6 +72,9 @@ pub mod wire;
 mod worker_channel_tests;
 /// Carries the conversation over a channel to the model service; no device of its own.
 pub mod link;
+
+/// How often the screen is drawn again for progress alone.
+pub mod pace;
 pub const LOG_LIMIT: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

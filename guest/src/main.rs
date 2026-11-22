@@ -236,10 +236,16 @@ pub extern "C" fn tailorbird_main() -> ! {
     let mut said = Said { service: ui.talk.service, reply: 0, state: Reply::None };
     paint(&mut display, &ui);
     log(b"Tailorbird first frame presented\n");
+    let mut pace = tailorbird_ui::pace::Pace::new();
     loop {
-        let mut dirty = link.turn(&mut ui,
+        // News that is only progress (loading before it and after it) is drawn at most once a second;
+        // a key, a reply and the end of loading are drawn at once (`pace`).
+        let loading_before = ui.talk.service == tailorbird_ui::talk::Service::Loading;
+        let news = link.turn(&mut ui,
             |into| call(0, talk as usize, into.as_mut_ptr() as usize, into.len(), 0, 0, 0),
             |from| call(1, talk as usize, from.as_ptr() as usize, from.len(), 0, 0, 0));
+        let loading = loading_before && ui.talk.service == tailorbird_ui::talk::Service::Loading;
+        let mut dirty = false;
         said.changes(&ui);
         loop {
             let mut event = [0u8; 2];
@@ -356,7 +362,7 @@ pub extern "C" fn tailorbird_main() -> ! {
                 KeyOutcome::Unchanged => {}
             }
         }
-        if dirty { paint(&mut display, &ui); }
+        if pace.turn(news, loading, dirty) { paint(&mut display, &ui); }
         sleep_us(12000);
     }
 }
