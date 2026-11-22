@@ -75,3 +75,9 @@ This is tested location data, not a connected setting or filesystem feature: it 
 checks no availability or collisions, and supplies no permission or durability guarantee. Z3 owns
 the settings, project list, kernel namespace and Files integration; C3 owns this destination-binding
 logic. Preview, kernel request and result opening must eventually use the same exact destination.
+
+`BuildFolder::parse_project_file(full_path)` lets a browser recover the selected project and exact
+file destination from a returned name. It requires the current folder plus a component separator,
+then exactly one project and one filename; similar prefixes, outside paths and unsupported layouts
+are rejected. The returned values do not prove that the entry exists or that listing succeeded.
+An unavailable, incomplete or unsupported listing must not be presented as an empty folder.
