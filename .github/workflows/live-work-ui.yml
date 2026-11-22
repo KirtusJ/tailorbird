@@ -26,6 +26,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends lld binutils
       - name: Render real Rust UI at four sizes
         run: cargo run --locked --offline --example live_work_frames -- render-output
+      - name: Check literal demo disclosure independently of the renderer
+        run: python3 guest/tests/demo_disclosure.py render-output
       - name: Build the separate sample-event guest
         id: demo
         run: |
@@ -74,7 +76,7 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: live-work-ui-render-and-guest
-      - name: Verify guest and observe twelve real native sample states
+      - name: Verify guest and observe sixteen real native sample states
         env:
           DEMO_SHA256: ${{ needs.render-and-build.outputs.demo_sha256 }}
           MACHINE: ${{ matrix.machine }}
