@@ -41,6 +41,30 @@ fn file_name(number: u32, out: &mut [u8; 24]) -> &str {
     core::str::from_utf8(&out[..used]).unwrap_or("note.txt")
 }
 
+/// The number for the next note: one more than the highest note already in the project, by a list of
+/// the build folder just read, and never less than `at_least` (what this run has already used). With no
+/// readable list it is `at_least`: the kernel still refuses a name that is taken, and says so.
+pub fn next_number(list: Option<&[u8]>, at_least: u32) -> u32 {
+    use crate::build_folder_snapshot::{EntryKind, Snapshot};
+    let Some(Ok(snapshot)) = list.map(Snapshot::parse) else { return at_least };
+    let mut next = at_least;
+    for entry in snapshot.entries() {
+        let EntryKind::ProjectFile { project, destination } = entry.kind else { continue };
+        if project.build_folder() != DEFAULT_BUILD_FOLDER || project.project_name() != PROJECT {
+            continue;
+        }
+        let Some(digits) = destination.file_name().strip_prefix("note-").and_then(|n| n.strip_suffix(".txt")) else { continue };
+        // Only names this program would itself write: digits with no leading zero, within range.
+        if digits.is_empty() || digits.starts_with('0') || !digits.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        if let Ok(number) = digits.parse::<u32>() {
+            next = next.max(number.saturating_add(1));
+        }
+    }
+    next
+}
+
 /// What is typed, with a new line after it, as note `number` of the current project. The job is ready to
 /// be handed to the kernel: its record is built and it knows what the receipt must say.
 pub fn prepare(attempt: u64, number: u32, typed: &str) -> Result<Prepared, &'static str> {
@@ -140,6 +164,36 @@ mod tests {
         assert_eq!(p.job.destination().as_str(), "taylor/my-first-project/note-12.txt");
         assert_eq!(p.job.stage(), Stage::Proposed);
         assert_eq!(prepare(1, 1, "").err(), Some(NOTHING_TYPED));
+    }
+
+    #[test]
+    fn the_next_note_follows_the_highest_in_the_project() {
+        extern crate std;
+        let list = |names: &[&str]| {
+            let mut out = std::vec::Vec::new();
+            for word in [1u32, names.len() as u32, 1, 6] {
+                out.extend_from_slice(&word.to_le_bytes());
+            }
+            out.extend_from_slice(&1u64.to_le_bytes());
+            out.extend_from_slice(b"taylor");
+            for name in names {
+                out.extend_from_slice(&(name.len() as u16).to_le_bytes());
+                out.extend_from_slice(&[0, 0, 1, 0, 0, 0]);
+                out.extend_from_slice(name.as_bytes());
+            }
+            out
+        };
+        assert_eq!(next_number(None, 1), 1);
+        assert_eq!(next_number(Some(&list(&[])), 1), 1);
+        assert_eq!(next_number(Some(&list(&["taylor/my-first-project/note-1.txt", "taylor/my-first-project/note-12.txt", "taylor/my-first-project/note-3.txt"])), 1), 13);
+        // Another project's notes, look-alike names and a list that does not check change nothing.
+        assert_eq!(next_number(Some(&list(&["taylor/my-first-project/note-007.txt", "taylor/my-first-project/note-x.txt", "taylor/my-first-project/notes-9.txt", "taylor/other/note-40.txt"])), 2), 2);
+        let mut cut = list(&["taylor/my-first-project/note-5.txt"]);
+        cut.pop();
+        assert_eq!(next_number(Some(&cut), 4), 4);
+        // Never below what this run has used, and the largest number does not wrap.
+        assert_eq!(next_number(Some(&list(&["taylor/my-first-project/note-2.txt"])), 9), 9);
+        assert_eq!(next_number(Some(&list(&["taylor/my-first-project/note-4294967295.txt"])), 1), u32::MAX);
     }
 
     #[test]

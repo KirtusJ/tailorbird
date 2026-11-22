@@ -157,6 +157,8 @@ pub extern "C" fn tailorbird_main() -> ! {
                 KeyOutcome::Exit => exit(0),
                 KeyOutcome::Redraw => dirty = true,
                 KeyOutcome::MakeNote => {
+                    // A fresh list says which notes exist, so a name already used is not asked for again.
+                    number = note::next_number(read_list().ok(), number);
                     let (words, job) = make_note(proposals, attempt, number, ui.input.as_str());
                     ui.notice = words;
                     if job.is_some() {
