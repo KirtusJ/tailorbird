@@ -185,7 +185,11 @@ impl FileJob {
             Stage::Waiting | Stage::Unknown => [Done, Done, Waiting, Queued],
             Stage::Declined => [Done, Done, Stopped, Queued],
             Stage::Refused => [Done, Done, Failed, Queued],
-            Stage::Created => [Done, Done, Done, Active],
+            Stage::Created => [Done, Done, Done, match self.readback {
+                Readback::NotRead => Queued,
+                Readback::Changed | Readback::Unavailable => Failed,
+                Readback::Verified => Done,
+            }],
             Stage::Verified => [Done; 4],
         };
         if self.stopped {
@@ -292,7 +296,7 @@ mod tests {
         j.record_receipt(receipt()).unwrap();
         assert!(j.is_stopped()); assert!(j.open_target().is_some());
         assert_eq!(j.steps()[2].1,StepState::Done);
-        assert_eq!(j.steps()[3].1,StepState::Stopped);
+        assert_eq!(j.steps()[3].1,StepState::Queued);
         j.verify_readback(5,[4;32],true).unwrap();
         assert!(j.is_stopped()); assert_eq!(j.stage(),Stage::Verified);
         let mut early=new(); early.stop();
@@ -303,20 +307,28 @@ mod tests {
     #[test]
     fn stale_partial_or_missing_file_does_not_count_as_verified_result() {
         let mut j=waiting(); j.record_receipt(receipt()).unwrap();
+        assert_eq!(j.steps()[2].1,StepState::Done);
+        assert_eq!(j.steps()[3].1,StepState::Queued);
         for (size,digest,eof) in [(4,[4;32],true),(5,[5;32],true),(5,[4;32],false)] {
             assert_eq!(j.verify_readback(size,digest,eof),Err(JobError::ReadbackMismatch));
             assert_eq!(j.readback(),Readback::Changed); assert!(j.open_target().is_none());
             assert_eq!(j.receipt().unwrap().outcome,Outcome::Created);
+            assert_eq!(j.steps()[2].1,StepState::Done);
+            assert_eq!(j.steps()[3].1,StepState::Failed);
         }
         j.open_unavailable().unwrap();
         assert_eq!(j.readback(),Readback::Changed); assert_eq!(j.stage(),Stage::Created);
+        assert_eq!(j.steps()[3].1,StepState::Failed);
         assert!(j.open_target().is_none());
         j.verify_readback(5,[4;32],true).unwrap();
         assert_eq!(j.readback(),Readback::Verified); assert!(j.open_target().is_some());
+        assert_eq!(j.steps()[3].1,StepState::Done);
         let mut unavailable=waiting(); unavailable.record_receipt(receipt()).unwrap();
         unavailable.open_unavailable().unwrap();
         assert_eq!(unavailable.readback(),Readback::Unavailable);
         assert_eq!(unavailable.stage(),Stage::Created);
+        assert_eq!(unavailable.steps()[2].1,StepState::Done);
+        assert_eq!(unavailable.steps()[3].1,StepState::Failed);
         assert!(unavailable.open_target().is_some()); // explicit retry; never marked verified
     }
 }
