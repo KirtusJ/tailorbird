@@ -582,10 +582,11 @@ impl Ui {
                     if !repeated {
                         if let Some(message) = self.talk.say(self.input.as_str(), true) {
                             self.ask_service(talk::Request::Say(message));
-                            // Sent: the field is free for the next message. What was sent is in the
-                            // conversation, as the person's turn.
+                            // Queued locally, not acknowledged by the service. Free the field:
+                            // the person's turn is retained in the conversation, but the channel
+                            // may still be blocked, short-write, or fail before delivery.
                             self.input = Text::new();
-                            self.notice("SENT TO TAYLOR'S MODEL ON THIS COMPUTER");
+                            self.notice("QUEUED LOCALLY - DELIVERY UNCONFIRMED");
                             return None;
                         }
                     }
@@ -1035,7 +1036,7 @@ mod tests {
         let Some(talk::Request::Say(message)) = u.for_service() else { panic!("no message queued") };
         assert_eq!((message.text.as_str(), message.conversation, message.reply, message.history), ("hello", 1, 1, true));
         assert!(u.input.is_empty() && u.talk_shown && u.talk.answering());
-        assert_eq!(u.notice.as_str(), "SENT TO TAYLOR'S MODEL ON THIS COMPUTER");
+        assert_eq!(u.notice.as_str(), "QUEUED LOCALLY - DELIVERY UNCONFIRMED");
         // Enter with nothing typed while the answer is under way adds nothing and queues nothing.
         let turns = u.talk.turns().len();
         assert!(u.intent(Action::Submit).is_none());
@@ -1099,7 +1100,7 @@ mod tests {
         u.talk.service_is(talk::Service::Ready);
         assert_eq!(u.input.as_str(), "hello");
         assert!(u.intent(Action::Submit).is_none());
-        assert_eq!(u.notice.as_str(), "SENT TO TAYLOR'S MODEL ON THIS COMPUTER");
+        assert_eq!(u.notice.as_str(), "QUEUED LOCALLY - DELIVERY UNCONFIRMED");
         assert!(matches!(u.for_service(), Some(talk::Request::Say(m)) if m.text.as_str() == "hello"));
         assert_eq!(u.input.as_str(), "");
         // The same after an answer that was under way has ended.
@@ -1109,7 +1110,7 @@ mod tests {
         assert_eq!(u.notice.as_str(), "TAYLOR IS STILL ANSWERING - NOT SENT");
         assert_eq!(u.talk.receive(talk::Incoming::Done { conversation: 1, reply: 1 }), talk::Taken::Shown);
         assert!(u.intent(Action::Submit).is_none());
-        assert_eq!(u.notice.as_str(), "SENT TO TAYLOR'S MODEL ON THIS COMPUTER");
+        assert_eq!(u.notice.as_str(), "QUEUED LOCALLY - DELIVERY UNCONFIRMED");
     }
     #[test]
     fn a_notice_that_the_model_was_loading_does_not_outlive_the_loading() {
