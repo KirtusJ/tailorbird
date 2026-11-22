@@ -37,21 +37,23 @@ fn sentence<'a>(value: &str, buf: &'a mut [u8; 40]) -> &'a str {
 /// Taylor, the tailorbird: green back, pale front, a long tail held up, and an amber crown worn like a
 /// builder's hat. Sixteen by fourteen squares, each `unit` of the layout across. Facing left, toward
 /// the words beside it.
+// Taylor carries a little hammer (the owner's wish), held out in front of her: steel head forward,
+// wooden handle in her wing.
 const TAYLOR: [&[u8; 16]; 14] = [
-    b"............G...",
-    b"...AAAA....GG...",
-    b"..AAAAAA...GG...",
-    b".AAAAAAAA.GG....",
-    b"..GGKGGGGGGG....",
-    b"SSGGGGGGGGGG....",
-    b"..GWWWGGGGG.....",
-    b"..WWWWWGGGG.....",
-    b"..WWWWWWGG......",
-    b"...WWWWWG.......",
-    b"....WWWW........",
-    b".....S.S........",
-    b".....S.S........",
-    b"....SS.SS.......",
+    b"...............G",
+    b"......AAAA....GG",
+    b".....AAAAAA...GG",
+    b"....AAAAAAAA.GG.",
+    b".....GGKGGGGGGG.",
+    b"...SSGGGGGGGGGG.",
+    b"SS...GWWWGGGGG..",
+    b"SSAAAGGWWWGGGG..",
+    b"SS...WWWWWWGG...",
+    b"......WWWWWG....",
+    b".......WWWW.....",
+    b"........S.S.....",
+    b"........S.S.....",
+    b".......SS.SS....",
 ];
 
 fn taylor(f: &mut Frame<'_>, x: i32, y: i32, unit: i32) {
@@ -100,7 +102,7 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
     label(f, 22, 52, "PCP OS > Programs > Tailorbird (Esc returns to Programs)", 1, SOFT);
     label(f, 202, 27, "builds and fixes on this computer", 2, SOFT);
     // What is behind it, said once, where the eye lands last: a lamp and two words.
-    let (lamp, link) = if ui.connected { (GOOD, "Ready") } else { (BAD, "Not ready") };
+    let (lamp, link) = if ui.connected { (GOOD, "Ready") } else if ui.notes { (AMBER, "Notes only") } else { (BAD, "Not ready") };
     f.well(764, 18, 176, 36, GROUND);
     f.rect(778, 31, 10, 10, lamp);
     label(f, 796, 26, link, 2, lamp);
@@ -150,6 +152,14 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
         // Consent details occupy a focused exact-text inspector instead of
         // fighting task-output rows for the same pixels. Stop and mode stay
         // visible in the separate x=20..300 sidebar.
+    } else if ui.lines().is_empty() && ui.talk_shown && !ui.show_projects {
+        transcript(f, &ui.talk);
+    } else if ui.lines().is_empty() && ui.show_projects {
+        match ui.browse_level {
+            0 => projects(f, &ui.projects, ui.place, ui.active),
+            1 => files(f, &ui.files, ui.file_place, ui.active),
+            _ => viewed(f, &ui.viewed),
+        }
     } else if ui.lines().is_empty() {
         // Nothing has happened: show what will, as three places a job passes through, none of them lit.
         for (n, (step, what)) in [("1", "You ask"), ("2", "You check"), ("3", "I build")].iter().enumerate() {
@@ -163,16 +173,63 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
         }
         // Taylor says who it is once, says what is so in words anyone can read, and stops.
         taylor(f, 339, 286, 4);
+        if let Some(job) = ui.jobs.last() {
+            // What became of the last note, from the job the kernel's receipt was checked against: what
+            // happened, where the file is (whole name, on as many lines as it needs), how long it lasts.
+            let (words, good) = crate::note::headline(job);
+            label(f, 420, 286, words, 2, if good { GOOD } else { AMBER });
+            // Only a refusal the kernel's receipt states rules the file out. With no readable receipt the
+            // file may or may not exist, and the screen says so and keeps the name asked for.
+            let refused = !good && job.receipt().is_some();
+            if refused {
+                label(f, 420, 316, "Nothing was changed.", 2, SOFT);
+            } else {
+                let name = job.destination().as_str().as_bytes();
+                for (row, part) in name.chunks(80).enumerate() {
+                    label(f, 420, 316 + row as i32 * 16, core::str::from_utf8(part).unwrap_or("?"), 1, TEXT);
+                }
+                label(f, 420, 352, if good { "Kept until this computer is switched off." }
+                      else { "Not confirmed: this file may or may not have been made." }, 1, AMBER);
+            }
+            label(f, 420, 384, "Type again and press Alt+N for another.", 1, SOFT);
+            let x = key(f, 339, 420, "Esc", "returns to Programs");
+            if ui.notes {
+                key(f, x, 420, "Alt+P", "shows your projects");
+            }
+            return footer(f, ui);
+        }
         label(f, 420, 286, "Hi, I'm Taylor. Nothing is running.", 2, TEXT);
         if ui.connected {
             label(f, 420, 316, "Tell me in your own words what to", 2, SOFT);
             label(f, 420, 340, "build or fix. If I can, I will.", 2, SOFT);
+        } else if ui.notes {
+            // No model, but PCP OS lets Taylor ask to make files: say the one thing that works today.
+            label(f, 420, 316, "Today I can save what you type as", 2, SOFT);
+            label(f, 420, 340, "a note. Type it, then press Alt+N.", 2, SOFT);
+            // Where a note will go, whole, before anything is asked.
+            if let Some(active) = ui.active {
+                label(f, 420, 370, "New notes go into the project", 1, SOFT);
+                wrapped(f, 420, 384, active.as_str(), 84);
+            } else if ui.projects.folder.is_empty() {
+                // No folder is assumed: until PCP OS names one, a note has nowhere to go.
+                label(f, 420, 370, "PCP OS has not yet said where projects go.", 1, AMBER);
+            } else {
+                // PCP OS has named the folder, and its name leaves no room for a project and a note.
+                label(f, 420, 370, "Folder name too long to hold a note:", 1, AMBER);
+                wrapped(f, 420, 384, ui.projects.folder.as_str(), 84);
+            }
+            let x = key(f, 339, 420, "Esc", "returns to Programs");
+            key(f, x, 420, "Alt+P", "shows your projects");
+            return footer(f, ui);
         } else {
             label(f, 420, 316, "I am not switched on yet, so I", 2, AMBER);
             label(f, 420, 340, "cannot build anything.", 2, AMBER);
         }
         label(f, 420, 384, "The rest of PCP OS works without me.", 2, GOOD);
-        key(f, 339, 420, "Esc", "returns to Programs");
+        let x = key(f, 339, 420, "Esc", "returns to Programs");
+        if ui.notes {
+            key(f, x, 420, "Alt+P", "shows your projects");
+        }
     } else {
         for (i, event) in ui.lines().iter().enumerate() {
             let y = 190 + i as i32 * 28;
@@ -217,6 +274,263 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
         }
     }
 
+    footer(f, ui);
+}
+
+/// Which of the items the rows are: "Showing 7 to 12 of 20 projects. Up, Down, Page Up, Page Down move."
+/// Said only when there are more than the rows show, so every item is known to be reachable.
+fn range(f: &mut Frame<'_>, top: usize, shown: usize, total: usize, what: &str) {
+    if total <= shown || shown == 0 {
+        return;
+    }
+    let mut digits = [0u8; 20];
+    let mut x = 339;
+    for (words, number) in [("Showing", top + 1), ("to", top + shown), ("of", total)] {
+        label(f, x, 392, words, 1, AMBER);
+        x += words.len() as i32 * 6 + 6;
+        let n = decimal_u64(number as u64, &mut digits);
+        label(f, x, 392, n, 1, AMBER);
+        x += n.len() as i32 * 6 + 6;
+    }
+    label(f, x, 392, what, 1, AMBER);
+    label(f, x + what.len() as i32 * 6 + 6, 392, "(Page Up/Down)", 1, SOFT);
+}
+
+/// The conversation, in the Work panel: the latest turns that fit, each with who really said it. Taylor's
+/// name stands only on turns a model service sent; what this program says about the state of things is
+/// marked as PCP OS's. Nothing here is a task: no stages, no Stop.
+fn transcript(f: &mut Frame<'_>, talk: &crate::talk::Talk) {
+    use crate::talk::{Reply, Who};
+    const ACROSS: usize = 84;
+    const ROWS: i32 = 16;
+    let mut digits = [0u8; 20];
+    label(f, 339, 190, "Talking with Taylor", 2, TEXT);
+    // Rows each turn needs: its text wrapped, at least one, and a gap after it.
+    let rows = |t: &crate::talk::Turn| (t.text.as_str().len().div_ceil(ACROSS).max(1) + t.cut as usize) as i32 + 1;
+    let turns = talk.turns();
+    let mut first = turns.len();
+    let mut used = 0;
+    while first > 0 && used + rows(&turns[first - 1]) <= ROWS {
+        used += rows(&turns[first - 1]);
+        first -= 1;
+    }
+    let above = talk.dropped + first;
+    if above > 0 {
+        label(f, 600, 196, "earlier turns not shown:", 1, AMBER);
+        label(f, 600 + 25 * 6, 196, decimal_u64(above as u64, &mut digits), 1, AMBER);
+    }
+    let mut y = 218;
+    for turn in &turns[first..] {
+        let (name, colour) = match turn.who {
+            Who::Person => ("You", TEAL),
+            Who::Taylor => ("Taylor", GOOD),
+            Who::System => ("PCP OS", AMBER),
+        };
+        label(f, 339, y, name, 1, colour);
+        let text = turn.text.as_str().as_bytes();
+        for part in text.chunks(ACROSS) {
+            label(f, 393, y, core::str::from_utf8(part).unwrap_or("?"), 1, if turn.who == Who::System { SOFT } else { TEXT });
+            y += 12;
+        }
+        if text.is_empty() {
+            let waiting = match turn.state {
+                Reply::Streaming => "(answering...)",
+                Reply::Cancelled => "(stopped before anything was said)",
+                Reply::Failed => "(no answer: it failed)",
+                _ => "",
+            };
+            label(f, 393, y, waiting, 1, SOFT);
+            y += 12;
+        } else if turn.state == Reply::Cancelled || turn.state == Reply::Failed {
+            label(f, 393 + (text.len() % ACROSS) as i32 * 6 + 8, y - 12, if turn.state == Reply::Cancelled { "(stopped)" } else { "(failed)" }, 1, AMBER);
+        }
+        if turn.cut {
+            label(f, 393, y, "(the rest is not kept)", 1, AMBER);
+            y += 12;
+        }
+        y += 12;
+    }
+    let x = key(f, 339, 420, "Enter", "sends");
+    let x = key(f, x, 420, "Alt+P", "projects");
+    key(f, x, 420, "Esc", "returns to Programs");
+}
+
+/// A name whole, on as many rows of `across` characters as it needs (12 apart).
+fn wrapped(f: &mut Frame<'_>, x: i32, y: i32, value: &str, across: usize) {
+    for (row, part) in value.as_bytes().chunks(across).enumerate() {
+        label(f, x, y + row as i32 * 12, core::str::from_utf8(part).unwrap_or("?"), 1, TEXT);
+    }
+}
+
+/// The project list, in the Work panel: where the projects are, each with how many files, and in words
+/// what is not known. "No projects yet" is said only of a whole list that was read and held nothing.
+fn projects(f: &mut Frame<'_>, list: &crate::projects::Projects, place: usize, active: Option<crate::project_location::ProjectLocation>) {
+    use crate::projects::Listing;
+    let mut digits = [0u8; 20];
+    label(f, 339, 190, "Your projects", 2, TEXT);
+    if active.is_some() {
+        label(f, 600, 196, "\"notes\" marks where new notes go", 1, SOFT);
+    }
+    match list.state {
+        Listing::NotAsked => label(f, 339, 226, "Not read yet.", 2, SOFT),
+        Listing::Unavailable => {
+            label(f, 339, 226, "PCP OS has not let Taylor see a", 2, AMBER);
+            label(f, 339, 250, "projects folder in this launch.", 2, AMBER);
+        }
+        Listing::Unreadable => {
+            // Why is not known here (no room, a fault, bytes that do not check): no cause is named.
+            label(f, 339, 226, "The projects folder could not be", 2, AMBER);
+            label(f, 339, 250, "read, so nothing is shown.", 2, AMBER);
+            label(f, 339, 280, "Alt+P twice tries again.", 1, SOFT);
+            if !list.folder.is_empty() {
+                label(f, 339, 304, "It was last read as the folder", 1, SOFT);
+                wrapped(f, 339, 318, list.folder.as_str(), 94);
+            }
+        }
+        Listing::Listed => {
+            label(f, 339, 214, "in the folder", 1, SOFT);
+            wrapped(f, 339 + 14 * 6, 214, list.folder.as_str(), 80);
+            if list.known_empty() {
+                label(f, 339, 256, "No projects yet.", 2, SOFT);
+                label(f, 339, 286, "Type something and press Alt+N to make a note.", 1, SOFT);
+            }
+            for (row, entry) in list.rows[..list.shown].iter().enumerate() {
+                let y = 244 + row as i32 * 20;
+                f.well(339, y - 3, 570, 18, GROUND);
+                if row == place {
+                    f.rect(339, y - 3, 4, 18, TEAL);
+                }
+                let name = entry.project.as_str();
+                // A name too long for the row is shown cut, and marked as cut.
+                let (fits, cut) = if name.len() > 72 { (&name[..69], true) } else { (name, false) };
+                label(f, 347, y, fits, 1, TEXT);
+                if cut {
+                    label(f, 347 + 69 * 6, y, "...", 1, AMBER);
+                }
+                // Its own column, right of the count, clear of the longest name a row shows.
+                if active.is_some() && entry.location == active {
+                    label(f, 872, y, "notes", 1, GOOD);
+                }
+                label(f, 800, y, decimal_u64(entry.files as u64, &mut digits), 1, TEXT);
+                label(f, 830, y, if entry.files == 1 { "file" } else { "files" }, 1, SOFT);
+            }
+            // Fixed places below the rows, clear of the keys: the chosen project's whole location (a cut
+            // row cannot tell two long names apart), then what is not shown, then whether the list is whole.
+            if let Some(location) = list.rows[..list.shown].get(place).and_then(|r| r.location) {
+                label(f, 339, 366, "Chosen:", 1, SOFT);
+                wrapped(f, 339 + 8 * 6, 366, location.as_str(), 86);
+            }
+            range(f, list.top, list.shown, list.projects, "projects");
+            if list.other > 0 {
+                label(f, 339 + 50 * 6, 392, "other files in the folder:", 1, SOFT);
+                label(f, 339 + 77 * 6, 392, decimal_u64(list.other as u64, &mut digits), 1, SOFT);
+            }
+            if !list.complete {
+                label(f, 339, 404, "PCP OS listed only part of the folder. There is more.", 1, AMBER);
+            }
+        }
+    }
+    let mut x = key(f, 339, 420, "Alt+P", "goes back");
+    if list.shown > 0 {
+        x = key(f, x, 420, "Up", "/");
+        x = key(f, x, 420, "Down", "choose");
+        x = key(f, x, 420, "Enter", "opens");
+    }
+    key(f, x, 420, "Esc", "returns to Programs");
+}
+
+/// One project's files. The size is what the list said when it was read.
+fn files(f: &mut Frame<'_>, list: &crate::projects::Files, place: usize, active: Option<crate::project_location::ProjectLocation>) {
+    use crate::projects::Listing;
+    let mut digits = [0u8; 20];
+    label(f, 339, 190, "Project", 2, TEXT);
+    match list.state {
+        Listing::Listed => {
+            wrapped(f, 339, 214, list.project.as_str(), 94);
+            if active.is_some() && list.location == active {
+                label(f, 440, 196, "New notes (Alt+N) go into this project.", 1, GOOD);
+            }
+            if list.count == 0 {
+                label(f, 339, 256, if list.complete { "This project has no files now." } else { "No files of it are in the part PCP OS listed." }, 1, SOFT);
+            }
+            for (row, entry) in list.rows[..list.shown].iter().enumerate() {
+                let y = 244 + row as i32 * 20;
+                f.well(339, y - 3, 570, 18, GROUND);
+                if row == place {
+                    f.rect(339, y - 3, 4, 18, TEAL);
+                }
+                let name = entry.name.as_str();
+                let (fits, cut) = if name.len() > 72 { (&name[..69], true) } else { (name, false) };
+                label(f, 347, y, fits, 1, TEXT);
+                if cut {
+                    label(f, 347 + 69 * 6, y, "...", 1, AMBER);
+                }
+                label(f, 800, y, decimal_u64(entry.size as u64, &mut digits), 1, TEXT);
+                label(f, 842, y, "bytes", 1, SOFT);
+            }
+            if let Some(destination) = list.rows[..list.shown].get(place).and_then(|r| r.destination) {
+                label(f, 339, 366, "Chosen:", 1, SOFT);
+                wrapped(f, 339 + 8 * 6, 366, destination.as_str(), 86);
+            }
+            range(f, list.top, list.shown, list.count, "files");
+            if !list.complete {
+                label(f, 339, 404, "PCP OS listed only part of the folder. There is more.", 1, AMBER);
+            }
+        }
+        _ => {
+            label(f, 339, 226, "The list could not be read, so", 2, AMBER);
+            label(f, 339, 250, "nothing is shown.", 2, AMBER);
+        }
+    }
+    let mut x = key(f, 339, 420, "Left", "goes back");
+    if list.shown > 0 {
+        x = key(f, x, 420, "Up", "/");
+        x = key(f, x, 420, "Down", "choose");
+        x = key(f, x, 420, "Enter", "shows the file");
+    }
+    key(f, x, 420, "Alt+P", "closes");
+}
+
+/// One file, read whole, shown and not changeable here.
+fn viewed(f: &mut Frame<'_>, file: &crate::projects::Viewed) {
+    use crate::projects::{Checked, Opened};
+    let mut digits = [0u8; 20];
+    if let Some(destination) = &file.destination {
+        for (row, part) in destination.as_str().as_bytes().chunks(96).enumerate() {
+            label(f, 339, 184 + row as i32 * 13, core::str::from_utf8(part).unwrap_or("?"), 1, TEXT);
+        }
+    }
+    match file.state {
+        Opened::NotAsked | Opened::Unavailable => label(f, 339, 250, "This file could not be read. Nothing is known about it.", 1, AMBER),
+        Opened::TooLarge => label(f, 339, 250, "This file is larger than a text file Taylor shows.", 1, AMBER),
+        Opened::NotText => label(f, 339, 250, "This file is not plain text, so Taylor does not show it.", 1, AMBER),
+        Opened::Shown => {
+            f.well(335, 226, 590, 14 * crate::projects::VIEW_LINES as i32 + 8, GROUND);
+            if file.bytes == 0 {
+                label(f, 343, 232, "(the file is empty)", 1, SOFT);
+            }
+            for (row, line) in file.lines[..file.shown].iter().enumerate() {
+                label(f, 343, 231 + row as i32 * 14, line.as_str(), 1, TEXT);
+            }
+        }
+    }
+    if matches!(file.state, Opened::Shown | Opened::NotText) {
+        let y = 226 + 14 * crate::projects::VIEW_LINES as i32 + 14;
+        let x = 339 + 6 * (decimal_u64(file.bytes as u64, &mut digits).len() as i32 + 1);
+        label(f, 339, y, decimal_u64(file.bytes as u64, &mut digits), 1, TEXT);
+        label(f, x, y, if file.more { "characters. Only the first lines are shown." } else { "characters. Read only." }, 1, if file.more { AMBER } else { SOFT });
+        let (words, colour) = match file.checked {
+            Checked::Matches => ("Checked: exactly what PCP OS made when you allowed it.", GOOD),
+            Checked::Differs => ("Warning: this is NOT what PCP OS made when you allowed it.", BAD),
+            Checked::NoReceipt => ("No kept receipt for this file, so it is not checked.", SOFT),
+        };
+        label(f, 339, y + 14, words, 1, colour);
+    }
+    let x = key(f, 339, 420, "Left", "goes back");
+    key(f, x, 420, "Alt+P", "closes");
+}
+
+fn footer(f: &mut Frame<'_>, ui: &Ui) {
     f.panel(20, 458, 920, 48, PANEL);
     label(f, 32, 472, "ASK", 1, TEAL);
     // Trailing ASCII spaces have blank font cells. Display the exact byte
@@ -253,6 +567,113 @@ mod tests {
     extern crate std;
     use super::*;
     use std::{format, vec, vec::Vec};
+
+    fn shot(ui: &Ui) -> Vec<u32> {
+        let mut pixels = vec![0u32; 960 * 540];
+        let mut f = Frame::new(&mut pixels, 960, 540, 960, GROUND, false);
+        paint_frame(&mut f, ui);
+        pixels
+    }
+
+    /// Without a model the screen says what Taylor can do today only when PCP OS lets it, and after a
+    /// note it shows that note's result in the Work panel, not the greeting.
+    #[test]
+    fn the_work_panel_follows_what_taylor_can_do_and_did() {
+        let plain = shot(&Ui::new());
+        let mut ui = Ui::new();
+        ui.notes = true;
+        let able = shot(&ui);
+        assert_ne!(plain, able);
+        let mut p = crate::note::prepare(3, 1, "hello").unwrap();
+        assert!(ui.jobs.keep(p.job).is_ok());
+        let unknown = shot(&ui);
+        assert_ne!(able, unknown);
+        // A job with no receipt never draws the words that rule the file out; a stated refusal does.
+        let says = |pixels: &Vec<u32>, words: &str, size: i32, colour: u32| {
+            // The row the words stand on, against the same words drawn alone on the panel's colour.
+            let mut alone = vec![PANEL; 960 * 540];
+            let mut f = Frame::new(&mut alone, 960, 540, 960, PANEL, false);
+            label(&mut f, 420, 316, words, size, colour);
+            (316..336).all(|y| (420..900).all(|x| alone[y * 960 + x] == pixels[y * 960 + x]))
+        };
+        assert!(!says(&unknown, "Nothing was changed.", 2, SOFT));
+        let mut declined = crate::note::prepare(3, 1, "hello").unwrap();
+        declined.job.submitted().unwrap();
+        let mut no = [0u8; 100];
+        no[0..4].copy_from_slice(&1u32.to_le_bytes());
+        no[4..8].copy_from_slice(&2u32.to_le_bytes());
+        no[8..16].copy_from_slice(&9u64.to_le_bytes());
+        no[16..24].copy_from_slice(&3u64.to_le_bytes());
+        no[24..32].copy_from_slice(&1u64.to_le_bytes());
+        no[32..64].copy_from_slice(&crate::kernel_proposal::request_digest("taylor/my-first-project/note-1.txt", b"hello\n"));
+        no[64..96].copy_from_slice(&crate::sha256::sha256(&[b"hello\n"]));
+        assert_eq!(crate::note::settle(&mut declined.job, &no).as_str(), "Not made: you said no.");
+        let mut refused = Ui::new();
+        refused.notes = true;
+        assert!(refused.jobs.keep(declined.job).is_ok());
+        assert!(says(&shot(&refused), "Nothing was changed.", 2, SOFT));
+        p = crate::note::prepare(3, 1, "hello").unwrap();
+        p.job.submitted().unwrap();
+        let (name, content) = ("taylor/my-first-project/note-1.txt", b"hello\n");
+        let mut r = [0u8; 100];
+        r[0..4].copy_from_slice(&1u32.to_le_bytes());
+        r[4..8].copy_from_slice(&1u32.to_le_bytes());
+        r[8..16].copy_from_slice(&9u64.to_le_bytes());
+        r[16..24].copy_from_slice(&3u64.to_le_bytes());
+        r[24..32].copy_from_slice(&1u64.to_le_bytes());
+        r[32..64].copy_from_slice(&crate::kernel_proposal::request_digest(name, content));
+        r[64..96].copy_from_slice(&crate::sha256::sha256(&[content]));
+        crate::note::settle(&mut p.job, &r);
+        assert_eq!(crate::note::headline(&p.job), ("I made your note.", true));
+        assert!(ui.jobs.keep(p.job).is_ok());
+        let made = shot(&ui);
+        assert_ne!(unknown, made);
+        // Everything outside the Work panel's lower part is the same in all four.
+        for (i, (a, b)) in plain.iter().zip(made.iter()).enumerate() {
+            let (x, y) = (i % 960, i / 960);
+            assert!(a == b || (x >= 316 && x < 940 && y >= 280 && y < 446) || (x >= 764 && y >= 18 && y < 54), "differs at {x},{y}");
+        }
+    }
+
+    /// The fullest list there can be (longest folder, long names, more projects than rows, other files,
+    /// an incomplete list) draws nothing outside the Work panel, and nothing on the row of keys but the keys.
+    #[test]
+    fn the_fullest_project_list_stays_in_its_panel() {
+        use crate::projects::Projects;
+        let folder = std::format!("{}/{}", "a".repeat(57), "b".repeat(58));
+        let mut bytes: Vec<u8> = Vec::new();
+        let names: Vec<std::string::String> = (0..9).map(|i| std::format!("{}/{}/f", folder, i)).chain([std::format!("{}/zz", folder)]).collect();
+        for word in [1u32, names.len() as u32, 0, folder.len() as u32] {
+            bytes.extend_from_slice(&word.to_le_bytes());
+        }
+        bytes.extend_from_slice(&7u64.to_le_bytes());
+        bytes.extend_from_slice(folder.as_bytes());
+        for name in &names {
+            bytes.extend_from_slice(&(name.len() as u16).to_le_bytes());
+            bytes.extend_from_slice(&[0, 0, 1, 0, 0, 0]);
+            bytes.extend_from_slice(name.as_bytes());
+        }
+        let list = Projects::read(&bytes, None);
+        assert_eq!((list.projects, list.other, list.complete, list.folder.as_str().len()), (9, 1, false, 116));
+        let mut full = Ui::new();
+        full.notes = true;
+        full.show_projects = true;
+        full.projects = list;
+        let mut empty = Ui::new();
+        empty.notes = true;
+        empty.show_projects = true;
+        empty.projects = Projects::unavailable();
+        let (a, b) = (shot(&full), shot(&empty));
+        let mut lowest = 0;
+        for (i, (p, q)) in a.iter().zip(b.iter()).enumerate() {
+            let (x, y) = (i % 960, i / 960);
+            if p != q {
+                assert!(x >= 333 && x < 925 && y >= 176 && y < 446, "outside the panel at {x},{y}");
+                if y < 416 { lowest = lowest.max(y); }
+            }
+        }
+        assert!(lowest >= 404 && lowest < 416, "the last line of words ends at {lowest}");
+    }
 
     /// With TAILORBIRD_SHOT=<folder> set, write the first screen at the common sizes as P6 files.
     #[test]

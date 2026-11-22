@@ -1,0 +1,543 @@
+//! What the project list shows: a summary of one kernel snapshot of the build folder, held by value so
+//! the screen is drawn from it and never from memory the next read will overwrite. No I/O here: the
+//! program reads the device to its end, closes it, and hands the bytes (or the fact there were none) in.
+use crate::build_folder_snapshot::{EntryKind, Snapshot};
+use crate::project_location::{BuildFolder, FileDestination, ProjectLocation};
+use crate::Text;
+
+/// Rows of a list the screen has room for beside the folder's whole name and what is not shown.
+pub const ROWS: usize = 6;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Listing {
+    /// Nothing has been read yet.
+    NotAsked,
+    /// PCP OS does not offer this launch a list (no grant, or an older PCP OS).
+    Unavailable,
+    /// Something was read and it is not a list this program can trust; nothing from it is shown.
+    Unreadable,
+    Listed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Row {
+    pub project: Text<116>,
+    /// The exact location the kernel's list named; what opening the row uses.
+    pub location: Option<ProjectLocation>,
+    pub files: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Projects {
+    pub state: Listing,
+    /// False when PCP OS said there is more than it listed: then nothing here is "all".
+    pub complete: bool,
+    pub folder: Text<116>,
+    pub launch: u64,
+    pub projects: usize,
+    pub files: usize,
+    /// Files under the folder that are not a file directly inside a project. Counted, not hidden.
+    pub other: usize,
+    pub rows: [Row; ROWS],
+    pub shown: usize,
+    /// Which project, counted from 0 in the list's order, the first row is: the rows are a window that
+    /// can be moved over the whole list.
+    pub top: usize,
+}
+
+impl Projects {
+    pub const fn new() -> Self {
+        Self { state: Listing::NotAsked, complete: false, folder: Text::new(), launch: 0, projects: 0, files: 0, other: 0,
+               rows: [Row { project: Text::new(), location: None, files: 0 }; ROWS], shown: 0, top: 0 }
+    }
+
+    pub const fn unavailable() -> Self {
+        let mut p = Self::new();
+        p.state = Listing::Unavailable;
+        p
+    }
+
+    pub const fn unreadable() -> Self {
+        let mut p = Self::new();
+        p.state = Listing::Unreadable;
+        p
+    }
+
+    /// The whole of what one open of the list returned. `expected` is the folder and run an earlier list
+    /// of this launch named: a list for another folder or run is not a newer version of the same thing.
+    pub fn read(bytes: &[u8], expected: Option<(BuildFolder, u64)>) -> Self {
+        Self::read_from(bytes, expected, 0)
+    }
+
+    /// The same, with the rows starting at project `top` (brought back into the list if beyond it).
+    pub fn read_from(bytes: &[u8], expected: Option<(BuildFolder, u64)>, top: usize) -> Self {
+        let parsed = match expected {
+            Some((root, launch)) => Snapshot::parse_for(bytes, root, launch),
+            None => Snapshot::parse(bytes),
+        };
+        let Ok(snapshot) = parsed else { return Self::unreadable() };
+        let mut out = Self::new();
+        out.state = Listing::Listed;
+        out.complete = snapshot.is_complete();
+        out.folder = Text::display(snapshot.root().as_str());
+        out.launch = snapshot.launch();
+        // The list is in byte order, so one project's files are together.
+        let mut total = 0usize;
+        let mut current: Option<ProjectLocation> = None;
+        for entry in snapshot.entries() {
+            if let EntryKind::ProjectFile { project, .. } = entry.kind {
+                if current != Some(project) {
+                    current = Some(project);
+                    total += 1;
+                }
+            }
+        }
+        out.top = if top < total { top } else { total.saturating_sub(ROWS) };
+        current = None;
+        let mut row: Option<usize> = None;
+        for entry in snapshot.entries() {
+            match entry.kind {
+                EntryKind::OtherFile => out.other += 1,
+                EntryKind::ProjectFile { project, .. } => {
+                    out.files += 1;
+                    if current != Some(project) {
+                        current = Some(project);
+                        row = None;
+                        if out.projects >= out.top && out.shown < ROWS {
+                            out.rows[out.shown] = Row { project: Text::display(project.project_name()), location: Some(project), files: 0 };
+                            row = Some(out.shown);
+                            out.shown += 1;
+                        }
+                        out.projects += 1;
+                    }
+                    if let Some(row) = row {
+                        out.rows[row].files += 1;
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Only a whole list with nothing in it says there are no projects.
+    pub fn known_empty(&self) -> bool {
+        self.state == Listing::Listed && self.complete && self.projects == 0 && self.other == 0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FileRow {
+    pub name: Text<120>,
+    pub destination: Option<FileDestination>,
+    /// The size the list gave: a hint from when the list was taken, not a promise about the file now.
+    pub size: u32,
+}
+
+/// The files of one project, from one snapshot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Files {
+    pub state: Listing,
+    pub location: Option<ProjectLocation>,
+    pub complete: bool,
+    pub project: Text<116>,
+    pub count: usize,
+    pub rows: [FileRow; ROWS],
+    pub shown: usize,
+    pub top: usize,
+}
+
+impl Files {
+    pub const fn new() -> Self {
+        Self { state: Listing::NotAsked, location: None, complete: false, project: Text::new(), count: 0,
+               rows: [FileRow { name: Text::new(), destination: None, size: 0 }; ROWS], shown: 0, top: 0 }
+    }
+
+    pub const fn failed(state: Listing) -> Self {
+        let mut f = Self::new();
+        f.state = state;
+        f
+    }
+
+    pub fn read(bytes: &[u8], expected: Option<(BuildFolder, u64)>, project: ProjectLocation) -> Self {
+        Self::read_from(bytes, expected, project, 0)
+    }
+
+    pub fn read_from(bytes: &[u8], expected: Option<(BuildFolder, u64)>, project: ProjectLocation, top: usize) -> Self {
+        let parsed = match expected {
+            Some((root, launch)) => Snapshot::parse_for(bytes, root, launch),
+            None => Snapshot::parse(bytes),
+        };
+        let Ok(snapshot) = parsed else { return Self::failed(Listing::Unreadable) };
+        let mut out = Self::new();
+        out.state = Listing::Listed;
+        out.complete = snapshot.is_complete();
+        out.project = Text::display(project.project_name());
+        out.location = Some(project);
+        let total = snapshot.entries().filter(|e| matches!(e.kind, EntryKind::ProjectFile { project: p, .. } if p == project)).count();
+        out.top = if top < total { top } else { total.saturating_sub(ROWS) };
+        for entry in snapshot.entries() {
+            if let EntryKind::ProjectFile { project: p, destination } = entry.kind {
+                if p == project {
+                    out.count += 1;
+                    if out.count > out.top && out.shown < ROWS {
+                        out.rows[out.shown] = FileRow { name: Text::display(destination.file_name()), destination: Some(destination), size: entry.size_bytes };
+                        out.shown += 1;
+                    }
+                }
+            }
+        }
+        out
+    }
+}
+
+pub const VIEW_LINES: usize = 9;
+pub const VIEW_ACROSS: usize = 92;
+/// The most one file of text may hold: what PCP OS lets a program propose.
+pub const VIEW_BYTES: usize = 16 * 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Opened {
+    NotAsked,
+    /// The file could not be opened or read to its end. Nothing about its content is known.
+    Unavailable,
+    /// Larger than a text file Taylor shows.
+    TooLarge,
+    /// It holds something other than plain letters, digits, punctuation, spaces and new lines.
+    NotText,
+    Shown,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Checked {
+    /// The bytes read are exactly those PCP OS's receipt of this run names.
+    Matches,
+    /// PCP OS's receipt of this run names other bytes: the file is not what was made.
+    Differs,
+    /// No receipt for this file is kept, so there is nothing to compare it with. This says nothing
+    /// about when the file was made.
+    NoReceipt,
+}
+
+/// One file, read whole and shown read-only: its first lines, exactly, and what is known about it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Viewed {
+    pub state: Opened,
+    pub destination: Option<FileDestination>,
+    pub bytes: usize,
+    pub lines: [Text<VIEW_ACROSS>; VIEW_LINES],
+    pub shown: usize,
+    /// There is more of the file than the lines shown.
+    pub more: bool,
+    pub checked: Checked,
+}
+
+impl Viewed {
+    pub const fn new() -> Self {
+        Self { state: Opened::NotAsked, destination: None, bytes: 0, lines: [Text::new(); VIEW_LINES], shown: 0, more: false, checked: Checked::NoReceipt }
+    }
+
+    pub fn failed(destination: FileDestination, state: Opened) -> Self {
+        let mut v = Self::new();
+        v.destination = Some(destination);
+        v.state = state;
+        v
+    }
+
+    /// The whole file as read to its end. Long lines continue on the next row; nothing is replaced.
+    pub fn read(destination: FileDestination, content: &[u8], checked: Checked) -> Self {
+        if content.len() > VIEW_BYTES {
+            return Self::failed(destination, Opened::TooLarge);
+        }
+        if !content.iter().all(|b| (0x20..0x7f).contains(b) || *b == b'\n') {
+            let mut v = Self::failed(destination, Opened::NotText);
+            v.bytes = content.len();
+            v.checked = checked;
+            return v;
+        }
+        let mut v = Self::failed(destination, Opened::Shown);
+        v.bytes = content.len();
+        v.checked = checked;
+        let text = content.strip_suffix(b"\n").unwrap_or(content);
+        if content.is_empty() {
+            return v;
+        }
+        for line in text.split(|b| *b == b'\n') {
+            let mut pieces = line.chunks(VIEW_ACROSS);
+            let mut piece = pieces.next().unwrap_or(&[]);
+            loop {
+                if v.shown == VIEW_LINES {
+                    v.more = true;
+                    return v;
+                }
+                for b in piece {
+                    let _ = v.lines[v.shown].push_ascii(*b);
+                }
+                v.shown += 1;
+                match pieces.next() {
+                    Some(next) => piece = next,
+                    None => break,
+                }
+            }
+        }
+        v
+    }
+}
+
+/// How reading a descriptor to its end went. The count is what was really read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Whole {
+    Ended(usize),
+    /// A read failed after this many bytes. Nothing is known about the rest.
+    Failed(usize),
+    /// The buffer, one byte larger than the most allowed, was filled: the source really is larger.
+    Over,
+}
+
+/// Read until the source says it has ended. `read` fills what it is given and answers like the kernel:
+/// a count, 0 at the end, negative on failure.
+pub fn read_whole(mut read: impl FnMut(&mut [u8]) -> isize, into: &mut [u8]) -> Whole {
+    let mut have = 0usize;
+    loop {
+        if have == into.len() {
+            return Whole::Over;
+        }
+        let got = read(&mut into[have..]);
+        if got == 0 {
+            return Whole::Ended(have);
+        }
+        if got < 0 || got as usize > into.len() - have {
+            return Whole::Failed(have);
+        }
+        have += got as usize;
+    }
+}
+
+/// Show one file. `source` is `None` when it could not be opened. `buffer` is one byte longer than the
+/// most a text file may hold. `job` is the kept job for this very file, if there is one: only a whole
+/// read is compared with its receipt, only a byte really read beyond the bound proves the file is
+/// larger than what was made, and a failed open or read records that the file was unavailable.
+pub fn view(destination: FileDestination, source: Option<impl FnMut(&mut [u8]) -> isize>, buffer: &mut [u8],
+            job: Option<&mut crate::file_job::FileJob>) -> Viewed {
+    let Some(source) = source else {
+        if let Some(job) = job {
+            let _ = job.open_unavailable();
+        }
+        return Viewed::failed(destination, Opened::Unavailable);
+    };
+    match read_whole(source, buffer) {
+        Whole::Failed(_) => {
+            if let Some(job) = job {
+                let _ = job.open_unavailable();
+            }
+            Viewed::failed(destination, Opened::Unavailable)
+        }
+        Whole::Over => {
+            let mut v = Viewed::failed(destination, Opened::TooLarge);
+            if let Some(job) = job {
+                // More bytes were read than any proposal may hold, so it is not the file that was made.
+                let _ = job.verify_readback(buffer.len() as u64, [0; 32], false);
+                v.checked = Checked::Differs;
+            }
+            v
+        }
+        Whole::Ended(have) => {
+            let content = &buffer[..have];
+            let checked = match job {
+                Some(job) => if job.verify_readback(have as u64, crate::sha256::sha256(&[content]), true).is_ok() { Checked::Matches } else { Checked::Differs },
+                None => Checked::NoReceipt,
+            };
+            Viewed::read(destination, content, checked)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+    use super::*;
+    use std::vec::Vec;
+
+    fn snapshot(complete: u32, launch: u64, names: &[(&str, u32)]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for word in [1u32, names.len() as u32, complete, 6] {
+            out.extend_from_slice(&word.to_le_bytes());
+        }
+        out.extend_from_slice(&launch.to_le_bytes());
+        out.extend_from_slice(b"taylor");
+        for (name, size) in names {
+            out.extend_from_slice(&(name.len() as u16).to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes());
+            out.extend_from_slice(&size.to_le_bytes());
+            out.extend_from_slice(name.as_bytes());
+        }
+        out
+    }
+
+    #[test]
+    fn the_kernels_own_bytes_are_one_project_with_one_file() {
+        // The list a native run of the kernel's check produced (pcp-os 9a9e372, case "allowed").
+        let hex = "0100000001000000010000000600000001000000000000007461796c6f721d0000003a0000007461796c6f722f66697273742d70726f6a6563742f6e6f74652e747874";
+        let bytes: Vec<u8> = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).unwrap()).collect();
+        let p = Projects::read(&bytes, None);
+        assert_eq!((p.state, p.complete, p.folder.as_str(), p.launch), (Listing::Listed, true, "taylor", 1));
+        assert_eq!((p.projects, p.files, p.other, p.shown), (1, 1, 0, 1));
+        assert_eq!((p.rows[0].project.as_str(), p.rows[0].files), ("first-project", 1));
+        assert!(!p.known_empty());
+    }
+
+    #[test]
+    fn projects_are_grouped_and_other_files_counted() {
+        let bytes = snapshot(1, 4, &[("taylor/a/one.txt", 1), ("taylor/a/two.txt", 2), ("taylor/b/x.txt", 3), ("taylor/loose.txt", 4)]);
+        let p = Projects::read(&bytes, None);
+        assert_eq!((p.projects, p.files, p.other, p.shown), (2, 3, 1, 2));
+        assert_eq!((p.rows[0].project.as_str(), p.rows[0].files), ("a", 2));
+        assert_eq!((p.rows[1].project.as_str(), p.rows[1].files), ("b", 1));
+    }
+
+    #[test]
+    fn empty_is_said_only_of_a_whole_readable_list() {
+        assert!(Projects::read(&snapshot(1, 4, &[]), None).known_empty());
+        assert!(!Projects::read(&snapshot(0, 4, &[]), None).known_empty());
+        assert!(!Projects::unavailable().known_empty());
+        assert!(!Projects::new().known_empty());
+        let mut cut = snapshot(1, 4, &[("taylor/a/one.txt", 1)]);
+        cut.pop();
+        assert_eq!(Projects::read(&cut, None).state, Listing::Unreadable);
+        assert!(!Projects::read(&cut, None).known_empty());
+    }
+
+    #[test]
+    fn more_projects_than_rows_are_counted_not_dropped() {
+        assert!(ROWS < 10);
+        let names: Vec<std::string::String> = (0..10).map(|i| std::format!("taylor/p{}/f.txt", i)).collect();
+        let listed: Vec<(&str, u32)> = names.iter().map(|n| (n.as_str(), 1)).collect();
+        let p = Projects::read(&snapshot(1, 4, &listed), None);
+        assert_eq!((p.projects, p.shown, p.files), (10, ROWS, 10));
+        assert!(p.rows.iter().all(|r| r.files == 1));
+        // The window moves over the whole list: every project can be reached, and one past the end
+        // comes back to the last full window.
+        let bytes = snapshot(1, 4, &listed);
+        let later = Projects::read_from(&bytes, None, 7);
+        assert_eq!((later.top, later.shown, later.rows[0].project.as_str(), later.rows[2].project.as_str()), (7, 3, "p7", "p9"));
+        assert_eq!((later.projects, later.files), (10, 10));
+        let beyond = Projects::read_from(&bytes, None, 10);
+        assert_eq!((beyond.top, beyond.shown, beyond.rows[0].project.as_str()), (10 - ROWS, ROWS, "p4"));
+        let many: Vec<std::string::String> = (10..19).map(|i| std::format!("taylor/a/f{}.txt", i)).collect();
+        let many_listed: Vec<(&str, u32)> = many.iter().map(|n| (n.as_str(), 1)).collect();
+        let bytes = snapshot(1, 4, &many_listed);
+        let project = Projects::read(&bytes, None).rows[0].location.unwrap();
+        let files = Files::read_from(&bytes, None, project, 6);
+        assert_eq!((files.count, files.top, files.shown, files.rows[0].name.as_str(), files.rows[2].name.as_str()), (9, 6, 3, "f16.txt", "f18.txt"));
+    }
+
+    #[test]
+    fn the_files_of_one_project_and_no_other() {
+        let bytes = snapshot(1, 4, &[("taylor/a/one.txt", 1), ("taylor/a/two.txt", 2), ("taylor/ab/x.txt", 3), ("taylor/loose.txt", 4)]);
+        let p = Projects::read(&bytes, None);
+        let f = Files::read(&bytes, None, p.rows[0].location.unwrap());
+        assert_eq!((f.state, f.project.as_str(), f.count, f.shown), (Listing::Listed, "a", 2, 2));
+        assert_eq!((f.rows[0].name.as_str(), f.rows[0].size), ("one.txt", 1));
+        assert_eq!(f.rows[1].destination.unwrap().as_str(), "taylor/a/two.txt");
+        assert_eq!(Files::read(&bytes[..bytes.len() - 1], None, p.rows[0].location.unwrap()).state, Listing::Unreadable);
+    }
+
+    #[test]
+    fn a_file_is_shown_exactly_or_not_at_all() {
+        let root = BuildFolder::new("taylor").unwrap();
+        let d = ProjectLocation::new(root, "a").unwrap().file("one.txt").unwrap();
+        let v = Viewed::read(d, b"Hello.\n\nSecond  line \n", Checked::Matches);
+        assert_eq!((v.state, v.bytes, v.shown, v.more), (Opened::Shown, 22, 3, false));
+        assert_eq!([v.lines[0].as_str(), v.lines[1].as_str(), v.lines[2].as_str()], ["Hello.", "", "Second  line "]);
+        // A long line continues on the next row with nothing lost; more lines than fit are said to exist.
+        let long = [b'x'; VIEW_ACROSS + 3];
+        let v = Viewed::read(d, &long, Checked::NoReceipt);
+        assert_eq!((v.shown, v.lines[0].as_str().len(), v.lines[1].as_str()), (2, VIEW_ACROSS, "xxx"));
+        let many = [b'\n'; VIEW_LINES + 5];
+        assert!(Viewed::read(d, &many, Checked::NoReceipt).more);
+        assert_eq!(Viewed::read(d, b"", Checked::NoReceipt).shown, 0);
+        // A tab, a byte above ASCII, or too much: no line is shown.
+        for bad in [&b"a\tb"[..], &[0xc3, 0xa9][..]] {
+            let v = Viewed::read(d, bad, Checked::NoReceipt);
+            assert_eq!((v.state, v.shown), (Opened::NotText, 0));
+        }
+        let big = std::vec![b'a'; VIEW_BYTES + 1];
+        assert_eq!(Viewed::read(d, &big, Checked::NoReceipt).state, Opened::TooLarge);
+    }
+
+    fn made_note() -> crate::file_job::FileJob {
+        let mut p = crate::note::prepare(3, 1, "hello").unwrap();
+        p.job.submitted().unwrap();
+        let mut r = [0u8; 100];
+        r[0..4].copy_from_slice(&1u32.to_le_bytes());
+        r[4..8].copy_from_slice(&1u32.to_le_bytes());
+        r[8..16].copy_from_slice(&9u64.to_le_bytes());
+        r[16..24].copy_from_slice(&3u64.to_le_bytes());
+        r[24..32].copy_from_slice(&1u64.to_le_bytes());
+        r[32..64].copy_from_slice(&crate::kernel_proposal::request_digest(p.job.destination().as_str(), b"hello\n"));
+        r[64..96].copy_from_slice(&crate::sha256::sha256(&[b"hello\n"]));
+        crate::note::settle(&mut p.job, &r);
+        assert!(p.job.open_target().is_some());
+        p.job
+    }
+
+    /// A source that hands out `content` a few bytes at a time and fails once `fail_after` bytes are out.
+    fn source(content: &[u8], fail_after: Option<usize>) -> impl FnMut(&mut [u8]) -> isize + '_ {
+        let mut at = 0usize;
+        move |into: &mut [u8]| {
+            if fail_after.is_some_and(|n| at >= n) {
+                return -5;
+            }
+            let n = into.len().min(3).min(content.len() - at).min(fail_after.map_or(usize::MAX, |f| f - at));
+            into[..n].copy_from_slice(&content[at..at + n]);
+            at += n;
+            n as isize
+        }
+    }
+
+    #[test]
+    fn a_failed_read_is_unavailable_and_only_a_real_extra_byte_is_too_large() {
+        use crate::file_job::Readback;
+        let mut buffer = std::vec![0u8; VIEW_BYTES + 1];
+        let mut job = made_note();
+        let d = *job.destination();
+        // The first read fails; then a read fails part way: neither says anything about the content.
+        for fail_after in [0, 4] {
+            let v = view(d, Some(source(b"hello\n", Some(fail_after))), &mut buffer, Some(&mut job));
+            assert_eq!((v.state, v.shown, v.checked), (Opened::Unavailable, 0, Checked::NoReceipt));
+            assert_eq!(job.readback(), Readback::Unavailable);
+            assert!(job.open_target().is_some());
+        }
+        // It could not be opened at all.
+        let v = view(d, None::<fn(&mut [u8]) -> isize>, &mut buffer, Some(&mut job));
+        assert_eq!(v.state, Opened::Unavailable);
+        assert_eq!(job.readback(), Readback::Unavailable);
+        // Then it is read whole and is what was made.
+        let v = view(d, Some(source(b"hello\n", None)), &mut buffer, Some(&mut job));
+        assert_eq!((v.state, v.checked, v.lines[0].as_str()), (Opened::Shown, Checked::Matches, "hello"));
+        assert_eq!(job.readback(), Readback::Verified);
+        // Other bytes of the same length: differs, and a later failed read does not undo that.
+        let v = view(d, Some(source(b"hellO\n", None)), &mut buffer, Some(&mut job));
+        assert_eq!((v.state, v.checked), (Opened::Shown, Checked::Differs));
+        let _ = view(d, Some(source(b"hello\n", Some(0))), &mut buffer, Some(&mut job));
+        assert_eq!(job.readback(), Readback::Changed);
+        // A file really larger than the bound: every byte of the buffer was read.
+        let big = std::vec![b'a'; VIEW_BYTES + 1];
+        let mut job = made_note();
+        let v = view(d, Some(source(&big, None)), &mut buffer, Some(&mut job));
+        assert_eq!((v.state, v.checked), (Opened::TooLarge, Checked::Differs));
+        assert_eq!(job.readback(), Readback::Changed);
+        // Exactly the bound is not too large; and with no kept receipt nothing is claimed either way.
+        let v = view(d, Some(source(&big[..VIEW_BYTES], None)), &mut buffer, None);
+        assert_eq!((v.state, v.checked), (Opened::Shown, Checked::NoReceipt));
+        let v = view(d, Some(source(&big, None)), &mut buffer, None);
+        assert_eq!((v.state, v.checked), (Opened::TooLarge, Checked::NoReceipt));
+    }
+
+    #[test]
+    fn a_list_for_another_run_or_folder_is_not_taken() {
+        let first = Projects::read(&snapshot(1, 4, &[]), None);
+        let root = BuildFolder::new(first.folder.as_str()).unwrap();
+        assert_eq!(Projects::read(&snapshot(1, 5, &[]), Some((root, first.launch))).state, Listing::Unreadable);
+        assert_eq!(Projects::read(&snapshot(1, 4, &[]), Some((root, first.launch))).state, Listing::Listed);
+    }
+}

@@ -44,6 +44,12 @@ pub mod project_location;
 pub mod file_job;
 /// Validated current-launch build-folder snapshots; no I/O or authority.
 pub mod build_folder_snapshot;
+/// What the project list shows, summarised from one snapshot.
+pub mod projects;
+/// Every file job of this launch, kept.
+pub mod jobs;
+/// Talking with Taylor, and the records that cross to a local model service.
+pub mod talk;
 pub const LOG_LIMIT: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -261,6 +267,29 @@ pub struct Ui {
     /// service refresh or a new task. PT owns trusted journal reconciliation.
     pub effect_uncertain: bool,
     pub notice: Text<84>,
+    /// PCP OS lets this launch propose files to it. Read once at start; decides what Taylor says it can do.
+    pub notes: bool,
+    /// Every note asked for in this launch, each with what the kernel's receipt established about it.
+    pub jobs: jobs::Jobs,
+    /// Where Alt+N puts a note: a project the kernel's list named, or the first project under the folder
+    /// it named. None until PCP OS has said what the build folder is.
+    pub active: Option<project_location::ProjectLocation>,
+    /// The conversation with Taylor. Kept whether or not a model is there to answer.
+    pub talk: talk::Talk,
+    /// The Work panel shows the conversation: set by sending a message, cleared by a note's result.
+    pub talk_shown: bool,
+    /// The Work panel shows the project list (Alt+P) instead of Taylor's greeting or the last result.
+    pub show_projects: bool,
+    pub projects: projects::Projects,
+    /// Within the list: 0 the projects, 1 one project's files, 2 one file shown.
+    pub browse_level: u8,
+    /// The chosen row within the rows shown, and which item of the whole list the first row is.
+    pub place: usize,
+    pub top: usize,
+    pub file_place: usize,
+    pub file_top: usize,
+    pub files: projects::Files,
+    pub viewed: projects::Viewed,
     lines: [Line; LOG_LIMIT],
     count: usize,
     /// Rows actually evicted from this launch's local eight-line UI window.
@@ -276,7 +305,8 @@ impl Ui {
             model: Model::Unknown, connected: false, service_epoch: 0,
             task: Task { id: 0, seq: 0, state: TaskState::Idle },
             stop_intent_task: None, permission: None, decision_pending: None, decision_choice: None,
-            effect_uncertain: false, notice: Text::new(),
+            effect_uncertain: false, notice: Text::new(), notes: false, jobs: jobs::Jobs::new(), active: None, talk: talk::Talk::new(), talk_shown: false, show_projects: false, projects: projects::Projects::new(), browse_level: 0, place: 0, top: 0, file_place: 0, file_top: 0,
+            files: projects::Files::new(), viewed: projects::Viewed::new(),
             lines: [Line::empty(); LOG_LIMIT], count: 0, feed_hidden_rows: 0,
         }
     }
@@ -492,7 +522,25 @@ impl Ui {
             Action::Submit if self.pending_submit.is_some() => {
                 self.notice("SUBMIT PENDING - NO NEW REQUEST"); None
             }
-            Action::Submit => { self.notice("NO MODEL SERVICE - OS STILL USABLE"); None }
+            Action::Submit => {
+                // What was typed becomes the person's turn in the conversation, kept as typed; with no
+                // model service the conversation itself says, as a system turn, that Taylor cannot
+                // answer. Nothing typed: nothing is added. The notice stays as it was.
+                // The typed text stays in the field, as it always has after a refusal, so that it can
+                // be sent once a model is there; pressing Enter again on the same unsent words does
+                // not repeat them in the conversation.
+                if !self.input.is_empty() {
+                    let repeated = self.talk.turns().iter().rev().find(|t| t.who == talk::Who::Person)
+                        .is_some_and(|t| !t.sent && t.text.as_str() == self.input.as_str());
+                    if !repeated {
+                        let _ = self.talk.say(self.input.as_str(), true);
+                    }
+                    self.talk_shown = true;
+                    self.show_projects = false;
+                }
+                self.notice("NO MODEL SERVICE - OS STILL USABLE");
+                None
+            }
             Action::RetrySubmit => { self.notice("NO CONNECTED RETRYABLE SUBMISSION"); None }
             Action::ToggleMode => { self.notice("MODE CHANGE UNAVAILABLE"); None }
             Action::Stop => { self.notice("NO STOPPABLE TASK - USE OS STOP KEY"); None }
@@ -2056,6 +2104,12 @@ mod tests {
 
 }
 
+/// SHA-256, to bind a proposal to the kernel's receipt for it.
+pub mod sha256;
+/// The record of a proposal and the kernel's receipt, as bytes.
+pub mod kernel_proposal;
+/// A note of what was typed, as a new file in the current project.
+pub mod note;
 /// Drawing on the guest's display: rectangles and the kernel's own typeface.
 pub mod frame;
 /// The picture drawn from the state.

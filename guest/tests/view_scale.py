@@ -288,14 +288,16 @@ def selftest_affordance_receipts():
 
 def require_offline_refusal_receipts(receipts):
     expected = {"native_frames": 3, "erased_notice_negatives": 3,
-                "unchanged_other_pixels": 3}
+                "unchanged_other_pixels": 3, "conversation_turn_labels": 4,
+                "erased_conversation_negatives": 4}
     if receipts != expected:
         raise AssertionError(f"offline action/refusal checks incomplete: {receipts!r}")
 
 
 def selftest_offline_refusal_receipts():
     complete = {"native_frames": 3, "erased_notice_negatives": 3,
-                "unchanged_other_pixels": 3}
+                "unchanged_other_pixels": 3, "conversation_turn_labels": 4,
+                "erased_conversation_negatives": 4}
     require_offline_refusal_receipts(dict(complete))
     for key in complete:
         missing = dict(complete)
@@ -306,7 +308,7 @@ def selftest_offline_refusal_receipts():
             pass
         else:
             raise AssertionError(f"skipped offline refusal check accepted: {key}")
-    print("Offline refusal receipts: 1 valid, 3 skipped-check refusals PASS",
+    print("Offline refusal receipts: 1 valid, 5 skipped-check refusals PASS",
           flush=True)
 
 
@@ -996,9 +998,39 @@ def check(kernel, app, measurement, folder, small):
             assert editor(observed, "fit") == editor(typed, "fit"), (
                 f"{tag}: unsent request editor changed after refused action"
             )
-            assert blank_notice_region(observed, "fit") == original_without_notice, (
-                f"{tag}: pixels outside notice changed in disconnected native guest"
-            )
+            if tag == "offline_submit_refusal":
+                # Sending with something typed puts it in the conversation: the person's turn exactly as
+                # typed, and a turn in PCP OS's name (never Taylor's) saying no model can answer. Each is
+                # read from the source font at its place and refused when erased; outside the Work
+                # panel's body and the notice not one pixel changes; and the conversation then stays on
+                # the screen, so it is what the two refusals after it are compared with.
+                turns = (("You", 339, 218, TEAL), ("a", 393, 218, TEXT), ("PCP OS", 339, 242, AMBER),
+                         ("No model is running on this computer, so Taylor cannot answer yet.", 393, 242, SOFT))
+                for words, x, y, ink in turns:
+                    assert empty_output_label_ok(observed, "fit", words, x, y, 6, 12, ink), (
+                        f"{tag}: the conversation does not hold {words!r} at its place")
+                    gone = erased_empty_output_label(observed, "fit", words, x, y, 6, 12)
+                    assert gone != observed and not empty_output_label_ok(gone, "fit", words, x, y, 6, 12, ink), (
+                        f"{tag}: erased conversation words {words!r} incorrectly accepted")
+                offline_refusal_receipts["conversation_turn_labels"] = len(turns)
+                offline_refusal_receipts["erased_conversation_negatives"] = len(turns)
+
+                def without_work_body(rgb):
+                    left, top, right, bottom = box("fit", 320, 178, 616, 266)
+                    blank = bytearray(rgb)
+                    for yy in range(top, bottom):
+                        offset = (yy*w+left)*3
+                        blank[offset:offset+(right-left)*3] = GROUND*(right-left)
+                    return bytes(blank)
+                assert without_work_body(blank_notice_region(observed, "fit")) == without_work_body(original_without_notice), (
+                    f"{tag}: pixels outside the notice and the Work panel's body changed")
+                assert blank_notice_region(observed, "fit") != original_without_notice, (
+                    f"{tag}: the conversation did not appear")
+                original_without_notice = blank_notice_region(observed, "fit")
+            else:
+                assert blank_notice_region(observed, "fit") == original_without_notice, (
+                    f"{tag}: pixels outside notice changed in disconnected native guest"
+                )
             erased = blank_notice_region(observed, "fit")
             assert erased != observed, f"{tag}: no real notice glyph ink"
             assert not offline_notice_ok(erased, "fit", value), (
