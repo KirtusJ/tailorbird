@@ -121,6 +121,11 @@ impl Link {
                                 // Bytes that are not text are shown as one question mark each, as
                                 // the conversation shows anything it cannot show exactly.
                                 let mut rest = record.body;
+                                // A piece with no text in it is still the answer beginning: it
+                                // ends the reading, and shows nothing.
+                                if rest.is_empty() {
+                                    ui.talk.receive(Incoming::Chunk { conversation, reply, text: "" });
+                                }
                                 while !rest.is_empty() {
                                     let (text, skip) = match core::str::from_utf8(rest) {
                                         Ok(text) => (text, 0),
@@ -327,6 +332,37 @@ mod tests {
         }
         assert_eq!(ui.talk.reading, None);
         assert_eq!(ui.talk.turns().last().unwrap().text.as_str(), "Hi");
+    }
+
+    /// C3's sequence: ready, a message, reading 1 of 3, a piece of the answer with no text in it,
+    /// reading 2 of 3. The empty piece is the answer beginning; the later reading is a stray.
+    #[test]
+    fn a_first_piece_with_no_text_ends_the_reading_and_later_reading_does_not_bring_it_back() {
+        for (first, shown) in [(&b""[..], ""), (&b"H"[..], "H")] {
+            let mut ui = Ui::new();
+            let mut link = Link::new(true, &mut ui);
+            let mut channel = Channel::new();
+            channel.says(Kind::Ready, 0, 0, b"");
+            turn(&mut link, &mut ui, &mut channel);
+            typed(&mut ui, "hello");
+            let _ = ui.intent(Action::Submit);
+            turn(&mut link, &mut ui, &mut channel);
+            let mut run = |channel: &mut Channel, ui: &mut Ui, link: &mut Link| while !channel.from_service.is_empty() {
+                turn(link, ui, channel);
+            };
+            channel.from_service.extend(wire::reading(1, 1, 1, 3).unwrap().bytes());
+            run(&mut channel, &mut ui, &mut link);
+            assert_eq!(ui.talk.reading, Some((1, 3)));
+            channel.says(Kind::Chunk, 1, 1, first);
+            run(&mut channel, &mut ui, &mut link);
+            assert_eq!(ui.talk.reading, None, "after a first piece {first:?}");
+            let strays = ui.talk.strays;
+            channel.from_service.extend(wire::reading(1, 1, 2, 3).unwrap().bytes());
+            run(&mut channel, &mut ui, &mut link);
+            assert_eq!((ui.talk.reading, ui.talk.strays), (None, strays + 1), "reading after a first piece {first:?}");
+            assert_eq!(ui.talk.turns().last().unwrap().text.as_str(), shown);
+            assert!(ui.talk.answering());
+        }
     }
 
     #[test]

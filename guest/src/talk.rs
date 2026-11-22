@@ -123,13 +123,16 @@ pub struct Talk {
     /// While an answer is awaited and none of it has arrived: how many tokens of the message the
     /// service says it has read, and of how many. Only what the service said.
     pub reading: Option<(u64, u64)>,
+    /// Whether anything of the reply awaited has arrived, were it a piece with no text in it. Once
+    /// it has, the reading is over and stays over (C3).
+    begun: bool,
 }
 
 const EMPTY: Turn = Turn { who: Who::System, text: Text::new(), cut: false, reply: 0, state: Reply::None, sent: false };
 
 impl Talk {
     pub const fn new() -> Self {
-        Self { service: Service::Absent, conversation: 1, next_reply: 1, turns: [EMPTY; TURNS], count: 0, dropped: 0, pending: None, strays: 0, checked: None, reading: None }
+        Self { service: Service::Absent, conversation: 1, next_reply: 1, turns: [EMPTY; TURNS], count: 0, dropped: 0, pending: None, strays: 0, checked: None, reading: None, begun: false }
     }
 
     pub fn turns(&self) -> &[Turn] { &self.turns[..self.count] }
@@ -188,6 +191,7 @@ impl Talk {
         self.next_reply += 1;
         self.pending = Some(reply);
         self.reading = None;
+        self.begun = false;
         self.push(Who::Taylor, "", reply, Reply::Streaming, false);
         Some(Outgoing { conversation: self.conversation, reply, history, text: Text::display(words) })
     }
@@ -209,7 +213,7 @@ impl Talk {
         // Reading is said before anything of the answer. Once some of it is here, or for another
         // reply, it is a stray like anything late.
         if let Incoming::Reading { read, of, .. } = incoming {
-            if self.pending_turn(conversation, reply).is_some_and(|t| t.text.as_str().is_empty()) {
+            if !self.begun && self.pending_turn(conversation, reply).is_some() {
                 self.reading = Some((read, of));
                 return Taken::Shown;
             }
@@ -222,6 +226,7 @@ impl Talk {
         }
         // Whatever else arrives for the reply, the reading is over.
         self.reading = None;
+        self.begun = true;
         let Some(turn) = self.pending_turn(conversation, reply) else { return Taken::Stray };
         match incoming {
             Incoming::Reading { .. } => {}
