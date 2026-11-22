@@ -1,0 +1,59 @@
+name: Full-weight Qwen3 project trial
+on:
+  workflow_dispatch:
+  push:
+    branches: [c3/random-project-trials]
+    paths:
+      - .github/workflows/qwen8b-project-trial.yml
+      - guest/examples/model_chat.rs
+permissions:
+  contents: read
+jobs:
+  project:
+    timeout-minutes: 75
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project: invoice
+            prompt: 'Build a one-line invoice for 8 items at 5 dollars each. Return only Total: $ followed by the amount with two decimal places.'
+          - project: settings
+            prompt: 'Build a JSON config for my lark project. Return only one JSON object with name "lark", quantity 8, enabled true.'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          submodules: true
+          persist-credentials: false
+      - name: Build Taylor's host inference check
+        run: |
+          rustup toolchain install 1.97.0 --profile minimal
+          cargo +1.97.0 build --locked --release --features model-worker --example model_chat
+      - name: Retrieve and verify the nominated model and manifest
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl --fail --location --retry 3 --silent --show-error -o model.manifest \
+            'https://raw.githubusercontent.com/KirtusJ/pcp-os/771270eb678f329023b055840b164efaf236fab1/examples/release-media/observations/qwen3-8b/model.manifest'
+          curl --fail --location --retry 3 --silent --show-error -o model.gguf \
+            'https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/7c41481f57cb95916b40956ab2f0b139b296d974/Qwen3-8B-Q4_K_M.gguf'
+          echo '2c02ff6f00a2ee802ce09648dfbc56dda38a64b009635f0aeb383f09e1af67dc  model.manifest' | sha256sum -c
+          echo 'd98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785  model.gguf' | sha256sum -c
+      - name: Run the prompt in an isolated network namespace
+        env:
+          PROMPT: ${{ matrix.prompt }}
+        run: |
+          sudo unshare --net -- target/release/examples/model_chat \
+            "$RUNNER_TEMP/model.gguf" "$RUNNER_TEMP/model.manifest" answer "$PROMPT" --project-trial
+          printf '%s\n' "$PROMPT" > prompt.txt
+          git rev-parse HEAD > source.txt
+          git submodule status >> source.txt
+          sha256sum target/release/examples/model_chat >> source.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: qwen3-8b-${{ matrix.project }}
+          path: |
+            answer/
+            prompt.txt
+            source.txt
+          retention-days: 14
