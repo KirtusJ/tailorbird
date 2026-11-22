@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 144" width="192" height="144" role="img" aria-labelledby="title desc">
   <title id="title">Tailorbird</title>
-  <desc id="desc">Taylor, a small tailorbird with a russet cap, a green back and a long cocked tail, sews the edge of a leaf with a thread held in her bill.</desc>
+  <desc id="desc">Taylor, a small tailorbird in a yellow hard hat, with a green back and a long cocked tail, sews the edge of a leaf with a thread held in her bill.</desc>
   <rect width="192" height="144" rx="24" fill="#10283f"/>
   <path d="M20 116q6-52 70-58-2 44-38 62-20 8-32-4z" fill="#3aa88f"/>
   <path d="M20 116q34-22 70-58" fill="none" stroke="#8fe0c2" stroke-width="2.2" stroke-linecap="round"/>
@@ -13,7 +13,9 @@
     <ellipse cx="127" cy="82" rx="26" ry="19" transform="rotate(-18 127 82)" fill="#f1f4e4"/>
     <path d="M106 68q22-17 46 2-6 22-30 19-12-6-16-21z" fill="#7fae5c"/>
     <circle cx="104" cy="58" r="15.5" fill="#f1f4e4"/>
-    <path d="M88.800 55.500a15.500 15.500 0 0 1 30.500-1.500q-16-6-30.500 1.500z" fill="#d9713c"/>
+    <path d="M89 54q0-17 15.500-17 15.500 0 15.500 15q-16-5-31 2z" fill="#f2c230"/>
+    <path d="M104.500 37v15" fill="none" stroke="#c9981a" stroke-width="2"/>
+    <path d="M81 57.500q21-10 42-5.500l1 4.500q-21-4.500-41 5.500z" fill="#f2c230"/>
     <path d="M90 62q-12 3-21 12 11-4 22-6z" fill="#24384c"/>
   </g>
   <circle cx="98" cy="59" r="2.800" fill="#0c2033"/>
