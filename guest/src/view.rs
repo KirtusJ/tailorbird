@@ -100,7 +100,7 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
     f.panel(0, 0, 960, 72, PANEL);
     label(f, 22, 12, "Tailorbird", 3, TEAL);
     // Where this is and where Esc leads: Programs, from which this was started (A3 pressed it and saw).
-    label(f, 22, 52, "PCP OS > Programs > Tailorbird (Esc returns to Programs)", 1, SOFT);
+    label(f, 22, 52, "PCP OS > Programs > Tailorbird (Esc closes Tailorbird)", 1, SOFT);
     label(f, 202, 27, "builds and fixes on this computer", 2, SOFT);
     // What is behind it, said once, where the eye lands last: a lamp and two words.
     let talks = ui.talk.service == crate::talk::Service::Ready;
@@ -224,7 +224,7 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
                       else { "Not confirmed: this file may or may not have been made." }, 1, AMBER);
             }
             label(f, 420, 384, if ui.gave_up { "Taylor makes no more files until started again." } else { "Type again and press Alt+N for another." }, 1, SOFT);
-            let x = key(f, 339, 420, "Esc", "returns to Programs");
+            let x = key(f, 339, 420, "Esc", "closes Tailorbird");
             if ui.notes {
                 key(f, x, 420, "Alt+P", "shows your projects");
             }
@@ -245,7 +245,7 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
                 label(f, 420, 340, "files. PCP OS holds me to it.", 2, SOFT);
             }
             label(f, 420, 370, "Start Taylor again from Programs to allow notes again.", 1, SOFT);
-            let x = key(f, 339, 420, "Esc", "returns to Programs");
+            let x = key(f, 339, 420, "Esc", "closes Tailorbird");
             key(f, x, 420, "Alt+P", "shows your projects");
             return footer(f, ui);
         } else if ui.notes {
@@ -270,7 +270,7 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
                 label(f, 420, 370, "Folder name too long to hold a note:", 1, AMBER);
                 wrapped(f, 420, 384, ui.projects.folder.as_str(), 84);
             }
-            let x = key(f, 339, 420, "Esc", "returns to Programs");
+            let x = key(f, 339, 420, "Esc", "closes Tailorbird");
             key(f, x, 420, "Alt+P", "shows your projects");
             return footer(f, ui);
         } else {
@@ -278,7 +278,7 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
             label(f, 420, 340, "cannot build anything.", 2, AMBER);
         }
         label(f, 420, 384, "The rest of PCP OS works without me.", 2, GOOD);
-        let x = key(f, 339, 420, "Esc", "returns to Programs");
+        let x = key(f, 339, 420, "Esc", "closes Tailorbird");
         if ui.notes {
             key(f, x, 420, "Alt+P", "shows your projects");
         }
@@ -455,7 +455,7 @@ fn transcript(f: &mut Frame<'_>, talk: &crate::talk::Talk) {
     let x = key(f, 339, 420, "Enter", "sends");
     let x = key(f, x, 420, "Alt+C", "new conversation");
     let x = key(f, x, 420, "Alt+P", "projects");
-    key(f, x, 420, "Esc", "returns to Programs");
+    key(f, x, 420, "Esc", "closes Tailorbird");
 }
 
 /// A name whole, on as many rows of `across` characters as it needs (12 apart).
@@ -541,7 +541,7 @@ fn projects(f: &mut Frame<'_>, list: &crate::projects::Projects, place: usize, a
         x = key(f, x, 420, "Down", "choose");
         x = key(f, x, 420, "Enter", "opens");
     }
-    key(f, x, 420, "Esc", "returns to Programs");
+    key(f, x, 420, "Esc", "closes Tailorbird");
 }
 
 /// One project's files. The size is what the list said when it was read.
@@ -660,7 +660,7 @@ fn footer(f: &mut Frame<'_>, ui: &Ui) {
         label(f, 146, 470, "Input cannot be shown", 1, BAD);
     }
     let mut x = 22;
-    for (name, does) in [("Enter", "sends"), ("Alt+R", "retries"), ("Esc", "returns to Programs")] {
+    for (name, does) in [("Enter", "sends"), ("Alt+R", "retries"), ("Esc", "closes Tailorbird")] {
         x = key(f, x, 516, name, does);
     }
     key(f, x, 516, "F6", if ui.compact_view { "compact" } else { "fit" });

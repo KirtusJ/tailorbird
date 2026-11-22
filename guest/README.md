@@ -17,7 +17,7 @@ window manager, LLM, broker, IPC transport, or permission enforcement here.
 The preview is intentionally **disconnected**. It reports NO SERVICE and
 cannot start work, approve a grant, switch the saved mode or stop a task.
 This is a safety property of the preview, not a claim that Tailorbird works
-with Qwen yet. Esc returns to Programs. Ctrl+Alt+Delete is the
+with Qwen yet. Esc closes Tailorbird. Ctrl+Alt+Delete is the
 kernel-owned emergency stop for a running guest. Other OS programs work without
 a model, so Tailorbird must remain optional.
 
@@ -54,7 +54,7 @@ Check the native menu includes Tailorbird, press Enter, inspect the two
 always-visible controls, type an ASCII request and press Enter; confirm
 that the UI displays NO MODEL SERVICE and no task or grant is recorded.
 Press Alt+M and Alt+S to check their truthful unavailable-state notices.
-Press Esc and confirm Programs returns. Separately test
+Press Esc and confirm the screen it was started from returns (Programs, when started from Programs). Separately test
 Ctrl+Alt+Delete as a kernel-level stop and review the task register.
 No replay or hardware boot was performed by this authoring session.
 
