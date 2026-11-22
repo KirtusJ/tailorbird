@@ -697,16 +697,23 @@ mod tests {
         // actual source font at its production coordinates.
         ui.notice = crate::Text::new();
         let blank = shot(&ui);
-        let mut exact = blank.clone();
-        let mut frame = Frame::new(&mut exact, 960, 540, 960, GROUND, false);
+        // Frame::new clears its buffer. Render independent source-font glyph *coverage*
+        // over black, then compare the changed-pixel mask to the real composed screen.
+        // The footer background is painted by the rest of the UI and must be preserved.
+        let mut exact = vec![0u32; shown.len()];
+        let mut frame = Frame::new(&mut exact, 960, 540, 960, 0, false);
         frame.text(535, 513, queued, 1, AMBER);
-        assert_ne!(blank, exact, "the queued label must have visible pixels");
-        assert_eq!(shown, exact, "the native bitmap must show the entire exact queued notice");
+        let count = exact.iter().filter(|&&pixel| pixel != 0).count();
+        assert!(count > 50, "the exact queued label must have visible pixels");
+        let different = shown.iter().zip(&blank).zip(&exact)
+            .filter(|((actual, previous), glyph)| (*actual != *previous) != (**glyph != 0)).count();
+        assert_eq!(different, 0, "the real screen has {different} glyph-coverage errors");
 
-        let mut misleading = blank.clone();
-        let mut frame = Frame::new(&mut misleading, 960, 540, 960, GROUND, false);
+        let mut misleading = vec![0u32; shown.len()];
+        let mut frame = Frame::new(&mut misleading, 960, 540, 960, 0, false);
         frame.text(535, 513, "SENT TO TAYLOR'S MODEL ON THIS COMPUTER", 1, AMBER);
-        assert_ne!(shown, misleading, "an unconfirmed queued message must not look delivered");
+        assert!(misleading.iter().zip(&exact).any(|(old, new)| (old != &0) != (new != &0)),
+                "the old misleading words must have different raster coverage");
     }
 
     /// A reply that was stopped or failed says so without one pixel of the reply being painted over,
