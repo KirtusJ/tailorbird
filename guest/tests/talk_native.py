@@ -19,6 +19,15 @@ Predicates, fixed before the first run.
  T7 Esc ends Tailorbird, PCP OS ends the worker's run, and the emulator ends with status 33.
  T8 (control) the same Tailorbird without the worker's words on the line: no channel, a typed
     message starts no reply, and the worker is never started.
+ T9 what is on the screen. The console lines above say how a reply ended and how many bytes it
+    kept, not what was drawn (Director 2: `hello` and `hxllo` are the same length). So each capture
+    of Tailorbird's screen (answered, stopped, service-stopped, and no-model in the control) is
+    compared, every pixel of the whole frame, with the same renderer run on this computer from the
+    steps this test took. And for each capture, pictures that must NOT match it are drawn and
+    compared too: the reply with one character changed and the length kept, the reply absent, the
+    person's words changed, the model's state changed, and the capture before it (a stale screen).
+    The capture while PCP OS asks about a note is PCP OS's own screen, and is compared line for
+    line as tests/note_roundtrip.py does.
 
 Usage: talk_native.py <kernel.elf32 built with proposals,companion> <tailorbird> <talk-test-worker> <new folder>
 This is an emulator, keys sent by the emulator, and a test program in the place of a model.
@@ -26,21 +35,66 @@ This is an emulator, keys sent by the emulator, and a test program in the place 
 import argparse
 import hashlib
 from pathlib import Path
+import runpy
 import shutil
 import subprocess
 import sys
 import time
 
+from note_roundtrip import ASK, exact, panel
 from qemu_smoke import Qemu
 
 OPENING = "This is the test worker, not a model. You said: "
 
 
-def run(kernel, guest, worker, output, with_worker):
+def pixels(path):
+    data = path.read_bytes()
+    head = data.split(b"\n", 3)
+    return head[1], data[len(data) - 800 * 600 * 3:]
+
+
+def frames_tool():
+    """The renderer the program uses, built for this computer (guest/examples/talk_frames.rs)."""
+    guest = Path(__file__).resolve().parents[1]
+    subprocess.run(["cargo", "build", "--quiet", "--example", "talk_frames"], cwd=guest, check=True)
+    return guest.parent / "target/debug/examples/talk_frames"
+
+
+class Screens:
+    """Compares captures of Tailorbird's screen with what the renderer draws for the same steps."""
+
+    def __init__(self, tool, output, problems):
+        self.tool, self.output, self.problems, self.count, self.before = tool, output, problems, 0, None
+
+    def draw(self, steps, name):
+        folder = self.output / ("drawn-%02d-%s" % (self.count, name))
+        self.count += 1
+        folder.mkdir()
+        (folder / "steps.txt").write_text("\n".join(steps + ["shot " + name]) + "\n")
+        subprocess.run([str(self.tool), str(folder / "steps.txt"), str(folder), "800", "600"], check=True)
+        return pixels(folder / (name + ".ppm"))
+
+    def same(self, capture, steps, others):
+        """`capture` must be exactly what `steps` draw, and must differ from each of `others`."""
+        seen = pixels(self.output / (capture + ".ppm"))
+        if seen != self.draw(steps, capture):
+            self.problems.append("T9 %s: the screen is not what the renderer draws for the steps taken" % capture)
+        if self.before is not None:
+            others = dict(others, **{"the capture before it": None})
+        for what, changed in others.items():
+            drawn = self.before if changed is None else self.draw(changed, capture + "-not")
+            if seen == drawn:
+                self.problems.append("T9 %s: the screen also matches a picture it must not (%s)" % (capture, what))
+        self.before = seen
+
+
+def run(kernel, guest, worker, output, with_worker, tool):
     output.mkdir(parents=True, exist_ok=False)
     os_root = Path(__file__).resolve().parents[2] / "pcp-os"
     measure = os_root / "PCP_OS_Rust/crates/pcpos-kernel/tools/measure.py"
     image = subprocess.check_output([sys.executable, measure, kernel], text=True).strip()
+    screen = runpy.run_path(str(os_root / "examples/tester-cd/check.py"))
+    glyphs = screen["kernel_glyphs"]()
     shutil.copyfile(kernel, output / "kernel.elf32")
     shutil.copyfile(guest, output / "tailorbird.elf")
     shutil.copyfile(worker, output / "talk-test-worker")
@@ -50,6 +104,7 @@ def run(kernel, guest, worker, output, with_worker):
         command += f" worker_for={front} worker_image={back}"
     vm = Qemu(Path("kernel.elf32"), "tailorbird.elf,talk-test-worker", output, "q35", command)
     problems = []
+    screens = Screens(tool, output, problems)
     try:
         def lines():
             return vm.serial().splitlines()
@@ -78,6 +133,10 @@ def run(kernel, guest, worker, output, with_worker):
             type_and_send("hello")
             time.sleep(2)
             vm.screenshot("no-model")
+            screens.same("no-model", ["notes", "type hello", "enter"], {
+                "the person's words changed": ["notes", "type hxllo", "enter"],
+                "a model that is ready": ["notes", "ready", "type hello", "enter"],
+                "nothing sent": ["notes", "type hello"]})
             if replies() or any("test worker" in line for line in lines()) or any("tailorbird: model service" in line and "no model service channel" not in line for line in lines()):
                 problems.append("T8: without the worker a reply began, a service was reported, or the worker ran")
             vm.key("esc")
@@ -95,14 +154,26 @@ def run(kernel, guest, worker, output, with_worker):
             problems.append("T1: ready was not reported once, after the worker said it")
         # T2
         type_and_send("hello")
+        first = ["notes", "ready", "type hello", "enter", "took", "chunk " + OPENING + "hello", "done"]
         if wait_for("tailorbird: reply 1 kept %d bytes and is complete" % len(OPENING + "hello")):
             vm.screenshot("answered")
+            screens.same("answered", first, {
+                "one character of the reply changed, the length kept": first[:5] + ["chunk " + OPENING + "hxllo", "done"],
+                "one character of the worker's own words changed": first[:5] + ["chunk " + OPENING.replace("not a model", "now a model") + "hello", "done"],
+                "no reply yet": first[:5],
+                "the person's words changed": ["notes", "ready", "type hellp", "enter", "took", "chunk " + OPENING + "hello", "done"],
+                "the reply failed": first[:6] + ["failed"],
+                "the model stopped": first + ["gone"]})
         # T3
         for char in "garden":
             vm.key(char)
         vm.key("alt", "n")
         time.sleep(2)
         vm.screenshot("asked")
+        # PCP OS's own screen, not Tailorbird's: exactly the question for this one note.
+        rows = screen["read_screen"]((output / "asked.ppm").read_bytes(), glyphs)
+        if not exact(rows, panel("taylor/my-first-project", "note-1.txt", "garden", ASK)):
+            problems.append("T9 asked: PCP OS's question is not exactly the one for this note: %r" % [row.strip() for row in rows or [] if row.strip()])
         vm.key("esc")
         wait_for("tailorbird: Not made: you said no.")
         # The words of the note are still in the field: take them out before the next message.
@@ -122,6 +193,18 @@ def run(kernel, guest, worker, output, with_worker):
         if len(stopped) != 1 or not 0 < int(stopped[0].split()[4]) < whole:
             problems.append("T4: reply 2 was not stopped part of the way: %r" % stopped)
         vm.screenshot("stopped")
+        kept = int(stopped[0].split()[4]) if len(stopped) == 1 else 0
+        second = OPENING + "tell me more about that please"
+        # The note that was refused left its words in the field and the Work panel on its result;
+        # the next message brings the conversation back.
+        until_stop = first + ["type garden", "hide", "clear", "type tell me more about that please", "enter", "took"]
+        halted = until_stop + ["chunk " + second[:kept], "stop"]
+        if kept:
+            screens.same("stopped", halted, {
+                "one character of what arrived changed": until_stop + ["chunk " + second[:kept - 1] + "X", "stop"],
+                "one character less arrived": until_stop + ["chunk " + second[:kept - 1], "stop"],
+                "not stopped: still answering": until_stop + ["chunk " + second[:kept]],
+                "complete, not stopped": until_stop + ["chunk " + second[:kept], "done"]})
         time.sleep(1.5)
         # T5
         type_and_send("fail")
@@ -133,6 +216,13 @@ def run(kernel, guest, worker, output, with_worker):
         type_and_send("anyone")
         time.sleep(2)
         vm.screenshot("service-stopped")
+        if kept:
+            ended = halted + ["took", "type fail", "enter", "took", "failed", "type leave", "enter", "took", "chunk " + (OPENING + "leave")[:16], "gone", "type anyone", "enter"]
+            screens.same("service-stopped", ended, {
+                "the model still ready": [step for step in ended if step != "gone"],
+                "the last message changed": ended[:-2] + ["type anyonf", "enter"],
+                "the failed reply complete": [("done" if step == "failed" else step) for step in ended],
+                "one character of what arrived before it stopped changed": [("chunk This is the tesT" if step == "chunk " + (OPENING + "leave")[:16] else step) for step in ended]})
         if any(line.startswith("tailorbird: reply 5") for line in replies()):
             problems.append("T6: a reply began after the service had stopped")
         # T7
@@ -160,8 +250,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=False)
-    found = run(args.kernel.resolve(), args.guest.resolve(), args.worker.resolve(), out / "with-worker", True)
-    found += ["control: " + p for p in run(args.kernel.resolve(), args.guest.resolve(), args.worker.resolve(), out / "without-worker", False)]
+    tool = frames_tool()
+    found = run(args.kernel.resolve(), args.guest.resolve(), args.worker.resolve(), out / "with-worker", True, tool)
+    found += ["control: " + p for p in run(args.kernel.resolve(), args.guest.resolve(), args.worker.resolve(), out / "without-worker", False, tool)]
     if found:
         sys.exit("\n".join(found))
-    print("talk: a message is answered, stopped, failed and survives the service ending; without a worker nothing answers")
+    print("talk: a message is answered, stopped, failed and survives the service ending; without a worker nothing answers; every capture is what the renderer draws and none of the pictures it must not be")
