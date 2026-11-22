@@ -362,6 +362,20 @@ impl Ui {
         if self.count == 0 { None }
         else { Some((self.lines[0].seq, self.lines[self.count - 1].seq)) }
     }
+    /// One correlated talk-channel frame was actually observed. Correlation
+    /// clears the now-misleading local-queue label, not the uncertainty of
+    /// delivery, model identity or service authentication. Production Link
+    /// and the pixel oracle must both take this single reducer path.
+    pub fn observed_talk(&mut self, incoming: talk::Incoming<'_>) -> talk::Taken {
+        let taken = self.talk.receive(incoming);
+        if taken == talk::Taken::Shown
+            && self.notice.as_str() == "QUEUED LOCALLY - DELIVERY UNCONFIRMED"
+        {
+            self.notice("MATCHING REPLY RECORD - MODEL UNVERIFIED");
+        }
+        taken
+    }
+
     /// The model service has said it is ready. A notice that said a message was not sent because
     /// the model was still loading is no longer true the moment it is ready, so it is replaced by
     /// what is true now. (A3 saw the old words stay on the Ready screen until the next key.) No
