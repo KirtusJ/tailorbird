@@ -12,8 +12,7 @@ Visual in what it does; clear in what it did; able to act on the whole system wh
 And on 22 November, as the rebuild began: "taylor the tailorbird should be helpful, and interactive, but
 not overbearing". Read here as rules of manner: it answers and offers, and does not interrupt, nag,
 take the screen unasked, or ask again for what was refused. The kernel's question appears only when
-the user's own request has led to a proposal. (Whether "Taylor" is the character's name is the
-owner's to confirm.)
+the user's own request has led to a proposal. The mascot is named **Taylor** (owner, 22 November): the program is Tailorbird, the character in it is Taylor.
 
 ## What PCP OS gives us today (read from the kernel at `070c9d5`)
 
