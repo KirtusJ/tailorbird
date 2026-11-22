@@ -17,6 +17,14 @@ pub const NO_FOLDER: &str = "PCP OS has not said where projects go, so nothing w
 pub const NO_ROOM_FOR_NAME: &str = "The projects folder name is too long for a note name. Nothing was asked.";
 pub const NO_NUMBER: &str = "This project has used every note number. Choose another project.";
 pub const NOT_ALLOWED: &str = "PCP OS has not let Taylor make files here.";
+/// Giving up making files, at the person's word. Each is what the screen says; the third is said only
+/// on PCP OS's own receipt.
+pub const GIVE_UP_ASK: &str = "Press Alt+G again and Taylor makes no more files until started again.";
+pub const GAVE_UP: &str = "PCP OS confirmed: Taylor makes no more files until started again.";
+/// Said when no valid receipt came back. It does not say the right is still held: PCP OS may have
+/// taken the record and the receipt been lost, and without the receipt neither state is established
+/// (Director B3). What Alt+N then does shows which.
+pub const GIVE_UP_UNCONFIRMED: &str = "PCP OS did not confirm whether Taylor can still make files.";
 pub const NOT_TAKEN: &str = "PCP OS did not take the request. Nothing was made.";
 pub const UNREADABLE: &str = "PCP OS answered in a way Taylor cannot read. Nothing is claimed.";
 
@@ -336,5 +344,12 @@ mod tests {
         let mut early = prepare(3, 1, "hello").unwrap();
         let receipt = kernel_receipt(&early, 1, 9);
         assert_eq!(settle(&mut early.job, &receipt).as_str(), UNREADABLE);
+    }
+
+    #[test]
+    fn the_words_about_giving_up_fit_the_line_they_are_shown_on() {
+        for words in [GIVE_UP_ASK, GAVE_UP, GIVE_UP_UNCONFIRMED] {
+            assert!(words.len() <= 84 && words.is_ascii(), "{words}");
+        }
     }
 }
