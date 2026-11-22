@@ -660,7 +660,7 @@ fn footer(f: &mut Frame<'_>, ui: &Ui) {
         label(f, 146, 470, "Input cannot be shown", 1, BAD);
     }
     let mut x = 22;
-    for (name, does) in [("Enter", "sends"), ("Alt+R", "retries"), ("Esc", "leaves")] {
+    for (name, does) in [("Enter", "sends"), ("Alt+R", "retries"), ("Esc", "returns to Programs")] {
         x = key(f, x, 516, name, does);
     }
     key(f, x, 516, "F6", if ui.compact_view { "compact" } else { "fit" });
