@@ -13,7 +13,7 @@ Predicates, fixed before the first run.
  T4 Alt+S during an answer stops it: the reply is marked stopped with fewer bytes than the whole
     answer, and the worker says it was told and stopped.
  T5 a reply the worker fails is marked failed with 0 bytes.
- T6 when the worker ends in the middle of an answer the service is reported stopped (not "did not
+ T6 (reply 5) when the worker ends in the middle of an answer the service is reported stopped (not "did not
     start": it had been ready), that reply is failed with what had arrived, and a later message
     starts no reply.
  T7 Esc ends Tailorbird, PCP OS ends the worker's run, and the emulator ends with status 33.
@@ -23,6 +23,9 @@ Predicates, fixed before the first run.
     "Getting ready" and "Checked 2 of 5 MiB", and is not the screen of a model that is ready.
  T11 Alt+C begins a new conversation: the worker is told to forget the old one, the screen shows
     none of it, and the next message is answered as before.
+ T12 a reply of exactly 84 characters that failed keeps every character on the screen, with the
+    word that it failed on the row under it (the renderer's own test shows no pixel of a reply is
+    painted over at any length; this is that case on the machine).
  T9 what is on the screen. The console lines above say how a reply ended and how many bytes it
     kept, not what was drawn (Director 2: `hello` and `hxllo` are the same length). So each capture
     of Tailorbird's screen (answered, stopped, service-stopped, and no-model in the control) is
@@ -231,21 +234,33 @@ def run(kernel, guest, worker, output, with_worker, tool):
         # T5
         type_and_send("fail")
         wait_for("tailorbird: reply 3 kept 0 bytes and is failed")
+        # T12: a reply that fills its last row exactly (84 characters) and failed. The words that say
+        # so go under it, not over it.
+        whole_row = (OPENING + "cut 84").ljust(84, "W")
+        type_and_send("cut 84")
+        full_row = None
+        if wait_for("tailorbird: reply 4 kept 84 bytes and is failed") and kept:
+            vm.screenshot("full-row-failed")
+            full_row = halted + ["took", "type fail", "enter", "took", "failed", "type cut 84", "enter", "took", "chunk " + whole_row, "failed"]
+            screens.same("full-row-failed", full_row, {
+                "one character fewer": full_row[:-2] + ["chunk " + whole_row[:83], "failed"],
+                "its last character changed": full_row[:-2] + ["chunk " + whole_row[:83] + "X", "failed"],
+                "complete, not failed": full_row[:-1] + ["done"]})
         # T6
         type_and_send("leave")
         wait_for("tailorbird: model service: stopped")
-        wait_for("tailorbird: reply 4 kept 16 bytes and is failed")
+        wait_for("tailorbird: reply 5 kept 16 bytes and is failed")
         type_and_send("anyone")
         time.sleep(2)
         vm.screenshot("service-stopped")
-        if kept:
-            ended = halted + ["took", "type fail", "enter", "took", "failed", "type leave", "enter", "took", "chunk " + (OPENING + "leave")[:16], "gone", "type anyone", "enter"]
+        if full_row:
+            ended = full_row + ["type leave", "enter", "took", "chunk " + (OPENING + "leave")[:16], "gone", "type anyone", "enter"]
             screens.same("service-stopped", ended, {
                 "the model still ready": [step for step in ended if step != "gone"],
                 "the last message changed": ended[:-2] + ["type anyonf", "enter"],
                 "the failed reply complete": [("done" if step == "failed" else step) for step in ended],
                 "one character of what arrived before it stopped changed": [("chunk This is the tesT" if step == "chunk " + (OPENING + "leave")[:16] else step) for step in ended]})
-        if any(line.startswith("tailorbird: reply 5") for line in replies()):
+        if any(line.startswith("tailorbird: reply 6") for line in replies()):
             problems.append("T6: a reply began after the service had stopped")
         # T7
         vm.key("esc")

@@ -8,6 +8,7 @@
 //! What it does with a message:
 //!  `fail`   answers that the reply failed;
 //!  `leave`  says a few bytes and ends, as a service that stops would;
+//!  `cut N`  (N in digits, at most 480) sends an answer of exactly N bytes, then says the reply failed;
 //!  anything else: answers in pieces of eight bytes, a pause between them, and stops at once if told to.
 use pcp_game_guest::{call, exit, log, open, sleep_us};
 use tailorbird_ui::wire::{pack, Kind, Reader, Record, Step};
@@ -111,11 +112,21 @@ pub extern "C" fn worker_main() -> ! {
             send(fd, Kind::Failed, got.conversation, got.reply, b"");
             continue;
         }
-        let mut answer = [0u8; 480];
+        let mut answer = [b'W'; 480];
         let opening = b"This is the test worker, not a model. You said: ";
         answer[..opening.len()].copy_from_slice(opening);
         let length = (opening.len() + said.len()).min(answer.len());
         answer[opening.len()..length].copy_from_slice(&said[..length - opening.len()]);
+        // `cut N`: exactly N bytes (the answer, cut short or filled out with W), then a failure.
+        if let Some(digits) = said.strip_prefix(b"cut ").filter(|d| !d.is_empty() && d.len() <= 3 && d.iter().all(u8::is_ascii_digit)) {
+            let exact = digits.iter().fold(0usize, |n, d| n * 10 + (d - b'0') as usize).min(answer.len());
+            for piece in answer[..exact].chunks(64) {
+                send(fd, Kind::Chunk, got.conversation, got.reply, piece);
+            }
+            send(fd, Kind::Failed, got.conversation, got.reply, b"");
+            log(b"test worker: sent an answer of an exact length and said it failed\n");
+            continue;
+        }
         let mut stopped = false;
         for (index, piece) in answer[..length].chunks(8).enumerate() {
             if let Some(other) = next(glance, &mut reader, false) {

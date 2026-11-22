@@ -330,6 +330,26 @@ fn range(f: &mut Frame<'_>, top: usize, shown: usize, total: usize, what: &str) 
     label(f, x + what.len() as i32 * 6 + 6, 392, "(Page Up/Down)", 1, SOFT);
 }
 
+/// How a reply that kept some text ended, if it did not simply complete.
+fn ended(turn: &crate::talk::Turn) -> Option<&'static str> {
+    match turn.state {
+        _ if turn.text.as_str().is_empty() => None,
+        crate::talk::Reply::Cancelled => Some("(stopped)"),
+        crate::talk::Reply::Failed => Some("(failed)"),
+        _ => None,
+    }
+}
+
+/// Whether those words go on a row of their own under the reply: when its last row is full, or has
+/// not room after its last character for a gap and the words within the width of the text.
+fn ended_below(turn: &crate::talk::Turn) -> bool {
+    const ACROSS: usize = 84;
+    ended(turn).is_some_and(|how| {
+        let last = turn.text.as_str().len() % ACROSS;
+        last == 0 || last + 2 + how.len() > ACROSS
+    })
+}
+
 /// The conversation, in the Work panel: the latest turns that fit, each with who really said it. Taylor's
 /// name stands only on turns a model service sent; what this program says about the state of things is
 /// marked as PCP OS's. Nothing here is a task: no stages, no Stop.
@@ -349,7 +369,7 @@ fn transcript(f: &mut Frame<'_>, talk: &crate::talk::Talk) {
     };
     label(f, 790, 196, model, 1, colour);
     // Rows each turn needs: its text wrapped, at least one, and a gap after it.
-    let rows = |t: &crate::talk::Turn| (t.text.as_str().len().div_ceil(ACROSS).max(1) + t.cut as usize) as i32 + 1;
+    let rows = |t: &crate::talk::Turn| (t.text.as_str().len().div_ceil(ACROSS).max(1) + t.cut as usize + ended_below(t) as usize) as i32 + 1;
     let turns = talk.turns();
     let mut first = turns.len();
     let mut used = 0;
@@ -384,8 +404,16 @@ fn transcript(f: &mut Frame<'_>, talk: &crate::talk::Talk) {
             };
             label(f, 393, y, waiting, 1, SOFT);
             y += 12;
-        } else if turn.state == Reply::Cancelled || turn.state == Reply::Failed {
-            label(f, 393 + (text.len() % ACROSS) as i32 * 6 + 8, y - 12, if turn.state == Reply::Cancelled { "(stopped)" } else { "(failed)" }, 1, AMBER);
+        } else if let Some(how) = ended(turn) {
+            // After the last character where the row has room for it; otherwise on a row of its own.
+            // It is never drawn over the reply: a reply that fills its last row exactly used to have
+            // it painted across that row's beginning (Director 2 counted the pixels lost).
+            if ended_below(turn) {
+                label(f, 393, y, how, 1, AMBER);
+                y += 12;
+            } else {
+                label(f, 393 + (text.len() % ACROSS) as i32 * 6 + 8, y - 12, how, 1, AMBER);
+            }
         }
         if turn.cut {
             label(f, 393, y, "(the rest is not kept)", 1, AMBER);
@@ -617,6 +645,62 @@ mod tests {
         let mut f = Frame::new(&mut pixels, 960, 540, 960, GROUND, false);
         paint_frame(&mut f, ui);
         pixels
+    }
+
+    /// A reply that was stopped or failed says so without one pixel of the reply being painted over,
+    /// whatever its length: after its last character where there is room, on a row of its own where
+    /// there is not. Director 2 found the words drawn across the start of a reply that filled its
+    /// last row exactly (84, 168, ... characters).
+    #[test]
+    fn how_a_reply_ended_is_never_drawn_over_the_reply() {
+        use crate::talk::{Incoming, Service};
+        let with = |length: usize, end: u8| {
+            let mut ui = Ui::new();
+            ui.talk.service_is(Service::Ready);
+            for b in b"go" { assert!(ui.input.push_ascii(*b)); }
+            let _ = ui.intent(crate::Action::Submit);
+            let words: std::string::String = (0..length).map(|i| (b'A' + (i % 26) as u8) as char).collect();
+            ui.talk.receive(Incoming::Chunk { conversation: 1, reply: 1, text: &words });
+            match end {
+                0 => { ui.talk.receive(Incoming::Done { conversation: 1, reply: 1 }); }
+                1 => { let _ = ui.talk.cancel(); }
+                _ => { ui.talk.receive(Incoming::Failed { conversation: 1, reply: 1 }); }
+            }
+            shot(&ui)
+        };
+        // The person's turn is one row at y 218 and a gap; the reply's text begins at y 242, x 393.
+        for length in [1usize, 60, 72, 73, 74, 75, 83, 84, 85, 167, 168, 169, 251, 252, 253, 336] {
+            let complete = with(length, 0);
+            for (end, words) in [(1u8, "(stopped)"), (2, "(failed)")] {
+                let ended = with(length, end);
+                let rows = length.div_ceil(84);
+                let last = if length % 84 == 0 { 84 } else { length % 84 };
+                // No pixel of the reply's own cells differs from the same reply drawn complete.
+                for row in 0..rows {
+                    let across = if row + 1 == rows { last } else { 84 };
+                    for y in 242 + 12 * row..242 + 12 * row + 12 {
+                        for x in 393..393 + 6 * across {
+                            assert_eq!(ended[y * 960 + x], complete[y * 960 + x], "{length} characters {words}: the reply's pixel at {x},{y} was painted over");
+                        }
+                    }
+                }
+                // And the words are there: drawn alone at the place they belong, they are what differs.
+                let below = length % 84 == 0 || length % 84 + 2 + words.len() > 84;
+                let (x, y) = if below { (393, 242 + 12 * rows as i32) } else { (393 + 6 * last as i32 + 8, 242 + 12 * (rows as i32 - 1)) };
+                let mut alone = vec![PANEL; 960 * 540];
+                label(&mut Frame::new(&mut alone, 960, 540, 960, PANEL, false), x, y, words, 1, AMBER);
+                let mut inked = 0;
+                for at in 0..960 * 540 {
+                    if alone[at] != PANEL {
+                        inked += 1;
+                        assert_eq!(ended[at], alone[at], "{length} characters {words}: not drawn whole at {x},{y}");
+                    }
+                }
+                assert!(inked > 50, "{words} drew nothing");
+                // The words stay within the width of the text.
+                assert!(x as usize + 6 * words.len() <= 393 + 6 * 84 + 8, "{length} characters {words}: runs past the text");
+            }
+        }
     }
 
     /// Without a model the screen says what Taylor can do today only when PCP OS lets it, and after a
