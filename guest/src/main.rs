@@ -207,6 +207,11 @@ pub extern "C" fn tailorbird_main() -> ! {
                                 if launch.is_none() {
                                     launch = same_launch(&fresh);
                                 }
+                                // The first list to succeed, here as at start or on Alt+N, also says
+                                // where a new note goes, unless a project was already chosen.
+                                if ui.active.is_none() {
+                                    ui.active = launch.and_then(|(root, _)| note::default_project(root));
+                                }
                                 ui.projects = fresh;
                                 ui.top = ui.projects.top;
                                 ui.place = ui.place.min(ui.projects.shown.saturating_sub(1));
