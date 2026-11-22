@@ -73,6 +73,23 @@ the same prompt. The serial output gives guest-clock compute time for each model
 Full-model time to first visible text, named Stop, and floating-point state
 across competing processes require the integrated worker trial.
 
+The stable worker qualification uses Rust 1.97.0's shipped Linux x86-64
+`core` and `alloc` with PCP OS entry and syscall support. From the repository
+root on Linux, build the reference worker with
+
+```sh
+PCP_MODEL_MANIFEST_SHA256=bbdaa8cd263d9454159f12b55ec32613d18a4b7b4d75d284ad0cadc932bc1f4b \
+  cargo +1.97.0 build --locked --release --config guest/targets/stable-worker.toml \
+  --target x86_64-unknown-linux-gnu --features stable-model-worker --bin model-worker
+```
+
+The static ELF in `target/x86_64-unknown-linux-gnu/release/model-worker` runs
+under PCP OS. The linker uses the existing guest script and omits the host C
+runtime. The build disables the red zone for newly compiled crates. The
+precompiled Rust libraries retain the Linux target's red zone. The
+[kernel qualification](https://github.com/KirtusJ/pcp-os/pull/390) exercises
+pre-emption with that ABI. Image assembly binds each worker to its model manifest.
+
 ## Conversation behavior and bounds
 
 The worker uses the shared 24-byte TB records, including canonical service IDs,

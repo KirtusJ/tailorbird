@@ -1,18 +1,22 @@
 //! Qualification guest for the SSE2 worker target. Uses the pinned decoder's tiny reference models.
-#![cfg_attr(target_os = "none", no_std)]
-#![cfg_attr(target_os = "none", no_main)]
+#![cfg_attr(any(target_os = "none", all(target_os = "linux", feature = "stable-model-worker")), no_std)]
+#![cfg_attr(any(target_os = "none", all(target_os = "linux", feature = "stable-model-worker")), no_main)]
 
-#[cfg(not(target_os = "none"))]
+#[cfg(not(any(target_os = "none", all(target_os = "linux", feature = "stable-model-worker"))))]
 fn main() {}
 
-#[cfg(target_os = "none")]
+#[cfg(any(target_os = "none", all(target_os = "linux", feature = "stable-model-worker")))]
 extern crate alloc;
 
-#[cfg(target_os = "none")]
+#[cfg(any(target_os = "none", all(target_os = "linux", feature = "stable-model-worker")))]
 #[path = "../../pcp-os/store/apps/parrots-all-the-way-down/guest/src/heap.rs"]
 mod heap;
 
-#[cfg(target_os = "none")]
+#[cfg(all(target_os = "linux", feature = "stable-model-worker"))]
+#[path = "../src/stable_compare.rs"]
+mod stable_compare;
+
+#[cfg(any(target_os = "none", all(target_os = "linux", feature = "stable-model-worker")))]
 mod guest {
     use pcp_game_guest::{exit, log, sleep_us, time_us};
     use pcpos_gguf::Index;
@@ -64,11 +68,32 @@ mod guest {
         assert_eq!(interrupted, Err(Error::Cancelled));
         assert_eq!(decoder.position(), 0);
         assert_eq!(decoder.prefill(&prompt, || true).unwrap(), final_scores);
-        log(alloc::format!("Qwen four-step fixture compute_us={compute_us}\n").as_bytes());
+        // The guest has no unwinder. Stream the timing without pulling the
+        // Linux sysroot's allocation-backed formatting routine into the probe.
+        struct Serial;
+        impl core::fmt::Write for Serial {
+            fn write_str(&mut self, text: &str) -> core::fmt::Result {
+                log(text.as_bytes());
+                Ok(())
+            }
+        }
+        use core::fmt::Write;
+        writeln!(Serial, "Qwen four-step fixture compute_us={compute_us}").unwrap();
     }
 
     #[no_mangle]
     pub extern "C" fn probe_main() -> ! {
+        #[cfg(all(target_os = "linux", feature = "stable-model-worker"))]
+        unsafe {
+            use super::stable_compare::{bcmp, memcmp};
+            let a = [7, 0, 0x80];
+            let b = [7, 0, 0x7f];
+            assert_eq!(memcmp(core::ptr::null(), core::ptr::null(), 0), 0);
+            assert_eq!(bcmp(a.as_ptr(), b.as_ptr(), 2), 0);
+            assert!(memcmp(a.as_ptr(), b.as_ptr(), 3) > 0);
+            assert!(memcmp(b.as_ptr(), a.as_ptr(), 3) < 0);
+            assert_ne!(bcmp(a.as_ptr(), b.as_ptr(), 3), 0);
+        }
         verify(
             include_bytes!(concat!(env!("QWEN_FIXTURE_DIR"), "/qwen2.gguf")),
             include_str!("../../pcp-os/PCP_OS_Rust/crates/pcpos-qwen/tests/data/qwen2-forward.txt"),

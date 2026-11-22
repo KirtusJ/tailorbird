@@ -70,6 +70,30 @@ jobs:
             cp "target/$name/release/examples/sse2_forward" "qualification/$name"
           done
           (cd qualification && sha256sum model-worker model-worker-qwen3-8b x86_64-*) | tee qualification/binaries.sha256
+      - name: Link and inspect both stable-toolchain workers
+        shell: bash
+        run: |
+          rustc +1.97.0 -vV > qualification/stable-compiler.txt
+          common=(--config guest/targets/stable-worker.toml --locked --release --target x86_64-unknown-linux-gnu)
+          for model in reference qwen3-8b; do
+            pin=$PCP_MODEL_MANIFEST_SHA256
+            if [[ "$model" == qwen3-8b ]]; then pin=$QWEN3_8B_MANIFEST; fi
+            PCP_MODEL_MANIFEST_SHA256="$pin" cargo +1.97.0 build "${common[@]}" --features stable-model-worker --bin model-worker
+            worker="model-worker-stable-$model"
+            cp target/x86_64-unknown-linux-gnu/release/model-worker "qualification/$worker"
+            test -z "$(nm -u "qualification/$worker")"
+            readelf -hlWr "qualification/$worker" > "qualification/$worker-elf.txt"
+            grep -Eq 'Entry point address: +0x8000400000$' "qualification/$worker-elf.txt"
+            if grep -Eq 'INTERP|DYNAMIC| R_X86_64_' "qualification/$worker-elf.txt"; then exit 1; fi
+            objdump -d "qualification/$worker" > "$RUNNER_TEMP/stable.s"
+            grep -m1 -E '[[:space:]]mulsd[[:space:]]' "$RUNNER_TEMP/stable.s" >> qualification/codegen.txt
+            grep -m1 -E '[[:space:]]addsd[[:space:]]' "$RUNNER_TEMP/stable.s" >> qualification/codegen.txt
+            grep -aFq "$pin" "qualification/$worker"
+            printf '%s  %s\n' "$pin" "$worker" >> qualification/model-manifests.txt
+          done
+          cargo +1.97.0 build "${common[@]}" --features stable-model-worker,sse2-qualification --example sse2_forward
+          cp target/x86_64-unknown-linux-gnu/release/examples/sse2_forward qualification/x86_64-linux-stable
+          (cd qualification && sha256sum model-worker-stable-reference model-worker-stable-qwen3-8b x86_64-linux-stable) >> qualification/binaries.sha256
       - name: Run both numerical probes in the same PCP OS kernel
         run: |
           RUSTUP_TOOLCHAIN=1.97.0 sh pcp-os/PCP_OS_Rust/crates/pcpos-kernel/run.sh build
@@ -77,8 +101,8 @@ jobs:
           cd qualification
           sha256sum "$RUNNER_TEMP/kernel.elf32" > kernel.sha256
           for trial in 1 2; do
-            order=(x86_64-unknown-none x86_64-pcpos-worker)
-            if [[ "$trial" == 2 ]]; then order=(x86_64-pcpos-worker x86_64-unknown-none); fi
+            order=(x86_64-unknown-none x86_64-pcpos-worker x86_64-linux-stable)
+            if [[ "$trial" == 2 ]]; then order=(x86_64-linux-stable x86_64-pcpos-worker x86_64-unknown-none); fi
             for name in "${order[@]}"; do
               cp "$name" qwen-probe
               status=0
