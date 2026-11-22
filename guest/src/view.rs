@@ -706,7 +706,10 @@ mod tests {
         let count = exact.iter().filter(|&&pixel| pixel != 0).count();
         assert!(count > 50, "the exact queued label must have visible pixels");
         let different = shown.iter().zip(&blank).zip(&exact)
-            .filter(|((actual, previous), glyph)| (*actual != *previous) != (**glyph != 0)).count();
+            .filter(|p| {
+                let ((actual, previous), glyph) = *p;
+                (*actual != *previous) != (*glyph != 0)
+            }).count();
         assert_eq!(different, 0, "the real screen has {different} glyph-coverage errors");
 
         let mut misleading = vec![0u32; shown.len()];
