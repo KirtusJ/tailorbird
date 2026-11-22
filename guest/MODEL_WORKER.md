@@ -40,6 +40,36 @@ successful weight verification, GGUF/model/tokenizer admission, an exact known
 chat-template check, fallible buffer allocation, and one actual forward preflight.
 The allocator is the existing Parrots guest page allocator, reused by path.
 
+## Worker with hardware floating point
+
+For native speed qualification, the worker has its own optional x86-64 target.
+It uses the System V floating-point ABI and baseline SSE2. The target keeps
+the PCP OS guest entry point, static large-address layout and disabled red zone.
+Build from the Tailorbird repository root with its pinned submodule:
+
+```sh
+rustup toolchain install nightly-2026-05-01 --profile minimal --component rust-src
+PCP_MODEL_MANIFEST_SHA256=bbdaa8cd263d9454159f12b55ec32613d18a4b7b4d75d284ad0cadc932bc1f4b \
+  cargo +nightly-2026-05-01 build --locked --release -Zjson-target-spec \
+  -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem \
+  --target guest/targets/x86_64-pcpos-worker.json --features model-worker --bin model-worker
+```
+
+The output is `target/x86_64-pcpos-worker/release/model-worker`. This path
+uses a dated nightly because the custom target schema and Cargo's build-std
+interface are unstable. It compiles core, alloc, compiler builtins and worker
+dependencies for the same ABI. The kernel, loader and foreground application
+use their existing toolchains. Record the worker digest from the actual build
+in its image receipt. The manifest in the command selects the 0.5B reference.
+
+The SSE2 qualification workflow builds that worker, inspects its instructions,
+and boots two tiny decoder probes on the same QEMU CPU and PCP OS kernel. Each
+compares four steps for each of Qwen2 and Qwen3 against the pinned reference
+scores. Each also interrupts prompt processing, checks the rollback, and retries
+the same prompt. The serial output gives guest-clock compute time for each model.
+Full-model time to first visible text, named Stop, and floating-point state
+across competing processes require the integrated worker trial.
+
 ## Conversation behavior and bounds
 
 The worker uses the shared 24-byte TB records, including canonical service IDs,
@@ -110,9 +140,8 @@ used one executable in step/prefill/prefill/step order. Sequential prompt proces
 took 97.21/84.12 seconds with repeated step and 58.32/50.21 with atomic prefill.
 All 1,215,488 saved vocabulary scores and eight token IDs matched byte for byte.
 The observed mean reduction was 40.1%; shared-host timing varied and does not
-predict native speed. The stock native target uses software floating arithmetic;
-a supported hardware-floating guest ABI and state-switch qualification remain
-separate work. This worker does not change that ABI or enable reassociation.
+predict native speed. The stock native target uses software floating arithmetic.
+The optional SSE2 worker above needs separate state-switch and performance measurements.
 
 Native linking is not a boot. Required next evidence: real verified weights through
 the actual worker and Tailorbird, loading/refusal controls, Stop during prefill and

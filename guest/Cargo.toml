@@ -12,6 +12,7 @@ live-work-demo = []
 talk-test-worker = []
 # Opt-in inference qualification worker; never enabled by the ordinary UI build.
 model-worker = ["dep:pcpos-qwen", "dep:pcpos-gguf", "dep:pcpos-model-media"]
+sse2-qualification = ["model-worker"]
 
 [lib]
 name = "tailorbird_ui"
@@ -51,6 +52,10 @@ required-features = ["model-worker"]
 [[example]]
 name = "model_chat"
 required-features = ["model-worker"]
+
+[[example]]
+name = "sse2_forward"
+required-features = ["sse2-qualification"]
 
 [dependencies]
 pcpos-qwen = { path = "../pcp-os/PCP_OS_Rust/crates/pcpos-qwen", optional = true }
