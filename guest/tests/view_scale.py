@@ -671,8 +671,8 @@ def check(kernel, app, measurement, folder, small):
     # starts connected=false, Model::Unknown. This is a display identity
     # check, not a claim about a trusted service or an authenticated model.
     offline_labels = (
-        ("No service", 796, 26, 10, 20, BAD, GROUND),
-        ("CONNECTION", 38, 115, 6, 12, TEAL, PANEL),
+        ("Not ready", 796, 26, 10, 20, BAD, GROUND),
+        ("TAYLOR IS", 38, 115, 6, 12, TEAL, PANEL),
         ("Not connected", 38, 135, 10, 20, AMBER, PANEL),
     )
 
@@ -799,10 +799,10 @@ def check(kernel, app, measurement, folder, small):
     # with no permission inspector. An empty/misleading output pane used
     # to pass even with valid title, Stop, F6 and editor pixels.
     empty_output_labels = (
-        ("Nothing is running.", 339, 286, 10, 20, TEXT),
-        ("No model service is connected, so Tailorbird", 339, 316, 10, 20, AMBER),
-        ("cannot build yet.", 339, 340, 10, 20, AMBER),
-        ("The rest of PCP OS works without it.", 339, 384, 10, 20, GOOD),
+        ("Hi, I'm Taylor. Nothing is running.", 420, 286, 10, 20, TEXT),
+        ("I am not switched on yet, so I", 420, 316, 10, 20, AMBER),
+        ("cannot build anything.", 420, 340, 10, 20, AMBER),
+        ("The rest of PCP OS works without me.", 420, 384, 10, 20, GOOD),
         ("returns to Programs", 370, 420, 6, 12, SOFT),
     )
 
@@ -868,8 +868,8 @@ def check(kernel, app, measurement, folder, small):
     # must remain legible even while the model and service are unavailable.
     affordance_labels = (
         ("changes the mode", 97, 289, SOFT),
-        ("REQUEST", 32, 472, TEAL),
-        ("BYTES", 32, 489, TEAL),
+        ("ASK", 32, 472, TEAL),
+        ("USED", 32, 489, TEAL),
         ("/120", 102, 489, SOFT),
     )
 

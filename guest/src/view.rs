@@ -34,6 +34,42 @@ fn sentence<'a>(value: &str, buf: &'a mut [u8; 40]) -> &'a str {
     core::str::from_utf8(&buf[..used]).unwrap_or("")
 }
 
+/// Taylor, the tailorbird: green back, pale front, a long tail held up, and an amber crown worn like a
+/// builder's hat. Sixteen by fourteen squares, each `unit` of the layout across. Facing left, toward
+/// the words beside it.
+const TAYLOR: [&[u8; 16]; 14] = [
+    b"............G...",
+    b"...AAAA....GG...",
+    b"..AAAAAA...GG...",
+    b".AAAAAAAA.GG....",
+    b"..GGKGGGGGGG....",
+    b"SSGGGGGGGGGG....",
+    b"..GWWWGGGGG.....",
+    b"..WWWWWGGGG.....",
+    b"..WWWWWWGG......",
+    b"...WWWWWG.......",
+    b"....WWWW........",
+    b".....S.S........",
+    b".....S.S........",
+    b"....SS.SS.......",
+];
+
+fn taylor(f: &mut Frame<'_>, x: i32, y: i32, unit: i32) {
+    for (row, line) in TAYLOR.iter().enumerate() {
+        for (column, square) in line.iter().enumerate() {
+            let colour = match square {
+                b'G' => GOOD,
+                b'A' => AMBER,
+                b'W' => TEXT,
+                b'K' => GROUND,
+                b'S' => SOFT,
+                _ => continue,
+            };
+            f.rect(x + column as i32 * unit, y + row as i32 * unit, unit, unit, colour);
+        }
+    }
+}
+
 /// A key's name on a small raised cap, and what it does after it. Returns where the next one starts.
 fn key(f: &mut Frame<'_>, x: i32, y: i32, name: &str, does: &str) -> i32 {
     let cap = name.len() as i32 * 6 + 8;
@@ -64,14 +100,14 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
     label(f, 22, 52, "PCP OS > Programs > Tailorbird (Esc returns to Programs)", 1, SOFT);
     label(f, 202, 27, "builds and fixes on this computer", 2, SOFT);
     // What is behind it, said once, where the eye lands last: a lamp and two words.
-    let (lamp, link) = if ui.connected { (GOOD, "Service linked") } else { (BAD, "No service") };
+    let (lamp, link) = if ui.connected { (GOOD, "Ready") } else { (BAD, "Not ready") };
     f.well(764, 18, 176, 36, GROUND);
     f.rect(778, 31, 10, 10, lamp);
     label(f, 796, 26, link, 2, lamp);
 
     // Mode and Stop are always visible even if the model is missing.
     f.panel(20, 94, 280, 352, PANEL);
-    label(f, 38, 115, "CONNECTION", 1, TEAL);
+    label(f, 38, 115, "TAYLOR IS", 1, TEAL);
     label(f, 38, 135, sentence(ui.model.label(), &mut name), 2,
           if ui.model == Model::Ready { GOOD } else { AMBER });
     label(f, 38, 191, "MODE", 1, TEAL);
@@ -116,7 +152,7 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
         // visible in the separate x=20..300 sidebar.
     } else if ui.lines().is_empty() {
         // Nothing has happened: show what will, as three places a job passes through, none of them lit.
-        for (n, (step, what)) in [("1", "Ask"), ("2", "Review"), ("3", "Build")].iter().enumerate() {
+        for (n, (step, what)) in [("1", "You ask"), ("2", "You check"), ("3", "I build")].iter().enumerate() {
             let x = 339 + n as i32 * 196;
             f.well(x, 196, 180, 64, GROUND);
             label(f, x + 16, 212, step, 3, SOFT);
@@ -125,14 +161,17 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
                 f.rect(x + 182, 227, 12, 2, SOFT);
             }
         }
-        label(f, 339, 286, "Nothing is running.", 2, TEXT);
+        // Taylor says who it is once, says what is so in words anyone can read, and stops.
+        taylor(f, 339, 286, 4);
+        label(f, 420, 286, "Hi, I'm Taylor. Nothing is running.", 2, TEXT);
         if ui.connected {
-            label(f, 339, 316, "Type what to build or fix, then press Enter.", 2, SOFT);
+            label(f, 420, 316, "Tell me in your own words what to", 2, SOFT);
+            label(f, 420, 340, "build or fix. If I can, I will.", 2, SOFT);
         } else {
-            label(f, 339, 316, "No model service is connected, so Tailorbird", 2, AMBER);
-            label(f, 339, 340, "cannot build yet.", 2, AMBER);
+            label(f, 420, 316, "I am not switched on yet, so I", 2, AMBER);
+            label(f, 420, 340, "cannot build anything.", 2, AMBER);
         }
-        label(f, 339, 384, "The rest of PCP OS works without it.", 2, GOOD);
+        label(f, 420, 384, "The rest of PCP OS works without me.", 2, GOOD);
         key(f, 339, 420, "Esc", "returns to Programs");
     } else {
         for (i, event) in ui.lines().iter().enumerate() {
@@ -179,11 +218,11 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
     }
 
     f.panel(20, 458, 920, 48, PANEL);
-    label(f, 32, 472, "REQUEST", 1, TEAL);
+    label(f, 32, 472, "ASK", 1, TEAL);
     // Trailing ASCII spaces have blank font cells. Display the exact byte
     // count alongside the editor so foo and foo-space are distinguishable.
     // These count glyphs are in the x<140 margin, outside the text raster.
-    label(f, 32, 489, "BYTES", 1, TEAL);
+    label(f, 32, 489, "USED", 1, TEAL);
     let mut count_buf = [0u8; 20];
     label(f, 70, 489, decimal_u64(ui.input.as_str().len() as u64, &mut count_buf), 1, TEXT);
     label(f, 102, 489, "/120", 1, SOFT);
