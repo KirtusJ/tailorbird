@@ -284,6 +284,11 @@ pub struct Ui {
     pub notice: Text<84>,
     /// PCP OS lets this launch propose files to it. Read once at start; decides what Taylor says it can do.
     pub notes: bool,
+    /// PCP OS has confirmed that this launch gave up proposing files. Set only on its receipt, never
+    /// cleared: only starting the program again brings the right back.
+    pub gave_up: bool,
+    /// Alt+G was pressed once and the next Alt+G gives up; anything else pressed in between cancels.
+    pub give_up_armed: bool,
     /// Every note asked for in this launch, each with what the kernel's receipt established about it.
     pub jobs: jobs::Jobs,
     /// Where Alt+N puts a note: a project the kernel's list named, or the first project under the folder
@@ -322,7 +327,7 @@ impl Ui {
             model: Model::Unknown, connected: false, service_epoch: 0,
             task: Task { id: 0, seq: 0, state: TaskState::Idle },
             stop_intent_task: None, permission: None, decision_pending: None, decision_choice: None,
-            effect_uncertain: false, notice: Text::new(), notes: false, jobs: jobs::Jobs::new(), active: None, talk: talk::Talk::new(), to_service: [None; talk::WAITING], talk_shown: false, show_projects: false, projects: projects::Projects::new(), browse_level: 0, place: 0, top: 0, file_place: 0, file_top: 0,
+            effect_uncertain: false, notice: Text::new(), notes: false, gave_up: false, give_up_armed: false, jobs: jobs::Jobs::new(), active: None, talk: talk::Talk::new(), to_service: [None; talk::WAITING], talk_shown: false, show_projects: false, projects: projects::Projects::new(), browse_level: 0, place: 0, top: 0, file_place: 0, file_top: 0,
             files: projects::Files::new(), viewed: projects::Viewed::new(),
             lines: [Line::empty(); LOG_LIMIT], count: 0, feed_hidden_rows: 0,
         }

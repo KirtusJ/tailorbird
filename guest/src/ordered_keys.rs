@@ -5,7 +5,7 @@
 //! losing repeated presses and order within a batch. Tailorbird must not
 //! use those bitmaps for a text editor. This parser consumes each event in
 //! arrival order without altering any kernel or shared guest functionality.
-use crate::{exact_ascii, Action, Ui};
+use crate::{exact_ascii, Action, Text, Ui};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum KeyOutcome {
@@ -16,6 +16,8 @@ pub enum KeyOutcome {
     MakeNote,
     /// Alt+P turned the project list on or off; when on, the program reads a fresh list.
     Projects,
+    /// Alt+G pressed a second time: give up making files for the rest of this launch.
+    GiveUp,
 }
 
 pub struct OrderedKeyboard {
@@ -32,6 +34,15 @@ impl OrderedKeyboard {
     /// code: US-PC set-1 key index; down: true on press/repeat, false on release.
     /// Unsupported/extended keys are not a replacement for a locale-aware IME.
     pub fn event(&mut self, code: usize, down: bool, ui: &mut Ui) -> KeyOutcome {
+        // A key that takes back the first Alt+G takes its words off the screen as well, even a key
+        // that does nothing else, such as Shift on its own: the screen is drawn again (Director B3
+        // saw the prompt stay up after it no longer applied).
+        let armed = ui.give_up_armed;
+        let outcome = self.key(code, down, ui);
+        if armed && !ui.give_up_armed && outcome == KeyOutcome::Unchanged { KeyOutcome::Redraw } else { outcome }
+    }
+
+    fn key(&mut self, code: usize, down: bool, ui: &mut Ui) -> KeyOutcome {
         if code >= self.held.len() {
             return KeyOutcome::Unchanged;
         }
@@ -56,6 +67,29 @@ impl OrderedKeyboard {
         }
         if !down {
             return KeyOutcome::Unchanged;
+        }
+        // Giving up making files takes Alt+G twice with nothing else pressed between: any other
+        // fresh key press (not Alt itself, not a repeat) takes the first one back.
+        let armed = ui.give_up_armed;
+        if !already_down && code != 56 && !(code == 34 && self.held[56]) {
+            ui.give_up_armed = false;
+        }
+        if code == 34 && self.held[56] && !self.held[29] {
+            if already_down || self.held[42] || self.held[54] { return KeyOutcome::Unchanged; }
+            if !ui.notes || ui.gave_up {
+                ui.notice = Text::display(if ui.gave_up { crate::note::GAVE_UP } else { crate::note::NOT_ALLOWED });
+                return KeyOutcome::Redraw;
+            }
+            if armed {
+                ui.give_up_armed = false;
+                return KeyOutcome::GiveUp;
+            }
+            ui.give_up_armed = true;
+            ui.notice = Text::display(crate::note::GIVE_UP_ASK);
+            return KeyOutcome::Redraw;
+        }
+        if armed && !ui.give_up_armed {
+            ui.notice = Text::new();
         }
         // F6 changes presentation once per physical press.
         if code == 64 && !self.held[56] && !self.held[29] && !self.held[42] && !self.held[54] {
@@ -577,5 +611,84 @@ mod tests {
         keys.event(56, false, &mut ui);
         assert!(ui.input.is_empty());
         assert_eq!(keys.event(1, true, &mut ui), KeyOutcome::Exit);
+    }
+
+    #[test]
+    fn giving_up_takes_alt_g_twice_with_nothing_between() {
+        let (alt, g, n) = (56usize, 34usize, 49usize);
+        let tap = |keys: &mut OrderedKeyboard, ui: &mut Ui, code: usize| {
+            let outcome = keys.event(code, true, ui);
+            keys.event(code, false, ui);
+            outcome
+        };
+        let mut keys = OrderedKeyboard::new();
+        let mut ui = Ui::new();
+        // Where PCP OS never let this launch make files there is nothing to give up, and it says so.
+        keys.event(alt, true, &mut ui);
+        assert_eq!(tap(&mut keys, &mut ui, g), KeyOutcome::Redraw);
+        assert_eq!((ui.give_up_armed, ui.notice.as_str()), (false, crate::note::NOT_ALLOWED));
+        keys.event(alt, false, &mut ui);
+
+        ui.notes = true;
+        // Once asks; a second time, with Alt let go and pressed again in between, gives up.
+        keys.event(alt, true, &mut ui);
+        assert_eq!(tap(&mut keys, &mut ui, g), KeyOutcome::Redraw);
+        assert_eq!((ui.give_up_armed, ui.notice.as_str()), (true, crate::note::GIVE_UP_ASK));
+        keys.event(alt, false, &mut ui);
+        keys.event(alt, true, &mut ui);
+        assert_eq!(tap(&mut keys, &mut ui, g), KeyOutcome::GiveUp);
+        assert!(!ui.give_up_armed);
+        keys.event(alt, false, &mut ui);
+
+        // A held G that repeats is one press, not two.
+        keys.event(alt, true, &mut ui);
+        assert_eq!(keys.event(g, true, &mut ui), KeyOutcome::Redraw);
+        assert_eq!(keys.event(g, true, &mut ui), KeyOutcome::Unchanged);
+        assert!(ui.give_up_armed);
+        keys.event(g, false, &mut ui);
+        keys.event(alt, false, &mut ui);
+        // Anything else pressed in between takes the first press back, and its words with it.
+        assert_eq!(tap(&mut keys, &mut ui, 30), KeyOutcome::Redraw); // the letter a
+        assert_eq!((ui.give_up_armed, ui.notice.as_str()), (false, ""));
+        keys.event(alt, true, &mut ui);
+        assert_eq!(tap(&mut keys, &mut ui, g), KeyOutcome::Redraw);
+        assert!(ui.give_up_armed);
+        keys.event(alt, false, &mut ui);
+
+        // A key that does nothing else, Shift alone, still takes the first press back and has the
+        // screen drawn again without its words; the next Alt+G only asks again.
+        assert_eq!(keys.event(42, true, &mut ui), KeyOutcome::Redraw);
+        assert_eq!((ui.give_up_armed, ui.notice.as_str()), (false, ""));
+        assert_eq!(keys.event(42, false, &mut ui), KeyOutcome::Unchanged);
+        keys.event(alt, true, &mut ui);
+        assert_eq!(tap(&mut keys, &mut ui, g), KeyOutcome::Redraw);
+        assert_eq!((ui.give_up_armed, ui.notice.as_str()), (true, crate::note::GIVE_UP_ASK));
+        keys.event(alt, false, &mut ui);
+        keys.event(alt, true, &mut ui);
+        assert_eq!(tap(&mut keys, &mut ui, g), KeyOutcome::GiveUp);
+        keys.event(alt, false, &mut ui);
+
+        // With Shift or Ctrl it is another chord and does nothing.
+        for with in [42usize, 29] {
+            let mut keys = OrderedKeyboard::new();
+            let mut ui = Ui::new();
+            ui.notes = true;
+            keys.event(with, true, &mut ui);
+            keys.event(alt, true, &mut ui);
+            assert_eq!(tap(&mut keys, &mut ui, g), KeyOutcome::Unchanged);
+            assert!(!ui.give_up_armed);
+        }
+
+        // Once PCP OS has confirmed, Alt+G only says so, and Alt+N is still a chord the program answers.
+        let mut keys = OrderedKeyboard::new();
+        let mut ui = Ui::new();
+        ui.notes = true;
+        ui.gave_up = true;
+        keys.event(alt, true, &mut ui);
+        assert_eq!(tap(&mut keys, &mut ui, g), KeyOutcome::Redraw);
+        assert_eq!((ui.give_up_armed, ui.notice.as_str()), (false, crate::note::GAVE_UP));
+        keys.event(n, true, &mut ui);
+        keys.event(n, false, &mut ui);
+        assert_eq!(keys.event(alt, false, &mut ui), KeyOutcome::MakeNote);
     }
 }
