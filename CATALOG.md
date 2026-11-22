@@ -18,8 +18,8 @@ Every entry at the top of the repository, and every folder one level down in `gu
 | `guest` | Tailorbird itself: the program that runs on PCP OS, with its tests. | not determined |
 | `pcp-os` | PCP OS at a pinned commit, as a submodule: the kernel and the guest library the program is built against. | not determined |
 | `README.md` | What Tailorbird is, how to build it and what has been measured. | no |
-| `tailorbird-icon.svg` | The small mark: Taylor's head and hard hat on a square tile. A draft until the owner settles the brand. | no |
-| `tailorbird.svg` | The mark: Taylor sewing a leaf. A draft until the owner settles the brand. | no |
+| `tailorbird-icon.svg` | The small mark: Taylor's head and hard hat on a square tile, for sizes under 64 pixels. | no |
+| `tailorbird.svg` | The mark: Taylor in her hard hat, holding her hammer. | no |
 | `guest/examples` | Small programs that draw the real screens on a host, or exercise the model worker, for tests and review. | no |
 | `guest/src` | The source of the program and of the optional model worker. | not determined |
 | `guest/targets` | The compiler target for the SSE2 model worker. | no |

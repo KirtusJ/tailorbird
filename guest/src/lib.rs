@@ -28,6 +28,13 @@ pub mod palette {
     pub const GOOD: u32 = 0x8fe0c2;
     pub const BAD: u32 = 0xf08a72;
 
+    /// Taylor's own colours, the same in the program and in the mark files (`tailorbird.svg`,
+    /// `tailorbird-icon.svg`). They are hers alone: GOOD and AMBER say how something stands, so
+    /// her back and her hat must not borrow them. Her hammer's handle is AMBER and its head SOFT.
+    pub const HARD_HAT: u32 = 0xf2c230;
+    pub const LEAF: u32 = 0x7fae5c;
+    pub const CREAM: u32 = 0xf1f4e4;
+
     /// Enabled Stop needs dark ink against the coral fill. White ink on
     /// that fill is below minimum normal-text contrast; the second line
     /// inside the same control must switch with the heading.

@@ -1,7 +1,7 @@
 //! The picture Tailorbird draws from its state. It is in the library so that the same code that runs on
 //! PCP OS can be drawn and checked on the machine that builds it.
 use crate::frame::Frame;
-use crate::palette::{stop_colors, AMBER, BAD, GOOD, GROUND, PANEL, SOFT, TEAL, TEXT};
+use crate::palette::{stop_colors, AMBER, BAD, CREAM, GOOD, GROUND, HARD_HAT, LEAF, PANEL, SOFT, TEAL, TEXT};
 use crate::{Model, Ui};
 
 /// Words in the typeface's own proportions (a cell twice as tall as wide), at one of three sizes:
@@ -34,16 +34,16 @@ fn sentence<'a>(value: &str, buf: &'a mut [u8; 40]) -> &'a str {
     core::str::from_utf8(&buf[..used]).unwrap_or("")
 }
 
-/// Taylor, the tailorbird: green back, pale front, a long tail held up, and an amber crown worn like a
-/// builder's hat. Sixteen by fourteen squares, each `unit` of the layout across. Facing left, toward
-/// the words beside it.
+/// Taylor, the tailorbird: leaf-green back, cream front, a long tail held up, and a yellow hard hat.
+/// Sixteen by fourteen squares, each `unit` of the layout across. Facing left, toward the words
+/// beside it. She is the same bird as in the mark files, in the same colours (`palette`).
 // Taylor carries a little hammer (the owner's wish), held out in front of her: steel head forward,
-// wooden handle in her wing.
+// wooden handle in her wing. H is her hat; A is the handle and her legs.
 const TAYLOR: [&[u8; 16]; 14] = [
     b"...............G",
-    b"......AAAA....GG",
-    b".....AAAAAA...GG",
-    b"....AAAAAAAA.GG.",
+    b"......HHHH....GG",
+    b".....HHHHHH...GG",
+    b"....HHHHHHHH.GG.",
     b".....GGKGGGGGGG.",
     b"...SSGGGGGGGGGG.",
     b"SS...GWWWGGGGG..",
@@ -51,18 +51,19 @@ const TAYLOR: [&[u8; 16]; 14] = [
     b"SS...WWWWWWGG...",
     b"......WWWWWG....",
     b".......WWWW.....",
-    b"........S.S.....",
-    b"........S.S.....",
-    b".......SS.SS....",
+    b"........A.A.....",
+    b"........A.A.....",
+    b".......AA.AA....",
 ];
 
 fn taylor(f: &mut Frame<'_>, x: i32, y: i32, unit: i32) {
     for (row, line) in TAYLOR.iter().enumerate() {
         for (column, square) in line.iter().enumerate() {
             let colour = match square {
-                b'G' => GOOD,
+                b'G' => LEAF,
+                b'H' => HARD_HAT,
                 b'A' => AMBER,
-                b'W' => TEXT,
+                b'W' => CREAM,
                 b'K' => GROUND,
                 b'S' => SOFT,
                 _ => continue,

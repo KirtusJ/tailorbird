@@ -1,6 +1,6 @@
 # Tailorbird
 
-<img align="right" src="tailorbird.svg" alt="Taylor, a small tailorbird in a yellow hard hat, with a green back and a long cocked tail, sewing the edge of a leaf with a thread held in her bill" width="120">
+<img align="right" src="tailorbird.svg" alt="Taylor, a small tailorbird in a yellow hard hat, with a leaf-green back and a long tail held up, holding a small hammer out in front of her" width="120">
 
 Tailorbird is the PCP OS application for working with a local model worker. This repository is its
 home. The kernel and the guest library stay in `pcp-os`, pinned here as a submodule.
@@ -8,16 +8,19 @@ The [catalogue](CATALOG.md) says what each folder is.
 
 ## Brand
 
-A draft, put up for the owner to correct ([issue 30](https://github.com/KirtusJ/tailorbird/issues/30)). Nothing here is settled until the owner says so.
+Settled by Director Z3 on 22 November 2026, after the owner left the brand to this director to keep sharp and consistent. The owner's own directions are kept as given: Taylor is her own character and not Surfbird's parrot, she wears a hard hat, and she carries a hammer.
 
 - **Name.** Tailorbird is the program. Taylor is who you talk to in it; she is "she".
-- **The mark.** [`tailorbird.svg`](tailorbird.svg): Taylor herself. She is a tailorbird, a small bird with a green back and a long tail held up, in a yellow hard hat because she works on a building site, who builds by sewing leaves together with thread, using her bill as the needle. She is her own character and not Surfbird's parrot; the two marks share only the dark rounded tile, so that they sit together as programs of one system.
-- **The small mark.** [`tailorbird-icon.svg`](tailorbird-icon.svg): her head and hard hat on a square tile, for places too small for the whole drawing. The full mark stops reading below about 64 pixels wide; this one keeps the hat and face at 16.
-- **In the program.** Taylor is already on the screen: a figure of sixteen by fourteen squares in [`guest/src/view.rs`](guest/src/view.rs), green back, pale front, tail held up, an amber builder's hat, and a small hammer held out in front of her. The files above were drawn after it and do not yet match it in two things: the hat is yellow in the files and amber on the screen, and the files show her sewing where the screen gives her a hammer. Which way to bring them together is the owner's to say. The Programs list of PCP OS shows no picture for any program yet.
+- **Taylor.** A tailorbird: a small bird with a leaf-green back, a cream front and a long tail held up. She wears a yellow hard hat and holds a small hammer out in front of her, steel head forward. She faces left, toward the words beside her. She is one bird, drawn the same way in three places:
+  - [`tailorbird.svg`](tailorbird.svg), the mark, on a dark rounded tile of 192 by 144 as Surfbird's is, so that the two sit together as programs of one system. The tile is all they share.
+  - [`tailorbird-icon.svg`](tailorbird-icon.svg), the small mark: her head and hard hat on a square tile. Use it below 64 pixels wide, where the whole drawing stops reading; the hat and face hold at 16.
+  - On the screen, a figure of sixteen by fourteen squares in [`guest/src/view.rs`](guest/src/view.rs).
+- **Her colours.** Hard-hat yellow `#f2c230`, leaf green `#7fae5c`, cream `#f1f4e4`; the hammer's handle and her legs amber `#e3a24b`, its head `#9fb4c8`; outline `#0c2033`. The first three are hers alone and are named in the program's palette ([`guest/src/lib.rs`](guest/src/lib.rs)) as `HARD_HAT`, `LEAF` and `CREAM`. She does not wear the screen's green for "well" or amber for "needs attention", because those say how something stands.
+- **The screen's colours.** Ground `#10283f`, panel `#18364f`, text `#f2f7fc`, quiet text `#9fb4c8`, teal `#41bad7`, amber `#e3a24b` for what needs attention, green `#8fe0c2` for what is well, red `#f08a72` for what is not.
 - **What she is for.** To help a person who is not a professional get something built or fixed, on their own computer, without the network.
 - **How she speaks.** Plainly and briefly. She says what she did, what she could not do, and what she does not know. She helps and does not hover. She never says something happened unless PCP OS confirmed it.
 - **What she will not do.** Act without asking where PCP OS requires asking, keep an ability the person told her to give up, or claim to be more than a program running a model on this computer.
-- **Colours.** The screen keeps the ones the program already draws with ([`guest/src/lib.rs`](guest/src/lib.rs)): ground `#10283f`, panel `#18364f`, text `#f2f7fc`, quiet text `#9fb4c8`, teal `#41bad7`, amber `#e3a24b` for what needs attention, green `#8fe0c2` for what is well, red `#f08a72` for what is not. Taylor's own colours in the mark are hard-hat yellow `#f2c230`, leaf green `#7fae5c` and cream `#f1f4e4`.
+- **Not yet.** The Programs list of PCP OS shows no picture for any program, so the small mark is not yet used there.
 
 ## Source and runtime
 
