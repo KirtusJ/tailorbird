@@ -40,6 +40,8 @@ pub mod live_view;
 pub mod live_demo;
 /// Exact project destinations; no filesystem access or permission authority.
 pub mod project_location;
+/// Program-held single-file job and exact result binding for the fresh backend.
+pub mod file_job;
 pub const LOG_LIMIT: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1893,7 +1895,7 @@ mod tests {
         assert_eq!(u.lines().last().unwrap().kind, "STOP");
         // The actual guest paint_frame consumes this gate. This test checks
         // source wiring, NOT pixels from an injected QEMU service event.
-        let renderer = include_str!("main.rs");
+        let renderer = include_str!("view.rs");
         assert!(
             renderer.contains("if ui.controls().permission_visible {"),
             "native renderer still paints stale permission inspector after StopAck"
@@ -2052,4 +2054,7 @@ mod tests {
 
 }
 
+/// Drawing on the guest's display: rectangles and the kernel's own typeface.
 pub mod frame;
+/// The picture drawn from the state.
+pub mod view;
