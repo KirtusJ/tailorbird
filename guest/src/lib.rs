@@ -597,7 +597,7 @@ impl Ui {
                     talk::Service::Failed => "MODEL DID NOT START - NOT SENT",
                     talk::Service::Stopped => "MODEL HAS STOPPED - NOT SENT",
                     talk::Service::Ready if self.input.is_empty() => "NOTHING TYPED - NOTHING SENT",
-                    talk::Service::Ready => "TAYLOR IS STILL ANSWERING - NOT SENT",
+                    talk::Service::Ready => "REPLY PENDING - NOT SENT",
                 });
                 None
             }
@@ -1048,7 +1048,7 @@ mod tests {
         assert!(u.intent(Action::Submit).is_none());
         assert!(u.for_service().is_none());
         assert_eq!(u.input.as_str(), "and another");
-        assert_eq!(u.notice.as_str(), "TAYLOR IS STILL ANSWERING - NOT SENT");
+        assert_eq!(u.notice.as_str(), "REPLY PENDING - NOT SENT");
     }
     #[test]
     fn stop_stops_an_answer_under_way_and_tells_the_service_which() {
@@ -1107,7 +1107,7 @@ mod tests {
         u.service_took();
         typed(&mut u, "again");
         assert!(u.intent(Action::Submit).is_none());
-        assert_eq!(u.notice.as_str(), "TAYLOR IS STILL ANSWERING - NOT SENT");
+        assert_eq!(u.notice.as_str(), "REPLY PENDING - NOT SENT");
         assert_eq!(u.talk.receive(talk::Incoming::Done { conversation: 1, reply: 1 }), talk::Taken::Shown);
         assert!(u.intent(Action::Submit).is_none());
         assert_eq!(u.notice.as_str(), "QUEUED LOCALLY - DELIVERY UNCONFIRMED");
