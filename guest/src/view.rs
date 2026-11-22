@@ -734,31 +734,34 @@ mod tests {
         assert!(ui.talk.answering(), "pending tracks the local request, not confirmed delivery");
         let screen = shot(&ui);
 
-        // Draw the exact production font at both actual production coordinates.
-        // Compare *all* glyph cells in each region, so surviving old wording fails too.
+        // Use the same panel substrates as the real renderer, since the production
+        // font alpha-blends into those backgrounds. Comparing pixels to the raw ink
+        // colour would wrongly accept two blank masks and miss every blended glyph.
         let mut expected = vec![0u32; screen.len()];
-        let mut f = Frame::new(&mut expected, 960, 540, 960, 0, false);
-        let caption_color = stop_colors(true).2;
+        let mut f = Frame::new(&mut expected, 960, 540, 960, GROUND, false);
+        let stop_rect = crate::pointer::STOP_RECT;
+        let (stop_fill, _, caption_color) = stop_colors(true);
+        f.panel(stop_rect.x, stop_rect.y, stop_rect.width, stop_rect.height, stop_fill);
+        f.panel(316, 94, 624, 352, PANEL);
+        let bare_panels = expected.clone();
         let stop = "Waiting for a reply";
         let transcript = "(waiting for a reply)";
         label(&mut f, 48, 365, stop, 1, caption_color);
         label(&mut f, 393, 242, transcript, 1, SOFT);
-        for (x, y, width, ink) in [
-            (48usize, 365usize, 6 * stop.len().max("Taylor is answering".len()), caption_color),
-            (393, 242, 6 * transcript.len().max("(answering...)".len()), SOFT),
+        for (x, y, width) in [
+            (48usize, 365usize, 6 * stop.len().max("Taylor is answering".len())),
+            (393, 242, 6 * transcript.len().max("(answering...)".len())),
         ] {
             let mut visible = 0;
             for row in y..y + 12 {
                 for col in x..x + width {
                     let at = row * 960 + col;
-                    let actual_ink = screen[at] == ink;
-                    let expected_ink = expected[at] == ink;
-                    assert_eq!(actual_ink, expected_ink,
-                        "wrong pending-caption pixel at ({col},{row}), including possible old wording");
-                    if actual_ink { visible += 1; }
+                    assert_eq!(screen[at], expected[at],
+                        "wrong blended caption pixel at ({col},{row}), including possible old wording");
+                    if expected[at] != bare_panels[at] { visible += 1; }
                 }
             }
-            assert!(visible > 15, "caption must actually be rasterized");
+            assert!(visible > 15, "the source glyph must change real panel pixels");
         }
 
         // A mismatched reply must not make the screen claim work has begun.
