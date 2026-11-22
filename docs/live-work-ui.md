@@ -31,6 +31,10 @@ evidence that the current single-page UEFI framebuffer mapping works.
 Native evidence includes the full PCP OS desktop and Programs screens before
 launch and after return, as well as the full guest display at every checkpoint.
 Isolated preview crops must be explicitly identified as such when shared.
+An independent Python source-font oracle checks the literal sample/no-file-write
+disclosure in all 48 host and 24 native state frames. Erased text and substituted
+demo, event and file-effect statements must fail even when two images agree.
+Theme integration must review its explicit label, positions and colours.
 
 ## Integration boundary
 

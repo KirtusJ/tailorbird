@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import time
 from qemu_smoke import Qemu
+from demo_disclosure import check_with_adverse_controls
 
 
 def ppm(path):
@@ -23,7 +24,8 @@ def run(kernel, guest, expected, output, machine):
     output.mkdir(parents=True, exist_ok=False)
     report = {"passed": False, "scope": "sample-event UI only", "machine": machine,
               "guest_sha256": hashlib.sha256(guest.read_bytes()).hexdigest(),
-              "kernel_sha256": hashlib.sha256(kernel.read_bytes()).hexdigest(), "frames": {}}
+              "kernel_sha256": hashlib.sha256(kernel.read_bytes()).hexdigest(), "frames": {},
+              "disclosure": {"literal_font_checks": 0, "adverse_controls": 0}}
     cases = json.loads((expected / "cases.json").read_text())
     qcodes = {0x39: "spc", 0x11: "w", 0x1f: "s", 0x2e: "c", 0x20: "d", 0x21: "f"}
     m = None
@@ -56,7 +58,10 @@ def run(kernel, guest, expected, output, machine):
                 if m.proc.poll() is not None or time.monotonic() >= deadline:
                     raise AssertionError(f"{case['name']}: native UI differs from Rust render; {m.serial()[-1200:]}")
                 time.sleep(.15)
+            for key, count in check_with_adverse_controls(size, pixels).items():
+                report["disclosure"][key] += count
             report["frames"][case["name"]] = {"size": size, "sha256": digest}
+        assert report["disclosure"] == {"literal_font_checks": 12, "adverse_controls": 48}
         # State changes are visible, but disconnected late input stays frozen.
         assert ppm(output/"draft.ppm")[1] != ppm(output/"preview.ppm")[1]
         assert ppm(output/"stop_requested.ppm")[1] != ppm(output/"stopped.ppm")[1]

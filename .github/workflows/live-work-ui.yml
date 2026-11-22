@@ -26,6 +26,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends lld binutils
       - name: Render real Rust UI at four sizes
         run: cargo run --locked --offline --example live_work_frames -- render-output
+      - name: Check literal demo disclosure independently of the renderer
+        run: python3 guest/tests/demo_disclosure.py render-output
       - name: Build the separate sample-event guest
         id: demo
         run: |
