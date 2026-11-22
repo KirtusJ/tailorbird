@@ -42,3 +42,20 @@ jobs:
             project-results/*.ppm
             project-results/serial.log
           retention-days: 14
+      - name: Cold boot after interrupted consent, acknowledged creation and shutdown
+        if: matrix.seed == 97177
+        run: |
+          export RUSTUP_TOOLCHAIN=1.97.0
+          PCPOS_KERNEL_FEATURES=proposals,vm-store sh pcp-os/PCP_OS_Rust/crates/pcpos-kernel/run.sh build
+          python3 guest/tests/project_recovery.py \
+            pcp-os/PCP_OS_Rust/crates/pcpos-kernel/target/pcpos-kernel.elf32 \
+            target/x86_64-unknown-none/release/tailorbird project-recovery
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always() && matrix.seed == 97177
+        with:
+          name: project-recovery
+          path: |
+            project-recovery/result.json
+            project-recovery/*/serial.log
+            project-recovery/*/*.ppm
+          retention-days: 14
