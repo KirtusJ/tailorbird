@@ -40,6 +40,8 @@ pub mod live_view;
 pub mod live_demo;
 /// Exact project destinations; no filesystem access or permission authority.
 pub mod project_location;
+/// Validated current-launch build-folder snapshots; no I/O or authority.
+pub mod build_folder_snapshot;
 pub const LOG_LIMIT: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

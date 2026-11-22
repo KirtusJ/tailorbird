@@ -81,3 +81,13 @@ file destination from a returned name. It requires the current folder plus a com
 then exactly one project and one filename; similar prefixes, outside paths and unsupported layouts
 are rejected. The returned values do not prove that the entry exists or that listing succeeded.
 An unavailable, incomplete or unsupported listing must not be presented as an empty folder.
+
+`build_folder_snapshot::Snapshot` decodes the agreed version-1 kernel listing without allocation
+or I/O. The controller must read the actual `dev/build-folder` descriptor through EOF, refuse
+more than 64 KiB (including an extra-byte check at the limit), and close it before parsing. The
+decoder validates all records before exposing any entry, retains the kernel's current root and
+launch ID even for an empty list, and offers `parse_for` to check that context on refresh. It
+rejects malformed, truncated, unsorted, duplicate or out-of-root records. `is_known_empty` is
+true only for a complete zero-entry list; `file_counts` keeps unsupported layouts as other files.
+The viewer must still read the selected file and verify actual bytes against its creation receipt;
+listing sizes and the decoder are not proof that a file exists, is unchanged, or was created.
