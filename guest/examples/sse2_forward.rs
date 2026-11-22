@@ -68,7 +68,17 @@ mod guest {
         assert_eq!(interrupted, Err(Error::Cancelled));
         assert_eq!(decoder.position(), 0);
         assert_eq!(decoder.prefill(&prompt, || true).unwrap(), final_scores);
-        log(alloc::format!("Qwen four-step fixture compute_us={compute_us}\n").as_bytes());
+        // The guest has no unwinder. Stream the timing without pulling the
+        // Linux sysroot's allocation-backed formatting routine into the probe.
+        struct Serial;
+        impl core::fmt::Write for Serial {
+            fn write_str(&mut self, text: &str) -> core::fmt::Result {
+                log(text.as_bytes());
+                Ok(())
+            }
+        }
+        use core::fmt::Write;
+        writeln!(Serial, "Qwen four-step fixture compute_us={compute_us}").unwrap();
     }
 
     #[no_mangle]
