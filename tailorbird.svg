@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 144" width="192" height="144" role="img" aria-labelledby="title desc">
+  <title id="title">Tailorbird</title>
+  <desc id="desc">Taylor, a small tailorbird in a yellow hard hat, with a leaf-green back and a long tail held up, holds a small hammer out in front of her.</desc>
+  <rect width="192" height="144" rx="24" fill="#10283f"/>
+  <g transform="translate(-26 4)">
+  <path d="M96 118q42-2 80-10" fill="none" stroke="#9fb4c8" stroke-width="3" stroke-linecap="round"/>
+  <g stroke="#0c2033" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M122 99l-4 17m16-19 3 17" fill="none" stroke="#e3a24b"/>
+    <path d="M147 75q8-32 24-52 7 1 6 8-12 22-19 50z" fill="#5f8f4e"/>
+    <path d="M151 79q12-24 30-40 6 3 4 9-16 16-26 37z" fill="#7fae5c"/>
+    <ellipse cx="127" cy="82" rx="26" ry="19" transform="rotate(-18 127 82)" fill="#f1f4e4"/>
+    <path d="M106 68q22-17 46 2-6 22-30 19-12-6-16-21z" fill="#7fae5c"/>
+    <circle cx="104" cy="58" r="15.5" fill="#f1f4e4"/>
+    <path d="M89 54q0-17 15.500-17 15.500 0 15.500 15q-16-5-31 2z" fill="#f2c230"/>
+    <path d="M104.500 37v15" fill="none" stroke="#c9981a" stroke-width="2"/>
+    <path d="M81 57.500q21-10 42-5.500l1 4.500q-21-4.500-41 5.500z" fill="#f2c230"/>
+    <path d="M90 62q-12 3-21 12 11-4 22-6z" fill="#24384c"/>
+  </g>
+  <g stroke="#0c2033" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M60 84l48 -6 1 6 -48 6z" fill="#e3a24b"/>
+    <path d="M44 70l18 -2 3 30 -18 2z" fill="#9fb4c8"/>
+    <path d="M100 76q8-4 14 4-6 8-14 4z" fill="#7fae5c"/>
+  </g>
+  <circle cx="98" cy="59" r="2.800" fill="#0c2033"/>
+  <circle cx="97.200" cy="58.200" r=".9" fill="#f2f7fc"/>
+  </g>
+</svg>
