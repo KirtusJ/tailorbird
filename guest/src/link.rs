@@ -6,7 +6,7 @@
 //! (`Absent`); a channel and nothing said yet, a model being loaded (`Loading`); the service's own
 //! word for ready or not started; and a channel that has ended or carried anything that is not a
 //! record, a service that is gone (`Failed`). Nothing is ever guessed to be ready.
-use crate::talk::{Incoming, Request, Service, Taken};
+use crate::talk::{Incoming, Request, Service};
 use crate::wire::{self, Kind, Packed, Reader, Step};
 use crate::Ui;
 
@@ -29,17 +29,6 @@ pub struct Link {
 }
 
 impl Link {
-    /// A correlated reply *record* is evidence only of what this channel delivered.
-    /// It is not an authenticated model receipt, a proof that the queued SAY
-    /// reached an actual model, or a service-side acceptance acknowledgment.
-    fn observed(ui: &mut Ui, incoming: Incoming<'_>) {
-        if ui.talk.receive(incoming) == Taken::Shown
-            && ui.notice.as_str() == "QUEUED LOCALLY - DELIVERY UNCONFIRMED"
-        {
-            ui.notice("MATCHING REPLY RECORD - MODEL UNVERIFIED");
-        }
-    }
-
     /// `open`: whether PCP OS gave this program a channel at all.
     pub fn new(open: bool, ui: &mut Ui) -> Self {
         ui.talk.service_is(if open { Service::Loading } else { Service::Absent });
@@ -135,7 +124,7 @@ impl Link {
                                 // A piece with no text in it is still the answer beginning: it
                                 // ends the reading, and shows nothing.
                                 if rest.is_empty() {
-                                    Self::observed(ui, Incoming::Chunk { conversation, reply, text: "" });
+                                    ui.observed_talk(Incoming::Chunk { conversation, reply, text: "" });
                                 }
                                 while !rest.is_empty() {
                                     let (text, skip) = match core::str::from_utf8(rest) {
@@ -143,25 +132,25 @@ impl Link {
                                         Err(e) => (core::str::from_utf8(&rest[..e.valid_up_to()]).unwrap_or(""), 1),
                                     };
                                     if !text.is_empty() {
-                                        Self::observed(ui, Incoming::Chunk { conversation, reply, text });
+                                        ui.observed_talk(Incoming::Chunk { conversation, reply, text });
                                     }
                                     if skip == 1 {
-                                        Self::observed(ui, Incoming::Chunk { conversation, reply, text: "?" });
+                                        ui.observed_talk(Incoming::Chunk { conversation, reply, text: "?" });
                                     }
                                     rest = &rest[text.len() + skip..];
                                 }
                             }
                             Kind::Done => {
-                                Self::observed(ui, Incoming::Done { conversation, reply });
+                                ui.observed_talk(Incoming::Done { conversation, reply });
                             }
                             Kind::Reading => {
                                 // The reader has already refused a body that does not add up.
                                 if let Some((read, of)) = wire::progress(record.body) {
-                                    Self::observed(ui, Incoming::Reading { conversation, reply, read, of });
+                                    ui.observed_talk(Incoming::Reading { conversation, reply, read, of });
                                 }
                             }
                             Kind::Failed => {
-                                Self::observed(ui, Incoming::Failed { conversation, reply });
+                                ui.observed_talk(Incoming::Failed { conversation, reply });
                             }
                             // Only this program says these. A service that sends one is not
                             // speaking the agreed records; it is counted, and nothing is shown.
