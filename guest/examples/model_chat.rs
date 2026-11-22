@@ -18,8 +18,8 @@ fn main()->Result<(),Box<dyn std::error::Error>>{
     let memory=Memory::new().map_err(|e|format!("memory {e:?}"))?;let turn=memory.begin(1,&a[3]).map_err(|e|format!("turn {e:?}"))?;
     let prompt=memory.prompt(&tok,model.config().architecture,&turn,false,||true).map_err(|e|format!("prompt {e:?}"))?;
     let mut decoder=Decoder::new(&model,&b,CONTEXT,768<<20,||true).map_err(|e|format!("decoder {e:?}"))?;
-    std::fs::create_dir(&a[2])?;let started=Instant::now();let mut next=None;
-    for (i,id) in prompt.iter().enumerate(){let logits=decoder.step(*id,||true).map_err(|e|format!("prefill {e:?}"))?;if i+1==prompt.len(){next=greedy(logits,&tok);}}
+    std::fs::create_dir(&a[2])?;let started=Instant::now();
+    let mut next=greedy(decoder.prefill(&prompt,||true).map_err(|e|format!("prefill {e:?}"))?,&tok);
     let prefill=started.elapsed().as_secs_f64();let mut stream=Utf8Stream::new();let mut piece=[0;MAX_TOKEN_BYTES];let mut answer=String::new();let mut ids=Vec::new();let mut ended=false;let mut first=None;
     for _ in 0..16{
         let id=next.ok_or("sampling")?;if id==tok.eos()||id==tok.bos(){ended=true;break;}

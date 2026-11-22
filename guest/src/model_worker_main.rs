@@ -55,10 +55,11 @@ fn run(link:&mut Link)->Result<()>{
         let prompt=match memory.prompt(&tokenizer,model.config().architecture,&turn,got.history,||link.keep(active,&mut ticks)){
             Ok(p)=>p,Err(_)=>{if link.state.forget_active{memory.forget(got.conversation);}if !link.state.stopped{notice(link,active,b"This message cannot fit the current conversation. Start a new chat or use Single mode.")?;}continue;}
         };
-        decoder.reset();let mut token=None;let mut failed=false;let mut ended=false;
-        for (i,id) in prompt.iter().enumerate() {
-            match decoder.step(*id,||link.keep(active,&mut ticks)) {Ok(logits)=>{if i+1==prompt.len(){token=greedy(logits,&tokenizer);}},Err(_)=>{failed=true;break;}}
-        }
+        decoder.reset();let mut ended=false;
+        let mut token=match decoder.prefill(&prompt,||link.keep(active,&mut ticks)){
+            Ok(logits)=>greedy(logits,&tokenizer),Err(_)=>None,
+        };
+        let mut failed=token.is_none();
         drop(prompt);
         let mut utf8=Utf8Stream::new();let mut piece=[0;MAX_TOKEN_BYTES];
         for _ in 0..REPLY_TOKENS {

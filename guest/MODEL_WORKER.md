@@ -64,6 +64,12 @@ the chosen conversation is processed again per request. There is no silent
 history eviction: a full conversation produces a visible refusal. These are
 logical resets, not a secure-erasure promise.
 
+Prompt processing now uses atomic `Decoder::prefill`, computing the vocabulary
+projection only for the final prompt token. All transformer and KV steps remain.
+Cancellation/error rolls the prefill position back; the worker still resets its
+sequence after the turn. This build retains the sequential f64 dot reference;
+the library's optional reassociated reduction is not selected here.
+
 Limits: 2048 model positions; 128 generated tokens / 4096 reply bytes; 16 MiB
 tokenizer-table budget and 768 MiB decoder-buffer budget. Page rounding, metadata,
 history and stacks add overhead. Each CHUNK is at most 480 bytes and ends on a
@@ -93,11 +99,20 @@ literal delimiter injection and a changed template are refused by the Rust check
 it joins these prompts, forward execution, sampling and decoded text for up to
 16 tokens. It is not the native device adapter.
 
-On the shared Windows host, the verified 0.5B file answered `Say hello in one
+Before atomic prefill, on the shared Windows host, the verified 0.5B file answered `Say hello in one
 short sentence.` with `Hello!` (IDs 9707, 0, then EOS). Its 41-token prefill took
 61.697508 seconds, first decoded text appeared at 61.697514 seconds, and the
 helper finished at 63.944222 seconds. This uncontrolled smoke proves text wiring,
 not acceptable speed. It does not qualify the 8B candidate or target hardware.
+
+The decoder's separate 37-token, eight-step comparison at PCP OS `5a87b5e7`
+used one executable in step/prefill/prefill/step order. Sequential prompt processing
+took 97.21/84.12 seconds with repeated step and 58.32/50.21 with atomic prefill.
+All 1,215,488 saved vocabulary scores and eight token IDs matched byte for byte.
+The observed mean reduction was 40.1%; shared-host timing varied and does not
+predict native speed. The stock native target uses software floating arithmetic;
+a supported hardware-floating guest ABI and state-switch qualification remain
+separate work. This worker does not change that ABI or enable reassociation.
 
 Native linking is not a boot. Required next evidence: real verified weights through
 the actual worker and Tailorbird, loading/refusal controls, Stop during prefill and
@@ -106,6 +121,13 @@ the exact source/ELF/image identities. B3's separate native scalar and tokenizer
 fixtures do not establish this worker's complete behavior. B3 has supplied a
 tested consent-scheduling correction; its integrated acceptance and the production
 EFI preloader handoff remain independent gates.
+
+B3 subsequently booted the actual pre-prefill worker at Tailorbird `ffffc081`
+with the verified 0.5B model: forward preflight reached Ready, Stop interrupted
+prefill, New Chat started a second request, and system Stop returned every frame
+to the 1920x1080 desktop. Missing-model refusal also passed. These received
+observations do not establish a completed answer or acceptance of this updated
+worker. See [the exact native observation](https://github.com/KirtusJ/tailorbird/pull/20#issuecomment-7078147192).
 
 The current UI still displays ASCII, replaces other bytes with `?`, flattens
 newlines and retains 480 bytes with a cut indicator. The service preserves full
