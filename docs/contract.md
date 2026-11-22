@@ -58,6 +58,29 @@ The mascot is named **Taylor** (owner, 22 November): the program is Tailorbird, 
   kernel keeps on screen while Tailorbird draws, and a full-screen program's display cannot give that
   today.
 
+### A standing permission, off unless the user turns it on (owner, 22 November)
+
+"Is the user able to provide blanket permissions similar to full access? if so, should be (definitely
+off by default), or else the user will have to micromanage all the time."
+
+Asking about every file is right for one file and wrong for real work. The first release has no
+standing grant only because the kernel cannot yet keep its own indicator on screen while Tailorbird
+draws. This is what makes one acceptable, and it is to be built:
+
+- **Granted on the kernel's screen, never in Tailorbird.** Taylor may ask for it; only the person, on
+  the kernel's screen, with the same fresh-key rule, can give it.
+- **Scoped, smallest first:** one project's folder; then the whole build folder. Anything beyond files
+  (settings, starting programs) is a separate grant, defined when those effects exist. There is no
+  single switch for everything.
+- **Always visible:** while a standing grant is in force the kernel keeps a strip of the display for
+  itself that says so and that no program can draw on.
+- **Always revocable:** F12 lists what is in force and ends it with one key; Stop ends it.
+- **Short-lived:** it ends when Tailorbird ends or the computer is switched off. It is never on at
+  start and never remembered across a restart.
+- **Still recorded:** every file made under it has a receipt; the person can read the list afterwards.
+- A file that could not be shown exactly, or a name outside the granted folder, is still refused: a
+  standing grant removes the question, not the rules.
+
 ### The consent screen (B3's conditions, adopted)
 
 - Before the question is shown the kernel suspends the program, finishes or discards any picture it was
