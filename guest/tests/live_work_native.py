@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import time
 from qemu_smoke import Qemu
+from demo_disclosure import CASES, check_with_adverse_controls, check_empty_with_adverse_controls
 
 
 def ppm(path):
@@ -23,8 +24,11 @@ def run(kernel, guest, expected, output, machine):
     output.mkdir(parents=True, exist_ok=False)
     report = {"passed": False, "scope": "sample-event UI only", "machine": machine,
               "guest_sha256": hashlib.sha256(guest.read_bytes()).hexdigest(),
-              "kernel_sha256": hashlib.sha256(kernel.read_bytes()).hexdigest(), "frames": {}}
+              "kernel_sha256": hashlib.sha256(kernel.read_bytes()).hexdigest(), "frames": {},
+              "disclosure": {"literal_font_checks": 0, "adverse_controls": 0},
+              "empty_preview": {"empty_copy_checks": 0, "empty_copy_adverse_controls": 0}}
     cases = json.loads((expected / "cases.json").read_text())
+    assert len(cases) == 16 and {case["name"] for case in cases} == CASES
     qcodes = {0x39: "spc", 0x11: "w", 0x1f: "s", 0x2e: "c", 0x20: "d", 0x21: "f"}
     m = None
     try:
@@ -56,7 +60,13 @@ def run(kernel, guest, expected, output, machine):
                 if m.proc.poll() is not None or time.monotonic() >= deadline:
                     raise AssertionError(f"{case['name']}: native UI differs from Rust render; {m.serial()[-1200:]}")
                 time.sleep(.15)
+            for key, count in check_with_adverse_controls(size, pixels).items():
+                report["disclosure"][key] += count
+            for key, count in check_empty_with_adverse_controls(size, pixels, case["name"]).items():
+                report["empty_preview"][key] += count
             report["frames"][case["name"]] = {"size": size, "sha256": digest}
+        assert report["disclosure"] == {"literal_font_checks": 16, "adverse_controls": 64}
+        assert report["empty_preview"] == {"empty_copy_checks": 12, "empty_copy_adverse_controls": 24}
         # State changes are visible, but disconnected late input stays frozen.
         assert ppm(output/"draft.ppm")[1] != ppm(output/"preview.ppm")[1]
         assert ppm(output/"stop_requested.ppm")[1] != ppm(output/"stopped.ppm")[1]
