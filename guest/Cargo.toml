@@ -12,6 +12,7 @@ live-work-demo = []
 talk-test-worker = []
 # Opt-in inference qualification worker; never enabled by the ordinary UI build.
 model-worker = ["dep:pcpos-qwen", "dep:pcpos-gguf", "dep:pcpos-model-media"]
+stable-model-worker = ["model-worker", "pcp-game-guest/hard-float-target"]
 sse2-qualification = ["model-worker"]
 
 [lib]
@@ -64,3 +65,6 @@ pcpos-model-media = { path = "../pcp-os/PCP_OS_Rust/crates/pcpos-model-media", o
 
 [target.'cfg(target_os = "none")'.dependencies]
 pcp-game-guest = { path = "../pcp-os/store/native/guest" }
+
+[target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
+pcp-game-guest = { path = "../pcp-os/store/native/guest", optional = true }

@@ -1,18 +1,18 @@
 //! Qualification guest for the SSE2 worker target. Uses the pinned decoder's tiny reference models.
-#![cfg_attr(target_os = "none", no_std)]
-#![cfg_attr(target_os = "none", no_main)]
+#![cfg_attr(any(target_os = "none", all(target_os = "linux", feature = "stable-model-worker")), no_std)]
+#![cfg_attr(any(target_os = "none", all(target_os = "linux", feature = "stable-model-worker")), no_main)]
 
-#[cfg(not(target_os = "none"))]
+#[cfg(not(any(target_os = "none", all(target_os = "linux", feature = "stable-model-worker"))))]
 fn main() {}
 
-#[cfg(target_os = "none")]
+#[cfg(any(target_os = "none", all(target_os = "linux", feature = "stable-model-worker")))]
 extern crate alloc;
 
-#[cfg(target_os = "none")]
+#[cfg(any(target_os = "none", all(target_os = "linux", feature = "stable-model-worker")))]
 #[path = "../../pcp-os/store/apps/parrots-all-the-way-down/guest/src/heap.rs"]
 mod heap;
 
-#[cfg(target_os = "none")]
+#[cfg(any(target_os = "none", all(target_os = "linux", feature = "stable-model-worker")))]
 mod guest {
     use pcp_game_guest::{exit, log, sleep_us, time_us};
     use pcpos_gguf::Index;
