@@ -99,8 +99,15 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
     // Where this is and where Esc leads: Programs, from which this was started (A3 pressed it and saw).
     label(f, 22, 52, "PCP OS > Programs > Tailorbird (Esc returns to Programs)", 1, SOFT);
     label(f, 202, 27, "builds and fixes on this computer", 2, SOFT);
-    // What is behind it, said once, where the eye lands last: a lamp and two words.
-    let (lamp, link) = if ui.connected { (GOOD, "Ready") } else { (BAD, "Not ready") };
+    // The transport being connected does not establish model readiness.
+    // These are labels for the reported UI status, not verified inference or consent.
+    let (lamp, link) = match (ui.connected, ui.model) {
+        (false, _) => (BAD, "Service off"),
+        (true, Model::Ready) => (GOOD, "Model ready"),
+        (true, Model::Loading) => (AMBER, "Model loading"),
+        (true, Model::Unavailable) => (BAD, "Unavailable"),
+        (true, Model::Unknown) => (AMBER, "Model unknown"),
+    };
     f.well(764, 18, 176, 36, GROUND);
     f.rect(778, 31, 10, 10, lamp);
     label(f, 796, 26, link, 2, lamp);
@@ -253,6 +260,57 @@ mod tests {
     extern crate std;
     use super::*;
     use std::{format, vec, vec::Vec};
+
+    /// A connected transport must not paint a green ready lamp for a model
+    /// that the service reports as loading, unknown, or unavailable. Compare
+    /// the full header-status panel against independently specified glyphs
+    /// and palette colors, not only whether some pixels were drawn.
+    #[test]
+    fn header_status_paints_reported_model_state_not_transport_alone() {
+        let cases = [
+            (false, Model::Unknown, BAD, "Service off"),
+            (false, Model::Ready, BAD, "Service off"),
+            (true, Model::Unknown, AMBER, "Model unknown"),
+            (true, Model::Loading, AMBER, "Model loading"),
+            (true, Model::Unavailable, BAD, "Unavailable"),
+            (true, Model::Ready, GOOD, "Model ready"),
+        ];
+        for (width, height, left, top, scale) in [
+            (960usize, 540usize, 0usize, 0usize, 1usize),
+            (1280, 720, 160, 90, 1),
+            (1920, 1080, 0, 0, 2),
+            (2560, 1440, 320, 180, 2),
+        ] {
+            for (connected, model, color, caption) in cases {
+                assert!(796 + caption.len() * 10 <= 940, "header caption overflows");
+                let mut ui = Ui::new();
+                assert!(ui.observe(crate::BackendEvent::Service {
+                    connected, model, saved_mode: crate::Mode::Single,
+                }));
+                let mut actual = vec![0u32; width * height];
+                let mut expected = vec![0u32; width * height];
+                {
+                    let mut frame = Frame::new(&mut actual, width, height, width, GROUND, false);
+                    paint_frame(&mut frame, &ui);
+                }
+                {
+                    let mut frame = Frame::new(&mut expected, width, height, width, GROUND, false);
+                    frame.well(764, 18, 176, 36, GROUND);
+                    frame.rect(778, 31, 10, 10, color);
+                    label(&mut frame, 796, 26, caption, 2, color);
+                }
+                let (x0, x1) = (left + 764 * scale, left + 940 * scale);
+                for y in (top + 18 * scale)..(top + 54 * scale) {
+                    let start = y * width;
+                    assert_eq!(
+                        &actual[start + x0..start + x1],
+                        &expected[start + x0..start + x1],
+                        "status pixel mismatch at {width}x{height} y={y}, service={connected}, model={model:?}",
+                    );
+                }
+            }
+        }
+    }
 
     /// With TAILORBIRD_SHOT=<folder> set, write the first screen at the common sizes as P6 files.
     #[test]
