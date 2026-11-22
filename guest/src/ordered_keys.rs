@@ -99,6 +99,7 @@ impl OrderedKeyboard {
                 ui.show_projects = !ui.show_projects;
                 ui.browse_level = 0;
                 ui.place = 0;
+                ui.top = 0;
                 return KeyOutcome::Projects;
             }
             let action = match code {
@@ -120,27 +121,49 @@ impl OrderedKeyboard {
             }
             return KeyOutcome::Unchanged;
         }
-        if ui.show_projects && matches!(code, 72 | 80 | 75 | 28) {
-            // In the list the arrows choose, Enter opens and Left goes back. Each press is one step; a
-            // held key does not run through the list or open what appears under it.
+        if ui.show_projects && matches!(code, 72 | 80 | 73 | 81 | 75 | 28) {
+            // In the list the arrows choose, Page Up and Page Down move a screenful, Enter opens and Left
+            // goes back. Each press is one step; a held key does not run through the list or open what
+            // appears under it. The rows are a window over the whole list: moving past its edge moves
+            // the window, and the list is read again.
             if already_down { return KeyOutcome::Unchanged; }
-            let (place, count) = match ui.browse_level {
-                0 => (&mut ui.place, ui.projects.shown),
-                1 => (&mut ui.file_place, ui.files.shown),
-                _ => (&mut ui.file_place, 0),
+            let rows = crate::projects::ROWS;
+            let (place, top, shown, total) = match ui.browse_level {
+                0 => (&mut ui.place, &mut ui.top, ui.projects.shown, ui.projects.projects),
+                1 => (&mut ui.file_place, &mut ui.file_top, ui.files.shown, ui.files.count),
+                _ => (&mut ui.file_place, &mut ui.file_top, 0, 0),
             };
             match code {
-                72 if *place > 0 && count > 0 => *place -= 1,
-                80 if *place + 1 < count => *place += 1,
+                72 if *place > 0 && shown > 0 => *place -= 1,
+                72 if *top > 0 && shown > 0 => {
+                    *top -= 1;
+                    return KeyOutcome::Projects;
+                }
+                80 if *place + 1 < shown => *place += 1,
+                80 if shown > 0 && *top + shown < total => {
+                    *top += 1;
+                    return KeyOutcome::Projects;
+                }
+                73 if *top > 0 => {
+                    *top = top.saturating_sub(rows);
+                    *place = 0;
+                    return KeyOutcome::Projects;
+                }
+                81 if *top + shown < total => {
+                    *top += rows;
+                    *place = 0;
+                    return KeyOutcome::Projects;
+                }
                 75 if ui.browse_level > 0 => {
                     ui.browse_level -= 1;
                     // Going back reads the list again: it may have changed.
                     return KeyOutcome::Projects;
                 }
-                28 if ui.browse_level < 2 && *place < count => {
+                28 if ui.browse_level < 2 && *place < shown => {
                     ui.browse_level += 1;
                     if ui.browse_level == 1 {
                         ui.file_place = 0;
+                        ui.file_top = 0;
                     }
                     return KeyOutcome::Projects;
                 }
@@ -194,6 +217,39 @@ mod tests {
     fn stroke(keys: &mut OrderedKeyboard, ui: &mut Ui, code: usize) {
         keys.event(code, true, ui);
         keys.event(code, false, ui);
+    }
+
+    #[test]
+    fn the_rows_are_a_window_that_reaches_every_item() {
+        let mut keys = OrderedKeyboard::new();
+        let mut ui = Ui::new();
+        ui.show_projects = true;
+        ui.projects.projects = 9;
+        ui.projects.shown = crate::projects::ROWS;
+        let mut press = |keys: &mut OrderedKeyboard, ui: &mut Ui, code: usize| {
+            let outcome = keys.event(code, true, ui);
+            keys.event(code, false, ui);
+            outcome
+        };
+        // Down the six rows redraws; the next Down moves the window and asks for a fresh list.
+        for _ in 0..crate::projects::ROWS - 1 {
+            assert_eq!(press(&mut keys, &mut ui, 80), KeyOutcome::Redraw);
+        }
+        assert_eq!((press(&mut keys, &mut ui, 80), ui.top, ui.place), (KeyOutcome::Projects, 1, crate::projects::ROWS - 1));
+        // At the end of the list nothing more happens.
+        ui.top = 3;
+        assert_eq!(press(&mut keys, &mut ui, 80), KeyOutcome::Unchanged);
+        assert_eq!(press(&mut keys, &mut ui, 81), KeyOutcome::Unchanged);
+        // Page Up goes back a screenful, never before the start; Up at the top row moves the window.
+        assert_eq!((press(&mut keys, &mut ui, 73), ui.top, ui.place), (KeyOutcome::Projects, 0, 0));
+        assert_eq!(press(&mut keys, &mut ui, 72), KeyOutcome::Unchanged);
+        assert_eq!((press(&mut keys, &mut ui, 81), ui.top), (KeyOutcome::Projects, crate::projects::ROWS));
+        ui.projects.shown = 3;
+        assert_eq!((press(&mut keys, &mut ui, 72), ui.top), (KeyOutcome::Projects, crate::projects::ROWS - 1));
+        // A held key is not a second press.
+        assert_eq!(keys.event(72, true, &mut ui), KeyOutcome::Projects);
+        assert_eq!(keys.event(72, true, &mut ui), KeyOutcome::Unchanged);
+        assert!(ui.input.as_str().is_empty());
     }
 
     #[test]

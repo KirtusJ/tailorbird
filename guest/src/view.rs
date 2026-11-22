@@ -206,6 +206,9 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
             if let Some(active) = ui.active {
                 label(f, 420, 370, "New notes go into the project", 1, SOFT);
                 wrapped(f, 420, 384, active.as_str(), 84);
+            } else {
+                // No folder is assumed: until PCP OS names one, a note has nowhere to go.
+                label(f, 420, 370, "PCP OS has not yet said where projects go.", 1, AMBER);
             }
             let x = key(f, 339, 420, "Esc", "returns to Programs");
             key(f, x, 420, "Alt+P", "shows your projects");
@@ -266,6 +269,25 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
     footer(f, ui);
 }
 
+/// Which of the items the rows are: "Showing 7 to 12 of 20 projects. Up, Down, Page Up, Page Down move."
+/// Said only when there are more than the rows show, so every item is known to be reachable.
+fn range(f: &mut Frame<'_>, top: usize, shown: usize, total: usize, what: &str) {
+    if total <= shown || shown == 0 {
+        return;
+    }
+    let mut digits = [0u8; 20];
+    let mut x = 339;
+    for (words, number) in [("Showing", top + 1), ("to", top + shown), ("of", total)] {
+        label(f, x, 392, words, 1, AMBER);
+        x += words.len() as i32 * 6 + 6;
+        let n = decimal_u64(number as u64, &mut digits);
+        label(f, x, 392, n, 1, AMBER);
+        x += n.len() as i32 * 6 + 6;
+    }
+    label(f, x, 392, what, 1, AMBER);
+    label(f, x + what.len() as i32 * 6 + 6, 392, "(Page Up/Down)", 1, SOFT);
+}
+
 /// A name whole, on as many rows of `across` characters as it needs (12 apart).
 fn wrapped(f: &mut Frame<'_>, x: i32, y: i32, value: &str, across: usize) {
     for (row, part) in value.as_bytes().chunks(across).enumerate() {
@@ -279,6 +301,9 @@ fn projects(f: &mut Frame<'_>, list: &crate::projects::Projects, place: usize, a
     use crate::projects::Listing;
     let mut digits = [0u8; 20];
     label(f, 339, 190, "Your projects", 2, TEXT);
+    if active.is_some() {
+        label(f, 600, 196, "\"notes\" marks where new notes go", 1, SOFT);
+    }
     match list.state {
         Listing::NotAsked => label(f, 339, 226, "Not read yet.", 2, SOFT),
         Listing::Unavailable => {
@@ -315,8 +340,9 @@ fn projects(f: &mut Frame<'_>, list: &crate::projects::Projects, place: usize, a
                 if cut {
                     label(f, 347 + 69 * 6, y, "...", 1, AMBER);
                 }
+                // Its own column, right of the count, clear of the longest name a row shows.
                 if active.is_some() && entry.location == active {
-                    label(f, 660, y, "new notes go here", 1, GOOD);
+                    label(f, 872, y, "notes", 1, GOOD);
                 }
                 label(f, 800, y, decimal_u64(entry.files as u64, &mut digits), 1, TEXT);
                 label(f, 830, y, if entry.files == 1 { "file" } else { "files" }, 1, SOFT);
@@ -327,13 +353,10 @@ fn projects(f: &mut Frame<'_>, list: &crate::projects::Projects, place: usize, a
                 label(f, 339, 366, "Chosen:", 1, SOFT);
                 wrapped(f, 339 + 8 * 6, 366, location.as_str(), 86);
             }
-            if list.projects > list.shown {
-                label(f, 339, 392, "more projects not shown:", 1, AMBER);
-                label(f, 339 + 25 * 6, 392, decimal_u64((list.projects - list.shown) as u64, &mut digits), 1, AMBER);
-            }
+            range(f, list.top, list.shown, list.projects, "projects");
             if list.other > 0 {
-                label(f, 339 + 34 * 6, 392, "other files in the folder:", 1, SOFT);
-                label(f, 339 + 61 * 6, 392, decimal_u64(list.other as u64, &mut digits), 1, SOFT);
+                label(f, 339 + 50 * 6, 392, "other files in the folder:", 1, SOFT);
+                label(f, 339 + 77 * 6, 392, decimal_u64(list.other as u64, &mut digits), 1, SOFT);
             }
             if !list.complete {
                 label(f, 339, 404, "PCP OS listed only part of the folder. There is more.", 1, AMBER);
@@ -382,10 +405,7 @@ fn files(f: &mut Frame<'_>, list: &crate::projects::Files, place: usize, active:
                 label(f, 339, 366, "Chosen:", 1, SOFT);
                 wrapped(f, 339 + 8 * 6, 366, destination.as_str(), 86);
             }
-            if list.count > list.shown {
-                label(f, 339, 392, "more files not shown:", 1, AMBER);
-                label(f, 339 + 22 * 6, 392, decimal_u64((list.count - list.shown) as u64, &mut digits), 1, AMBER);
-            }
+            range(f, list.top, list.shown, list.count, "files");
             if !list.complete {
                 label(f, 339, 404, "PCP OS listed only part of the folder. There is more.", 1, AMBER);
             }

@@ -11,6 +11,9 @@ pub const PROJECT: &str = "my-first-project";
 pub const RECORD: usize = wire::HEADER + wire::MAX_NAME + crate::INPUT_LIMIT + 1;
 
 pub const NOTHING_TYPED: &str = "Type something first, then press Alt+N.";
+pub const NO_FOLDER: &str = "PCP OS has not said where projects go, so nothing was asked.";
+pub const NO_ROOM_FOR_NAME: &str = "The projects folder name is too long for a note name. Nothing was asked.";
+pub const NO_NUMBER: &str = "This project has used every note number. Choose another project.";
 pub const NOT_ALLOWED: &str = "PCP OS has not let Taylor make files here.";
 pub const NOT_TAKEN: &str = "PCP OS did not take the request. Nothing was made.";
 pub const UNREADABLE: &str = "PCP OS answered in a way Taylor cannot read. Nothing is claimed.";
@@ -44,28 +47,30 @@ fn file_name(number: u32, out: &mut [u8; 24]) -> &str {
 /// The number for the next note: one more than the highest note already in the project, by a list of
 /// the build folder just read, and never less than `at_least` (what this run has already used). With no
 /// readable list it is `at_least`: the kernel still refuses a name that is taken, and says so.
+#[cfg(test)]
 pub fn next_number(list: Option<&[u8]>, at_least: u32) -> u32 {
-    match default_project(None) {
-        Some(project) => next_number_in(list, &project, at_least),
-        None => at_least,
-    }
+    next_number_in(list, &usual_project(), Some(at_least)).unwrap_or(u32::MAX)
 }
 
-/// The first project of a build folder: the folder PCP OS named, or the usual one before it has.
-pub fn default_project(root: Option<BuildFolder>) -> Option<ProjectLocation> {
-    let root = match root {
-        Some(root) => root,
-        None => BuildFolder::new(DEFAULT_BUILD_FOLDER).ok()?,
-    };
+/// For tests only: the project under the usual folder. The program itself never assumes a folder.
+#[cfg(test)]
+pub fn usual_project() -> ProjectLocation {
+    default_project(BuildFolder::new(DEFAULT_BUILD_FOLDER).unwrap()).unwrap()
+}
+
+/// The first project of the build folder PCP OS named. None when that folder's name leaves no room
+/// for the project's.
+pub fn default_project(root: BuildFolder) -> Option<ProjectLocation> {
     ProjectLocation::new(root, PROJECT).ok()
 }
 
 /// The same for any project. A candidate only: the list may be partial or already old, and it is the
 /// kernel, making the file only if the name is free, that decides.
-pub fn next_number_in(list: Option<&[u8]>, into: &ProjectLocation, at_least: u32) -> u32 {
+pub fn next_number_in(list: Option<&[u8]>, into: &ProjectLocation, at_least: Option<u32>) -> Option<u32> {
     use crate::build_folder_snapshot::{EntryKind, Snapshot};
-    let Some(Ok(snapshot)) = list.map(Snapshot::parse) else { return at_least };
-    let mut next = at_least;
+    // `at_least` is None when this run has already used the last number there is.
+    let mut next = at_least?;
+    let Some(Ok(snapshot)) = list.map(Snapshot::parse) else { return Some(next) };
     for entry in snapshot.entries() {
         let EntryKind::ProjectFile { project, destination } = entry.kind else { continue };
         if project != *into {
@@ -77,16 +82,18 @@ pub fn next_number_in(list: Option<&[u8]>, into: &ProjectLocation, at_least: u32
             continue;
         }
         if let Ok(number) = digits.parse::<u32>() {
-            next = next.max(number.saturating_add(1));
+            // The last number there is, already used: there is no next, and none is invented.
+            next = next.max(number.checked_add(1)?);
         }
     }
-    next
+    Some(next)
 }
 
 /// What is typed, with a new line after it, as note `number` of the current project. The job is ready to
 /// be handed to the kernel: its record is built and it knows what the receipt must say.
+#[cfg(test)]
 pub fn prepare(attempt: u64, number: u32, typed: &str) -> Result<Prepared, &'static str> {
-    prepare_in(default_project(None).ok_or(NOT_TAKEN)?, attempt, number, typed)
+    prepare_in(usual_project(), attempt, number, typed)
 }
 
 /// The same, in the project given. The name is fixed here, before the kernel shows it to the person.
@@ -214,10 +221,16 @@ mod tests {
         assert_eq!(next_number(Some(&cut), 4), 4);
         // Never below what this run has used, and the largest number does not wrap.
         assert_eq!(next_number(Some(&list(&["taylor/my-first-project/note-2.txt"])), 9), 9);
-        assert_eq!(next_number(Some(&list(&["taylor/my-first-project/note-4294967295.txt"])), 1), u32::MAX);
+        // The last number already used, in the list or by this run: there is no next.
+        assert_eq!(next_number_in(Some(&list(&["taylor/my-first-project/note-4294967295.txt"])), &usual_project(), Some(1)), None);
+        assert_eq!(next_number_in(Some(&list(&["taylor/my-first-project/note-4294967294.txt"])), &usual_project(), Some(1)), Some(u32::MAX));
+        assert_eq!(next_number_in(None, &usual_project(), None), None);
         // In another project only that project's notes count, and the note is named inside it.
         let other = ProjectLocation::new(BuildFolder::new("taylor").unwrap(), "other").unwrap();
-        assert_eq!(next_number_in(Some(&list(&["taylor/my-first-project/note-9.txt", "taylor/other/note-40.txt"])), &other, 1), 41);
+        assert_eq!(next_number_in(Some(&list(&["taylor/my-first-project/note-9.txt", "taylor/other/note-40.txt"])), &other, Some(1)), Some(41));
+        // A folder name so long that the first project's name does not fit: no project, and no other folder.
+        let long = BuildFolder::new(core::str::from_utf8(&[b'a'; 116]).unwrap()).unwrap();
+        assert!(default_project(long).is_none());
         assert_eq!(prepare_in(other, 1, 41, "x").unwrap().job.destination().as_str(), "taylor/other/note-41.txt");
     }
 

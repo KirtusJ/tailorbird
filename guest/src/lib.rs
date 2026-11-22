@@ -277,8 +277,11 @@ pub struct Ui {
     pub projects: projects::Projects,
     /// Within the list: 0 the projects, 1 one project's files, 2 one file shown.
     pub browse_level: u8,
+    /// The chosen row within the rows shown, and which item of the whole list the first row is.
     pub place: usize,
+    pub top: usize,
     pub file_place: usize,
+    pub file_top: usize,
     pub files: projects::Files,
     pub viewed: projects::Viewed,
     lines: [Line; LOG_LIMIT],
@@ -296,7 +299,7 @@ impl Ui {
             model: Model::Unknown, connected: false, service_epoch: 0,
             task: Task { id: 0, seq: 0, state: TaskState::Idle },
             stop_intent_task: None, permission: None, decision_pending: None, decision_choice: None,
-            effect_uncertain: false, notice: Text::new(), notes: false, jobs: jobs::Jobs::new(), active: None, show_projects: false, projects: projects::Projects::new(), browse_level: 0, place: 0, file_place: 0,
+            effect_uncertain: false, notice: Text::new(), notes: false, jobs: jobs::Jobs::new(), active: None, show_projects: false, projects: projects::Projects::new(), browse_level: 0, place: 0, top: 0, file_place: 0, file_top: 0,
             files: projects::Files::new(), viewed: projects::Viewed::new(),
             lines: [Line::empty(); LOG_LIMIT], count: 0, feed_hidden_rows: 0,
         }

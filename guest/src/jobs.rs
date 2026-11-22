@@ -6,7 +6,8 @@ use crate::project_location::FileDestination;
 
 /// As many as the kernel keeps receipts for in one run of a program.
 pub const KEPT: usize = 64;
-pub const FULL: &str = "Taylor has made all the notes one opening allows. Leave and open Taylor again.";
+/// Said of requests, not of files: a kept job may have been declined or have no known result.
+pub const FULL: &str = "Limit of note requests for one opening reached. Leave and open Taylor again.";
 
 pub struct Jobs {
     kept: [Option<FileJob>; KEPT],

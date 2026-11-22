@@ -40,12 +40,15 @@ pub struct Projects {
     pub other: usize,
     pub rows: [Row; ROWS],
     pub shown: usize,
+    /// Which project, counted from 0 in the list's order, the first row is: the rows are a window that
+    /// can be moved over the whole list.
+    pub top: usize,
 }
 
 impl Projects {
     pub const fn new() -> Self {
         Self { state: Listing::NotAsked, complete: false, folder: Text::new(), launch: 0, projects: 0, files: 0, other: 0,
-               rows: [Row { project: Text::new(), location: None, files: 0 }; ROWS], shown: 0 }
+               rows: [Row { project: Text::new(), location: None, files: 0 }; ROWS], shown: 0, top: 0 }
     }
 
     pub const fn unavailable() -> Self {
@@ -63,6 +66,11 @@ impl Projects {
     /// The whole of what one open of the list returned. `expected` is the folder and run an earlier list
     /// of this launch named: a list for another folder or run is not a newer version of the same thing.
     pub fn read(bytes: &[u8], expected: Option<(BuildFolder, u64)>) -> Self {
+        Self::read_from(bytes, expected, 0)
+    }
+
+    /// The same, with the rows starting at project `top` (brought back into the list if beyond it).
+    pub fn read_from(bytes: &[u8], expected: Option<(BuildFolder, u64)>, top: usize) -> Self {
         let parsed = match expected {
             Some((root, launch)) => Snapshot::parse_for(bytes, root, launch),
             None => Snapshot::parse(bytes),
@@ -74,7 +82,19 @@ impl Projects {
         out.folder = Text::display(snapshot.root().as_str());
         out.launch = snapshot.launch();
         // The list is in byte order, so one project's files are together.
+        let mut total = 0usize;
         let mut current: Option<ProjectLocation> = None;
+        for entry in snapshot.entries() {
+            if let EntryKind::ProjectFile { project, .. } = entry.kind {
+                if current != Some(project) {
+                    current = Some(project);
+                    total += 1;
+                }
+            }
+        }
+        out.top = if top < total { top } else { total.saturating_sub(ROWS) };
+        current = None;
+        let mut row: Option<usize> = None;
         for entry in snapshot.entries() {
             match entry.kind {
                 EntryKind::OtherFile => out.other += 1,
@@ -82,14 +102,16 @@ impl Projects {
                     out.files += 1;
                     if current != Some(project) {
                         current = Some(project);
-                        out.projects += 1;
-                        if out.shown < ROWS {
+                        row = None;
+                        if out.projects >= out.top && out.shown < ROWS {
                             out.rows[out.shown] = Row { project: Text::display(project.project_name()), location: Some(project), files: 0 };
+                            row = Some(out.shown);
                             out.shown += 1;
                         }
+                        out.projects += 1;
                     }
-                    if out.projects == out.shown {
-                        out.rows[out.shown - 1].files += 1;
+                    if let Some(row) = row {
+                        out.rows[row].files += 1;
                     }
                 }
             }
@@ -121,12 +143,13 @@ pub struct Files {
     pub count: usize,
     pub rows: [FileRow; ROWS],
     pub shown: usize,
+    pub top: usize,
 }
 
 impl Files {
     pub const fn new() -> Self {
         Self { state: Listing::NotAsked, location: None, complete: false, project: Text::new(), count: 0,
-               rows: [FileRow { name: Text::new(), destination: None, size: 0 }; ROWS], shown: 0 }
+               rows: [FileRow { name: Text::new(), destination: None, size: 0 }; ROWS], shown: 0, top: 0 }
     }
 
     pub const fn failed(state: Listing) -> Self {
@@ -136,6 +159,10 @@ impl Files {
     }
 
     pub fn read(bytes: &[u8], expected: Option<(BuildFolder, u64)>, project: ProjectLocation) -> Self {
+        Self::read_from(bytes, expected, project, 0)
+    }
+
+    pub fn read_from(bytes: &[u8], expected: Option<(BuildFolder, u64)>, project: ProjectLocation, top: usize) -> Self {
         let parsed = match expected {
             Some((root, launch)) => Snapshot::parse_for(bytes, root, launch),
             None => Snapshot::parse(bytes),
@@ -146,11 +173,13 @@ impl Files {
         out.complete = snapshot.is_complete();
         out.project = Text::display(project.project_name());
         out.location = Some(project);
+        let total = snapshot.entries().filter(|e| matches!(e.kind, EntryKind::ProjectFile { project: p, .. } if p == project)).count();
+        out.top = if top < total { top } else { total.saturating_sub(ROWS) };
         for entry in snapshot.entries() {
             if let EntryKind::ProjectFile { project: p, destination } = entry.kind {
                 if p == project {
                     out.count += 1;
-                    if out.shown < ROWS {
+                    if out.count > out.top && out.shown < ROWS {
                         out.rows[out.shown] = FileRow { name: Text::display(destination.file_name()), destination: Some(destination), size: entry.size_bytes };
                         out.shown += 1;
                     }
@@ -385,6 +414,20 @@ mod tests {
         let p = Projects::read(&snapshot(1, 4, &listed), None);
         assert_eq!((p.projects, p.shown, p.files), (10, ROWS, 10));
         assert!(p.rows.iter().all(|r| r.files == 1));
+        // The window moves over the whole list: every project can be reached, and one past the end
+        // comes back to the last full window.
+        let bytes = snapshot(1, 4, &listed);
+        let later = Projects::read_from(&bytes, None, 7);
+        assert_eq!((later.top, later.shown, later.rows[0].project.as_str(), later.rows[2].project.as_str()), (7, 3, "p7", "p9"));
+        assert_eq!((later.projects, later.files), (10, 10));
+        let beyond = Projects::read_from(&bytes, None, 10);
+        assert_eq!((beyond.top, beyond.shown, beyond.rows[0].project.as_str()), (10 - ROWS, ROWS, "p4"));
+        let many: Vec<std::string::String> = (10..19).map(|i| std::format!("taylor/a/f{}.txt", i)).collect();
+        let many_listed: Vec<(&str, u32)> = many.iter().map(|n| (n.as_str(), 1)).collect();
+        let bytes = snapshot(1, 4, &many_listed);
+        let project = Projects::read(&bytes, None).rows[0].location.unwrap();
+        let files = Files::read_from(&bytes, None, project, 6);
+        assert_eq!((files.count, files.top, files.shown, files.rows[0].name.as_str(), files.rows[2].name.as_str()), (9, 6, 3, "f16.txt", "f18.txt"));
     }
 
     #[test]

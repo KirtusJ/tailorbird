@@ -84,8 +84,12 @@ fn read_list() -> Result<&'static [u8], Listing> {
 /// A list that failed keeps the folder an earlier list of this launch named, so the screen can still
 /// say where the projects are.
 fn read_projects(expected: Option<(BuildFolder, u64)>) -> Projects {
+    read_projects_from(expected, 0)
+}
+
+fn read_projects_from(expected: Option<(BuildFolder, u64)>, top: usize) -> Projects {
     let mut projects = match read_list() {
-        Ok(bytes) => Projects::read(bytes, expected),
+        Ok(bytes) => Projects::read_from(bytes, expected, top),
         Err(Listing::Unavailable) => Projects::unavailable(),
         Err(_) => Projects::unreadable(),
     };
@@ -135,7 +139,7 @@ pub extern "C" fn tailorbird_main() -> ! {
     // Whether PCP OS lets this program propose files to it (it then lets it make none by itself). If
     // not, Alt+N says so and nothing else changes.
     let proposals = open(b"/dev/proposal\0", 2);
-    let (mut attempt, mut number) = (1u64, 1u32);
+    let (mut attempt, mut number) = (1u64, Some(1u32));
     let mut launch: Option<(BuildFolder, u64)> = None;
     let mut ordered = OrderedKeyboard::new();
     let mut ui = Ui::new();
@@ -144,7 +148,7 @@ pub extern "C" fn tailorbird_main() -> ! {
     if ui.notes {
         let first = read_projects(None);
         launch = same_launch(&first);
-        ui.active = note::default_project(launch.map(|(root, _)| root));
+        ui.active = launch.and_then(|(root, _)| note::default_project(root));
         ui.projects = first;
     }
     paint(&mut display, &ui);
@@ -165,17 +169,31 @@ pub extern "C" fn tailorbird_main() -> ! {
                 KeyOutcome::MakeNote => {
                     // Where the note goes is fixed before anything is asked: the active project, and a
                     // number a fresh list suggests. The kernel still makes it only if that name is free.
-                    let list = read_list().ok();
-                    if ui.active.is_none() {
-                        ui.active = note::default_project(None);
+                    // The folder comes only from PCP OS's list: if it has not been read yet it is read
+                    // now, and if it still is not known nothing is asked and no folder is assumed.
+                    if launch.is_none() {
+                        let fresh = read_projects(None);
+                        launch = same_launch(&fresh);
+                        ui.projects = fresh;
                     }
-                    let (words, job) = match ui.active {
+                    if ui.active.is_none() {
+                        ui.active = launch.and_then(|(root, _)| note::default_project(root));
+                    }
+                    let list = read_list().ok();
+                    let (words, job) = match (launch, ui.active) {
+                        _ if proposals < 0 => (Text::display(note::NOT_ALLOWED), None),
                         _ if ui.jobs.is_full() => (Text::display(tailorbird_ui::jobs::FULL), None),
-                        Some(project) => {
-                            number = note::next_number_in(list, &project, number);
-                            make_note(proposals, project, attempt, number, ui.input.as_str())
-                        }
-                        None => (Text::display(note::NOT_TAKEN), None),
+                        (None, _) => (Text::display(note::NO_FOLDER), None),
+                        (Some(_), None) => (Text::display(note::NO_ROOM_FOR_NAME), None),
+                        (Some(_), Some(project)) => match note::next_number_in(list, &project, number) {
+                            None => (Text::display(note::NO_NUMBER), None),
+                            Some(next) => {
+                                // The next request in this project starts after this number, if there
+                                // is one after it.
+                                number = next.checked_add(1);
+                                make_note(proposals, project, attempt, next, ui.input.as_str())
+                            }
+                        },
                     };
                     ui.notice = words;
                     if let Some(job) = job {
@@ -183,7 +201,6 @@ pub extern "C" fn tailorbird_main() -> ! {
                         let _ = ui.jobs.keep(job);
                     }
                     attempt += 1;
-                    number += 1;
                     // The kernel had the display while it asked: everything is drawn again.
                     dirty = true;
                 }
@@ -191,11 +208,12 @@ pub extern "C" fn tailorbird_main() -> ! {
                     if ui.show_projects {
                         match ui.browse_level {
                             0 => {
-                                let fresh = read_projects(launch);
+                                let fresh = read_projects_from(launch, ui.top);
                                 if launch.is_none() {
                                     launch = same_launch(&fresh);
                                 }
                                 ui.projects = fresh;
+                                ui.top = ui.projects.top;
                                 ui.place = ui.place.min(ui.projects.shown.saturating_sub(1));
                             }
                             1 => {
@@ -204,12 +222,13 @@ pub extern "C" fn tailorbird_main() -> ! {
                                         // Opening a project chooses it: new notes go there, and both
                                         // lists and the first screen say so.
                                         ui.active = Some(project);
-                                        number = 1;
-                                        Files::read(bytes, launch, project)
+                                        number = Some(1);
+                                        Files::read_from(bytes, launch, project, ui.file_top)
                                     }
                                     (Err(state), _) => Files::failed(state),
                                     (_, None) => Files::failed(Listing::Unreadable),
                                 };
+                                ui.file_top = ui.files.top;
                                 ui.file_place = ui.file_place.min(ui.files.shown.saturating_sub(1));
                             }
                             _ => {
