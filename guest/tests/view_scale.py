@@ -723,10 +723,10 @@ def check(kernel, app, measurement, folder, small):
 
     def f6_badge_ok(rgb, mode):
         # Source: guest/main.rs paints exact F6: FIT or F6: COMPACT in TEAL
-        # at logical (418, 513), using Frame::text's 6x10 single-scale glyphs.
+        # after the three keys of view.rs (cap at x=355, name at 359, word at 380), using Frame::text's 6x10 single-scale glyphs.
         label = "compact" if mode == "compact" else "fit"
-        return (stop_text_ok(rgb, mode, "F6", 293, 516, 6, 6, 12, TEXT, PANEL)
-                and stop_text_ok(rgb, mode, label, 314, 516, 6, 6, 12, SOFT))
+        return (stop_text_ok(rgb, mode, "F6", 359, 516, 6, 6, 12, TEXT, PANEL)
+                and stop_text_ok(rgb, mode, label, 380, 516, 6, 6, 12, SOFT))
 
     def erased_f6_badge(rgb, mode):
         # Damage a HOST COPY. Existing cross-view badge inequality remains
@@ -734,7 +734,7 @@ def check(kernel, app, measurement, folder, small):
         label = "compact" if mode == "compact" else "fit"
         damaged = bytearray(rgb)
         for i in range(len(label)):
-            left, top, right, bottom = box(mode, 314+i*6, 516, 6, 12)
+            left, top, right, bottom = box(mode, 380+i*6, 516, 6, 12)
             for row in range(top, bottom):
                 offset = (row*w + left)*3
                 damaged[offset:offset+(right-left)*3] = GROUND*(right-left)
@@ -839,7 +839,7 @@ def check(kernel, app, measurement, folder, small):
     shortcut_legend = (
         ("send", (("Enter", 26, TEXT, PANEL), ("sends", 65, SOFT, GROUND))),
         ("retry", (("Alt+R", 113, TEXT, PANEL), ("retries", 152, SOFT, GROUND))),
-        ("exit", (("Esc", 212, TEXT, PANEL), ("leaves", 239, SOFT, GROUND))),
+        ("exit", (("Esc", 212, TEXT, PANEL), ("closes Tailorbird", 239, SOFT, GROUND))),
     )
 
     def shortcut_legend_ok(rgb, mode):
@@ -885,7 +885,7 @@ def check(kernel, app, measurement, folder, small):
         ("I am not switched on yet, so I", 420, 316, 10, 20, AMBER),
         ("cannot build anything.", 420, 340, 10, 20, AMBER),
         ("The rest of PCP OS works without me.", 420, 384, 10, 20, GOOD),
-        ("returns to Programs", 370, 420, 6, 12, SOFT),
+        ("closes Tailorbird", 370, 420, 6, 12, SOFT),
     )
 
     def empty_output_label_ok(rgb, mode, text, x, y, cell_w, cell_h, ink):
@@ -920,7 +920,7 @@ def check(kernel, app, measurement, folder, small):
     # typeface and exact positions are pinned to guest/main.rs.
     task_section_labels = (
         ("builds and fixes on this computer", 202, 27, 10, 20, SOFT),
-        ("PCP OS > Programs > Tailorbird (Esc returns to Programs)", 22, 52, 6, 12, SOFT),
+        ("PCP OS > Programs > Tailorbird (Esc closes Tailorbird)", 22, 52, 6, 12, SOFT),
         ("Work", 335, 116, 10, 20, TEAL),
         ("No task", 337, 150, 6, 12, SOFT),
         ("stops the task", 97, 410, 6, 12, SOFT),
@@ -977,7 +977,7 @@ def check(kernel, app, measurement, folder, small):
         return area(rgb,mode,140,460,10,20)
 
     def badge(rgb, mode):
-        return area(rgb,mode,289,513,80,17)
+        return area(rgb,mode,355,513,80,17)
 
     try:
         m = Qemu(kernel, app, folder, "q35", f"image={measurement} desktop={w}x{h} ui_scale=1",
