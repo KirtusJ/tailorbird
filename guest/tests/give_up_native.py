@@ -16,8 +16,9 @@ Predicates, fixed before the first run.
     as CREATED and Tailorbird never says a file was made).
  G5 Esc ends Tailorbird and the emulator ends with status 33.
  G6 (control, with --older: a kernel with proposals built before the give-up record existed) Alt+G
-    twice gets no confirmation: Tailorbird says "PCP OS did not confirm. Nothing changed: it still
-    asks you each time.", never the confirmed words, and Alt+N still brings PCP OS's question.
+    twice gets no confirmation: Tailorbird says "PCP OS did not confirm whether Taylor can still make
+    files.", never the confirmed words and never that nothing changed; Alt+N then shows what is so,
+    which on that kernel is that PCP OS still asks.
 
 The first run of this file failed G4 by this file's own error: it looked for the word CREATED
 anywhere, which PCP OS's register also uses of processes, and for a line about the store that PCP OS
@@ -37,7 +38,7 @@ import time
 from qemu_smoke import Qemu
 
 CONFIRMED = "tailorbird: PCP OS confirmed: Taylor makes no more files until started again."
-UNCONFIRMED = "tailorbird: PCP OS did not confirm. Nothing changed: it still asks you each time."
+UNCONFIRMED = "tailorbird: PCP OS did not confirm whether Taylor can still make files."
 GAVE = "GAVE UP proposing files"
 
 

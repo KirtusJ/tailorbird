@@ -21,7 +21,10 @@ pub const NOT_ALLOWED: &str = "PCP OS has not let Taylor make files here.";
 /// on PCP OS's own receipt.
 pub const GIVE_UP_ASK: &str = "Press Alt+G again and Taylor makes no more files until started again.";
 pub const GAVE_UP: &str = "PCP OS confirmed: Taylor makes no more files until started again.";
-pub const GIVE_UP_UNCONFIRMED: &str = "PCP OS did not confirm. Nothing changed: it still asks you each time.";
+/// Said when no valid receipt came back. It does not say the right is still held: PCP OS may have
+/// taken the record and the receipt been lost, and without the receipt neither state is established
+/// (Director B3). What Alt+N then does shows which.
+pub const GIVE_UP_UNCONFIRMED: &str = "PCP OS did not confirm whether Taylor can still make files.";
 pub const NOT_TAKEN: &str = "PCP OS did not take the request. Nothing was made.";
 pub const UNREADABLE: &str = "PCP OS answered in a way Taylor cannot read. Nothing is claimed.";
 
