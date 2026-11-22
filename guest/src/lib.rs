@@ -270,6 +270,12 @@ pub struct Ui {
     /// The Work panel shows the project list (Alt+P) instead of Taylor's greeting or the last result.
     pub show_projects: bool,
     pub projects: projects::Projects,
+    /// Within the list: 0 the projects, 1 one project's files, 2 one file shown.
+    pub browse_level: u8,
+    pub place: usize,
+    pub file_place: usize,
+    pub files: projects::Files,
+    pub viewed: projects::Viewed,
     lines: [Line; LOG_LIMIT],
     count: usize,
     /// Rows actually evicted from this launch's local eight-line UI window.
@@ -285,7 +291,8 @@ impl Ui {
             model: Model::Unknown, connected: false, service_epoch: 0,
             task: Task { id: 0, seq: 0, state: TaskState::Idle },
             stop_intent_task: None, permission: None, decision_pending: None, decision_choice: None,
-            effect_uncertain: false, notice: Text::new(), notes: false, last_note: None, show_projects: false, projects: projects::Projects::new(),
+            effect_uncertain: false, notice: Text::new(), notes: false, last_note: None, show_projects: false, projects: projects::Projects::new(), browse_level: 0, place: 0, file_place: 0,
+            files: projects::Files::new(), viewed: projects::Viewed::new(),
             lines: [Line::empty(); LOG_LIMIT], count: 0, feed_hidden_rows: 0,
         }
     }

@@ -97,6 +97,8 @@ impl OrderedKeyboard {
                 // Edge-triggered like every other command; Shift makes it a different chord.
                 if already_down || self.held[42] || self.held[54] { return KeyOutcome::Unchanged; }
                 ui.show_projects = !ui.show_projects;
+                ui.browse_level = 0;
+                ui.place = 0;
                 return KeyOutcome::Projects;
             }
             let action = match code {
@@ -117,6 +119,34 @@ impl OrderedKeyboard {
                 return KeyOutcome::Redraw;
             }
             return KeyOutcome::Unchanged;
+        }
+        if ui.show_projects && matches!(code, 72 | 80 | 75 | 28) {
+            // In the list the arrows choose, Enter opens and Left goes back. Each press is one step; a
+            // held key does not run through the list or open what appears under it.
+            if already_down { return KeyOutcome::Unchanged; }
+            let (place, count) = match ui.browse_level {
+                0 => (&mut ui.place, ui.projects.shown),
+                1 => (&mut ui.file_place, ui.files.shown),
+                _ => (&mut ui.file_place, 0),
+            };
+            match code {
+                72 if *place > 0 && count > 0 => *place -= 1,
+                80 if *place + 1 < count => *place += 1,
+                75 if ui.browse_level > 0 => {
+                    ui.browse_level -= 1;
+                    // Going back reads the list again: it may have changed.
+                    return KeyOutcome::Projects;
+                }
+                28 if ui.browse_level < 2 && *place < count => {
+                    ui.browse_level += 1;
+                    if ui.browse_level == 1 {
+                        ui.file_place = 0;
+                    }
+                    return KeyOutcome::Projects;
+                }
+                _ => return KeyOutcome::Unchanged,
+            }
+            return KeyOutcome::Redraw;
         }
         if code == 28 {
             // Submit is an admission request, not ordinary text. A held

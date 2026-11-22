@@ -151,7 +151,11 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
         // fighting task-output rows for the same pixels. Stop and mode stay
         // visible in the separate x=20..300 sidebar.
     } else if ui.lines().is_empty() && ui.show_projects {
-        projects(f, &ui.projects);
+        match ui.browse_level {
+            0 => projects(f, &ui.projects, ui.place),
+            1 => files(f, &ui.files, ui.file_place),
+            _ => viewed(f, &ui.viewed),
+        }
     } else if ui.lines().is_empty() {
         // Nothing has happened: show what will, as three places a job passes through, none of them lit.
         for (n, (step, what)) in [("1", "You ask"), ("2", "You check"), ("3", "I build")].iter().enumerate() {
@@ -256,7 +260,7 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
 
 /// The project list, in the Work panel: where the projects are, each with how many files, and in words
 /// what is not known. "No projects yet" is said only of a whole list that was read and held nothing.
-fn projects(f: &mut Frame<'_>, list: &crate::projects::Projects) {
+fn projects(f: &mut Frame<'_>, list: &crate::projects::Projects, place: usize) {
     use crate::projects::Listing;
     let mut digits = [0u8; 20];
     label(f, 339, 190, "Your projects", 2, TEXT);
@@ -280,6 +284,9 @@ fn projects(f: &mut Frame<'_>, list: &crate::projects::Projects) {
             for (row, entry) in list.rows[..list.shown].iter().enumerate() {
                 let y = 240 + row as i32 * 22;
                 f.well(339, y - 3, 570, 20, GROUND);
+                if row == place {
+                    f.rect(339, y - 3, 4, 20, TEAL);
+                }
                 let name = entry.project.as_str();
                 // A name too long for the row is shown cut, and marked as cut.
                 let (fits, cut) = if name.len() > 72 { (&name[..69], true) } else { (name, false) };
@@ -306,8 +313,108 @@ fn projects(f: &mut Frame<'_>, list: &crate::projects::Projects) {
             }
         }
     }
-    let x = key(f, 339, 420, "Alt+P", "goes back");
+    let mut x = key(f, 339, 420, "Alt+P", "goes back");
+    if list.shown > 0 {
+        x = key(f, x, 420, "Up", "/");
+        x = key(f, x, 420, "Down", "choose");
+        x = key(f, x, 420, "Enter", "opens");
+    }
     key(f, x, 420, "Esc", "returns to Programs");
+}
+
+/// One project's files. The size is what the list said when it was read.
+fn files(f: &mut Frame<'_>, list: &crate::projects::Files, place: usize) {
+    use crate::projects::Listing;
+    let mut digits = [0u8; 20];
+    label(f, 339, 190, "Project", 2, SOFT);
+    match list.state {
+        Listing::Listed => {
+            let name = list.project.as_str();
+            for (row, part) in name.as_bytes().chunks(46).take(1).enumerate() {
+                label(f, 429, 190 + row as i32 * 20, core::str::from_utf8(part).unwrap_or("?"), 2, TEXT);
+            }
+            if name.len() > 46 {
+                label(f, 339, 218, "(its name is longer than this line shows)", 1, AMBER);
+            }
+            if list.count == 0 {
+                label(f, 339, 250, if list.complete { "This project has no files now." } else { "No files of it are in the part PCP OS listed." }, 1, SOFT);
+            }
+            for (row, entry) in list.rows[..list.shown].iter().enumerate() {
+                let y = 240 + row as i32 * 22;
+                f.well(339, y - 3, 570, 20, GROUND);
+                if row == place {
+                    f.rect(339, y - 3, 4, 20, TEAL);
+                }
+                let name = entry.name.as_str();
+                let (fits, cut) = if name.len() > 72 { (&name[..69], true) } else { (name, false) };
+                label(f, 347, y, fits, 1, TEXT);
+                if cut {
+                    label(f, 347 + 69 * 6, y, "...", 1, AMBER);
+                }
+                label(f, 800, y, decimal_u64(entry.size as u64, &mut digits), 1, TEXT);
+                label(f, 842, y, "characters", 1, SOFT);
+            }
+            let mut y = 240 + list.shown as i32 * 22 + 4;
+            if list.count > list.shown {
+                label(f, 339, y, "more files not shown:", 1, AMBER);
+                label(f, 339 + 22 * 6, y, decimal_u64((list.count - list.shown) as u64, &mut digits), 1, AMBER);
+                y += 14;
+            }
+            if !list.complete {
+                label(f, 339, y, "PCP OS listed only part of the folder. There is more.", 1, AMBER);
+            }
+        }
+        _ => {
+            label(f, 339, 226, "The list could not be read, so", 2, AMBER);
+            label(f, 339, 250, "nothing is shown.", 2, AMBER);
+        }
+    }
+    let mut x = key(f, 339, 420, "Left", "goes back");
+    if list.shown > 0 {
+        x = key(f, x, 420, "Up", "/");
+        x = key(f, x, 420, "Down", "choose");
+        x = key(f, x, 420, "Enter", "shows the file");
+    }
+    key(f, x, 420, "Alt+P", "closes");
+}
+
+/// One file, read whole, shown and not changeable here.
+fn viewed(f: &mut Frame<'_>, file: &crate::projects::Viewed) {
+    use crate::projects::{Checked, Opened};
+    let mut digits = [0u8; 20];
+    if let Some(destination) = &file.destination {
+        for (row, part) in destination.as_str().as_bytes().chunks(96).enumerate() {
+            label(f, 339, 184 + row as i32 * 13, core::str::from_utf8(part).unwrap_or("?"), 1, TEXT);
+        }
+    }
+    match file.state {
+        Opened::NotAsked | Opened::Unavailable => label(f, 339, 250, "This file could not be read. Nothing is known about it.", 1, AMBER),
+        Opened::TooLarge => label(f, 339, 250, "This file is larger than a text file Taylor shows.", 1, AMBER),
+        Opened::NotText => label(f, 339, 250, "This file is not plain text, so Taylor does not show it.", 1, AMBER),
+        Opened::Shown => {
+            f.well(335, 226, 590, 14 * crate::projects::VIEW_LINES as i32 + 8, GROUND);
+            if file.bytes == 0 {
+                label(f, 343, 232, "(the file is empty)", 1, SOFT);
+            }
+            for (row, line) in file.lines[..file.shown].iter().enumerate() {
+                label(f, 343, 231 + row as i32 * 14, line.as_str(), 1, TEXT);
+            }
+        }
+    }
+    if matches!(file.state, Opened::Shown | Opened::NotText) {
+        let y = 226 + 14 * crate::projects::VIEW_LINES as i32 + 14;
+        let x = 339 + 6 * (decimal_u64(file.bytes as u64, &mut digits).len() as i32 + 1);
+        label(f, 339, y, decimal_u64(file.bytes as u64, &mut digits), 1, TEXT);
+        label(f, x, y, if file.more { "characters. Only the first lines are shown." } else { "characters. Read only." }, 1, if file.more { AMBER } else { SOFT });
+        let (words, colour) = match file.checked {
+            Checked::Matches => ("Checked: exactly what PCP OS made when you allowed it.", GOOD),
+            Checked::Differs => ("Warning: this is NOT what PCP OS made when you allowed it.", BAD),
+            Checked::NotThisRun => ("Not made since Taylor was opened, so not checked.", SOFT),
+        };
+        label(f, 339, y + 14, words, 1, colour);
+    }
+    let x = key(f, 339, 420, "Left", "goes back");
+    key(f, x, 420, "Alt+P", "closes");
 }
 
 fn footer(f: &mut Frame<'_>, ui: &Ui) {
