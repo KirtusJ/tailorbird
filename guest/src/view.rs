@@ -817,53 +817,62 @@ mod tests {
             pixels
         }
 
-        let mut exact = reply(b"go??");
-        let mut replaced = reply(b"go\xc3\xa9");
-        assert_eq!(exact.talk.turns().last().unwrap().text.as_str(), "go??");
-        assert_eq!(replaced.talk.turns().last().unwrap().text.as_str(), "go??");
-        assert!(!exact.talk.turns().last().unwrap().display_lossy);
-        assert!(replaced.talk.turns().last().unwrap().display_lossy);
-
-        // Rectangle coordinates are half-open, in destination pixels, not
-        // logical 960x540 coordinates. The 1080 Fit case uses its 2x font
-        // and has no independent count: require whole-frame matching only.
-        for (width, height, compact, bounds, count) in [
-            (640usize, 480usize, false, (262usize, 229usize, 410usize, 237usize), Some(467usize)),
-            (800, 600, false, (327, 286, 512, 296), Some(657)),
-            (1920, 1080, true, (873, 524, 1095, 536), Some(638)),
-            (1920, 1080, false, (786, 508, 1230, 532), None),
+        // Exercise both valid UTF-8 and a genuinely invalid byte through
+        // canonical Reader/Link frames. Their *retained* display matches
+        // literal ASCII, but the native warning must still differ.
+        for (raw, case) in [
+            (&b"go\xc3\xa9"[..], "valid UTF-8 non-ASCII"),
+            (&b"go\xff?"[..], "invalid UTF-8 byte"),
         ] {
-            exact.compact_view = compact;
-            replaced.compact_view = compact;
-            let before = render(&exact, width, height, compact);
-            let after = render(&replaced, width, height, compact);
-            let mut glyphs = vec![PANEL; width * height];
-            {
-                let mut frame = Frame::new(&mut glyphs, width, height, width, PANEL, compact);
-                label(&mut frame, 393, 254, "(some characters changed for display)", 1, AMBER);
-            }
-            let mut expected = before.clone();
-            let (left, top, right, bottom) = bounds;
-            let mut changes = 0usize;
-            for y in 0..height {
-                for x in 0..width {
-                    let at = y * width + x;
-                    if before[at] != after[at] {
-                        assert!(x >= left && x < right && y >= top && y < bottom,
-                            "loss warning changed unrelated pixel ({x},{y}) at {width}x{height}");
-                        changes += 1;
-                    }
-                    if x >= left && x < right && y >= top && y < bottom {
-                        assert_eq!(before[at], PANEL, "warning needs flat substrate");
-                        expected[at] = glyphs[at];
+            assert_eq!(core::str::from_utf8(raw).is_err(), case == "invalid UTF-8 byte");
+            let mut exact = reply(b"go??");
+            let mut replaced = reply(raw);
+            assert_eq!(exact.talk.turns().last().unwrap().text.as_str(), "go??");
+            assert_eq!(replaced.talk.turns().last().unwrap().text.as_str(), "go??");
+            assert!(!exact.talk.turns().last().unwrap().display_lossy);
+            assert!(replaced.talk.turns().last().unwrap().display_lossy);
+    
+            // Rectangle coordinates are half-open, in destination pixels, not
+            // logical 960x540 coordinates. The 1080 Fit case uses its 2x font
+            // and has no independent count: require whole-frame matching only.
+            for (width, height, compact, bounds, count) in [
+                (640usize, 480usize, false, (262usize, 229usize, 410usize, 237usize), Some(467usize)),
+                (800, 600, false, (327, 286, 512, 296), Some(657)),
+                (1920, 1080, true, (873, 524, 1095, 536), Some(638)),
+                (1920, 1080, false, (786, 508, 1230, 532), None),
+            ] {
+                exact.compact_view = compact;
+                replaced.compact_view = compact;
+                let before = render(&exact, width, height, compact);
+                let after = render(&replaced, width, height, compact);
+                let mut glyphs = vec![PANEL; width * height];
+                {
+                    let mut frame = Frame::new(&mut glyphs, width, height, width, PANEL, compact);
+                    label(&mut frame, 393, 254, "(some characters changed for display)", 1, AMBER);
+                }
+                let mut expected = before.clone();
+                let (left, top, right, bottom) = bounds;
+                let mut changes = 0usize;
+                for y in 0..height {
+                    for x in 0..width {
+                        let at = y * width + x;
+                        if before[at] != after[at] {
+                            assert!(x >= left && x < right && y >= top && y < bottom,
+                                "loss warning changed unrelated pixel ({x},{y}) at {width}x{height}");
+                            changes += 1;
+                        }
+                        if x >= left && x < right && y >= top && y < bottom {
+                            assert_eq!(before[at], PANEL, "warning needs flat substrate");
+                            expected[at] = glyphs[at];
+                        }
                     }
                 }
-            }
-            assert!(after == expected,
-                "wrong warning glyph, position, colour or unrelated pixels at {width}x{height}, compact={compact}");
-            assert!(changes > 20, "warning glyphs absent at {width}x{height}");
-            if let Some(independent) = count {
-                assert_eq!(changes, independent, "independent pinned-font ink count at {width}x{height}");
+                assert!(after == expected,
+                    "wrong warning glyph, position, colour or unrelated pixels at {width}x{height}, compact={compact}, case={case}");
+                assert!(changes > 20, "warning glyphs absent at {width}x{height}");
+                if let Some(independent) = count {
+                    assert_eq!(changes, independent, "independent pinned-font ink count at {width}x{height}");
+                }
             }
         }
     }
