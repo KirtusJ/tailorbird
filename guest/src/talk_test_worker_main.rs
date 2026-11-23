@@ -9,7 +9,7 @@
 //!  `fail`   answers that the reply failed;
 //!  `leave`  says a few bytes and ends, as a service that stops would;
 //!  `cut N`  (N in digits, at most 480) sends an answer of exactly N bytes, then says the reply failed;
-//!  `sequence` sends inconsistent reading counts, then waits for Stop; `again` starts a new total;
+//!  `raw`    replies with a genuine invalid UTF-8 CHUNK for a native display test;\n//!  `sequence` sends inconsistent reading counts, then waits for Stop; `again` starts a new total;
 //!  anything else: answers in pieces of eight bytes, a pause between them, and stops at once if told to.
 use pcp_game_guest::{call, exit, log, open, sleep_us};
 use tailorbird_ui::wire::{pack, Kind, Reader, Record, Step};
@@ -143,6 +143,15 @@ pub extern "C" fn worker_main() -> ! {
             pause(4000);
             send(fd, Kind::Chunk, got.conversation, got.reply, b"ok");
             send(fd, Kind::Done, got.conversation, got.reply, b"");
+            continue;
+        }
+        // Dedicated, model-free end-to-end probe: byte FF must cross the real
+        // /dev/talk channel. It is deliberately not valid UTF-8 and is never
+        // used by the production model worker or any release image.
+        if said == b"raw" {
+            send(fd, Kind::Chunk, got.conversation, got.reply, b"go\xff?");
+            send(fd, Kind::Done, got.conversation, got.reply, b"");
+            log(b"test worker: raw invalid CHUNK sent (67 6f ff 3f)\n");
             continue;
         }
         if said == b"fail" {

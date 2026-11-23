@@ -5,7 +5,7 @@
 //!   ready | loading [<checked> <of>] | gone | not-started      what the model service is
 //!   type <words>                                  into the field
 //!   enter | stop | new | took                     the keys (new: Alt+C), and "the request was carried"
-//!   chunk <words> | done | failed                 from the service, for the reply being waited for
+//!   chunk <words> | chunkhex <hex bytes> | done | failed                 from the service, for the reply being waited for
 //!   notes                                          PCP OS lets this launch make notes
 //!   folder <name>                                  the folder PCP OS said this launch builds into
 //!   say <words>                                    the notice line, as the program sets it after a note
@@ -68,6 +68,17 @@ fn main() {
             "chunk" => {
                 let (conversation, reply) = waited.expect("no reply is waited for");
                 ui.talk.receive(Incoming::Chunk { conversation, reply, text: rest });
+            }
+            // Hex is essential here: a textual script cannot contain or
+            // faithfully replay an invalid UTF-8 CHUNK byte.
+            "chunkhex" => {
+                let (conversation, reply) = waited.expect("no reply is waited for");
+                assert!(rest.len() % 2 == 0 && rest.len() <= 960, "invalid CHUNK hex length");
+                let raw: Vec<u8> = rest.as_bytes().chunks_exact(2).map(|pair| {
+                    u8::from_str_radix(core::str::from_utf8(pair).expect("ASCII hex pair"), 16)
+                        .expect("hex pair")
+                }).collect();
+                ui.talk.receive(Incoming::ChunkBytes { conversation, reply, bytes: &raw });
             }
             "reading" => {
                 let (conversation, reply) = waited.expect("no reply is waited for");

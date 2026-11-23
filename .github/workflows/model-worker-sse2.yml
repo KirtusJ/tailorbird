@@ -129,7 +129,7 @@ jobs:
   reading-display:
     name: Native reading display and Stop
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       RUSTUP_TOOLCHAIN: 1.97.0
     steps:
@@ -156,6 +156,14 @@ jobs:
           kernel=pcp-os/PCP_OS_Rust/crates/pcpos-kernel/target/pcpos-kernel.elf32
           { git rev-parse HEAD; git submodule status; sha256sum "$kernel" "$elf/tailorbird" "$elf/talk-test-worker"; } > reading-evidence/source.txt
           python3 guest/tests/reading_native.py "$kernel" "$elf/tailorbird" "$elf/talk-test-worker" reading-evidence/guest
+      - name: Native raw-invalid-UTF8 channel and actual warning pixels
+        run: |
+          set -euo pipefail
+          elf=target/x86_64-unknown-none/release
+          kernel=pcp-os/PCP_OS_Rust/crates/pcpos-kernel/target/pcpos-kernel.elf32
+          python3 guest/tests/talk_lossy_native.py "$kernel" "$elf/tailorbird" \
+            "$elf/talk-test-worker" reading-evidence/native-lossy \
+            2>&1 | tee reading-evidence/native-lossy-check.log
       - name: Retain original full guest frames and serial
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -166,4 +174,6 @@ jobs:
             reading-evidence/guest/*.ppm
             reading-evidence/guest/serial.log
             reading-evidence/guest/drawn-*/steps.txt
+            reading-evidence/native-lossy/**
+            reading-evidence/native-lossy-check.log
           retention-days: 14
