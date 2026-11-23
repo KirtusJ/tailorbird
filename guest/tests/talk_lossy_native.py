@@ -83,7 +83,7 @@ def run(kernel, guest, worker, tool, root, size, measurement):
         until("tailorbird: reply 1 kept 4 bytes and is complete")
         dims, native_pixels, native_sha = q.screenshot("native-invalid-byte")
         assert dims == size, ("native mode changed", dims)
-        before = ["notes", "folder taylor", "ready", "type raw", "enter", "took"]
+        # The CI kernel enables companion only, not proposals. Its native banner\n        # is Talk only, not Talk + notes; no "notes" command belongs here.\n        before = ["folder taylor", "ready", "type raw", "enter", "took"]
         expected_size, expected = rendered(
             tool, root, size, "expected-warning",
             before + ["chunkhex 676fff3f", "done"])
@@ -92,7 +92,7 @@ def run(kernel, guest, worker, tool, root, size, measurement):
             before + ["chunk go??", "done"])
         wrong_size, wrong = rendered(
             tool, root, size, "wrong-input",
-            ["notes", "folder taylor", "ready", "type rax", "enter", "took",
+            ["folder taylor", "ready", "type rax", "enter", "took",
              "chunkhex 676fff3f", "done"])
         assert expected_size == plain_size == wrong_size == size
         # The on-device image itself, not merely a hosted reducer, is the positive.
