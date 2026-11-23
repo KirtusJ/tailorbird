@@ -387,7 +387,7 @@ fn transcript(f: &mut Frame<'_>, talk: &crate::talk::Talk) {
     };
     label(f, 790, 196, model, 1, colour);
     // Rows each turn needs: its text wrapped, at least one, and a gap after it.
-    let rows = |t: &crate::talk::Turn| (t.text.as_str().len().div_ceil(ACROSS).max(1) + t.cut as usize + ended_below(t) as usize) as i32 + 1;
+    let rows = |t: &crate::talk::Turn| (t.text.as_str().len().div_ceil(ACROSS).max(1) + t.cut as usize + t.display_lossy as usize + ended_below(t) as usize) as i32 + 1;
     let turns = talk.turns();
     let mut first = turns.len();
     let mut used = 0;
@@ -448,6 +448,10 @@ fn transcript(f: &mut Frame<'_>, talk: &crate::talk::Talk) {
         }
         if turn.cut {
             label(f, 393, y, "(the rest is not kept)", 1, AMBER);
+            y += 12;
+        }
+        if turn.display_lossy {
+            label(f, 393, y, "(some characters changed for display)", 1, AMBER);
             y += 12;
         }
         y += 12;
@@ -687,6 +691,42 @@ mod tests {
     /// last row exactly (84, 168, ... characters).
     /// While the service reads the message, the reply's place says how far it has got, in the
     /// service's own two numbers, and nothing else on the screen changes.
+    #[test]
+    fn replaced_reply_has_a_native_pixel_disclosure_even_when_text_matches_exact_ascii() {
+        use crate::talk::{Incoming, Service};
+        let mut exact = Ui::new();
+        let mut changed = Ui::new();
+        for ui in [&mut exact, &mut changed] {
+            ui.talk.service_is(Service::Ready);
+            for &byte in b"hello" { assert!(ui.input.push_ascii(byte)); }
+            assert_eq!(ui.intent(crate::Action::Submit), None);
+        }
+        exact.talk.receive(Incoming::ChunkBytes { conversation: 1, reply: 1, bytes: b"go??" });
+        changed.talk.receive(Incoming::ChunkBytes { conversation: 1, reply: 1, bytes: b"go\xc3\xa9" });
+        exact.talk.receive(Incoming::Done { conversation: 1, reply: 1 });
+        changed.talk.receive(Incoming::Done { conversation: 1, reply: 1 });
+        assert_eq!(exact.talk.turns().last().unwrap().text.as_str(), changed.talk.turns().last().unwrap().text.as_str());
+        assert!(!exact.talk.turns().last().unwrap().display_lossy);
+        assert!(changed.talk.turns().last().unwrap().display_lossy);
+        let before = shot(&exact);
+        let after = shot(&changed);
+        assert_ne!(before, after, "visually colliding words require a visible loss marker");
+        // The two screens have identical text, task state and footer. Only the
+        // warning row beneath Taylor's reply is allowed to differ.
+        let mut marker_pixels = 0usize;
+        for y in 0..540usize {
+            for x in 0..960usize {
+                let pos = y * 960 + x;
+                if before[pos] != after[pos] {
+                    assert!((393..=645).contains(&x) && (254..266).contains(&y),
+                        "display metadata must not overwrite other UI at ({x},{y})");
+                    marker_pixels += 1;
+                }
+            }
+        }
+        assert!(marker_pixels > 20, "visible source-font warning needs meaningful coverage");
+    }
+
     #[test]
     fn reading_progress_is_drawn_where_the_answer_will_be_and_nowhere_else() {
         use crate::talk::{Incoming, Service};
