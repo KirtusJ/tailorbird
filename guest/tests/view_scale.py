@@ -545,9 +545,9 @@ def check(kernel, app, measurement, folder, small):
     def taylor_ok(rgb, mode):
         return area(rgb, mode, 339, 286, 64, 56) == expected_taylor_rgb(mode)
 
-    def changed_taylor_square(rgb, mode, symbol, new_rgb):
+    def changed_taylor_square(rgb, mode, symbol, new_rgb, first_row=0):
         gy, gx = next((y, row.index(symbol)) for y, row in enumerate(taylor_tiles)
-                      if symbol in row)
+                      if y >= first_row and symbol in row)
         left, top, right, bottom = box(mode, 339 + gx*4, 286 + gy*4, 4, 4)
         altered = bytearray(rgb)
         for py in range(top, bottom):
@@ -563,8 +563,11 @@ def check(kernel, app, measurement, folder, small):
                 f"erased native Taylor tile {symbol!r} was accepted"
             )
             taylor_receipts["erased_tile_negatives"] += 1
-        for symbol, old_ink in (("H", AMBER), ("G", GOOD), ("W", TEXT), ("A", SOFT)):
-            substituted = changed_taylor_square(rgb, mode, symbol, old_ink)
+        # The first A (row 7) is a hammer handle, not a leg. Old leg colour
+        # must be tested at row 11+, where the brand actually changed it.
+        for symbol, old_ink, first_row in (("H", AMBER, 0), ("G", GOOD, 0),
+                                           ("W", TEXT, 0), ("A", SOFT, 11)):
+            substituted = changed_taylor_square(rgb, mode, symbol, old_ink, first_row)
             assert substituted != rgb and not taylor_ok(substituted, mode), (
                 f"outdated native Taylor palette tile {symbol!r} was accepted"
             )
