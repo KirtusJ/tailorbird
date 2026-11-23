@@ -387,7 +387,7 @@ fn transcript(f: &mut Frame<'_>, talk: &crate::talk::Talk) {
     };
     label(f, 790, 196, model, 1, colour);
     // Rows each turn needs: its text wrapped, at least one, and a gap after it.
-    let rows = |t: &crate::talk::Turn| (t.text.as_str().len().div_ceil(ACROSS).max(1) + t.cut as usize + ended_below(t) as usize) as i32 + 1;
+    let rows = |t: &crate::talk::Turn| (t.text.as_str().len().div_ceil(ACROSS).max(1) + t.cut as usize + t.display_lossy as usize + ended_below(t) as usize) as i32 + 1;
     let turns = talk.turns();
     let mut first = turns.len();
     let mut used = 0;
@@ -448,6 +448,10 @@ fn transcript(f: &mut Frame<'_>, talk: &crate::talk::Talk) {
         }
         if turn.cut {
             label(f, 393, y, "(the rest is not kept)", 1, AMBER);
+            y += 12;
+        }
+        if turn.display_lossy {
+            label(f, 393, y, "(some characters changed for display)", 1, AMBER);
             y += 12;
         }
         y += 12;
@@ -687,6 +691,196 @@ mod tests {
     /// last row exactly (84, 168, ... characters).
     /// While the service reads the message, the reply's place says how far it has got, in the
     /// service's own two numbers, and nothing else on the screen changes.
+    #[test]
+    fn replaced_reply_has_a_native_pixel_disclosure_even_when_text_matches_exact_ascii() {
+        use crate::talk::{Incoming, Service};
+        let mut exact = Ui::new();
+        let mut changed = Ui::new();
+        for ui in [&mut exact, &mut changed] {
+            ui.talk.service_is(Service::Ready);
+            for &byte in b"hello" { assert!(ui.input.push_ascii(byte)); }
+            assert_eq!(ui.intent(crate::Action::Submit), None);
+        }
+        exact.talk.receive(Incoming::ChunkBytes { conversation: 1, reply: 1, bytes: b"go??" });
+        changed.talk.receive(Incoming::ChunkBytes { conversation: 1, reply: 1, bytes: b"go\xc3\xa9" });
+        exact.talk.receive(Incoming::Done { conversation: 1, reply: 1 });
+        changed.talk.receive(Incoming::Done { conversation: 1, reply: 1 });
+        assert_eq!(exact.talk.turns().last().unwrap().text.as_str(), changed.talk.turns().last().unwrap().text.as_str());
+        assert!(!exact.talk.turns().last().unwrap().display_lossy);
+        assert!(changed.talk.turns().last().unwrap().display_lossy);
+        let before = shot(&exact);
+        let after = shot(&changed);
+        assert_ne!(before, after, "visually colliding words require a visible loss marker");
+        // Independently draw the exact prescribed source-font warning, rather than accepting
+        // an arbitrary number of changed pixels inside an approximate bounding rectangle.
+        // Frame::new clears its buffer; render separately on the flat transcript substrate,
+        // then composite only the warning's own character cells over the unmarked screen.
+        const WARNING: &str = "(some characters changed for display)";
+        const LEFT: usize = 393;
+        const TOP: usize = 254;
+        const CELL_WIDTH: usize = 6;
+        const CELL_HEIGHT: usize = 12;
+        let right = LEFT + WARNING.len() * CELL_WIDTH;
+        assert_eq!(right, 615, "unexpected warning cell geometry");
+
+        let mut glyphs = vec![PANEL; 960 * 540];
+        {
+            let mut independent = Frame::new(&mut glyphs, 960, 540, 960, PANEL, false);
+            label(&mut independent, LEFT as i32, TOP as i32, WARNING, 1, AMBER);
+        }
+        let mut expected = before.clone();
+        let mut ink_pixels = 0usize;
+        for y in TOP..TOP + CELL_HEIGHT {
+            for x in LEFT..right {
+                let at = y * 960 + x;
+                assert_eq!(before[at], PANEL, "oracle requires flat untouched substrate at ({x},{y})");
+                if glyphs[at] != PANEL { ink_pixels += 1; }
+                expected[at] = glyphs[at];
+            }
+        }
+        assert!(ink_pixels > 20, "the prescribed source-font text must have nontrivial ink");
+        assert_eq!(after, expected, "the native frame must disclose every exact warning glyph and change nothing else");
+
+        // Adverse controls for the oracle itself. Removing or misspelling the text cannot
+        // pass; neither can 21 stray pixels beyond the final warning glyph (x >= 615),
+        // which the earlier threshold-only rectangular assertion mistakenly accepted.
+        assert_ne!(before, expected, "erased warning must be rejected");
+        let mut misspelled = vec![PANEL; 960 * 540];
+        {
+            let mut incorrect = Frame::new(&mut misspelled, 960, 540, 960, PANEL, false);
+            label(&mut incorrect, LEFT as i32, TOP as i32,
+                "(some characters change for display)", 1, AMBER);
+        }
+        let mut wrong_phrase = before.clone();
+        for y in TOP..TOP + CELL_HEIGHT {
+            for x in LEFT..right { wrong_phrase[y * 960 + x] = misspelled[y * 960 + x]; }
+        }
+        assert_ne!(wrong_phrase, expected, "misspelled warning must be rejected");
+        let mut unrelated_noise = before.clone();
+        for x in 625..646 { unrelated_noise[255 * 960 + x] ^= 0x00010101; }
+        assert_ne!(unrelated_noise, expected, "out-of-phrase 21-pixel noise must be rejected");
+    }
+
+    /// The same Reply warning is driven through canonical raw wire records
+    /// and the Reader/Link before the unmodified native renderer is sampled.
+    /// This model-free host check is not a QEMU device or installed Qwen test.
+    /// The independent font counts for 640/800/1920 Compact are Director 2's
+    /// separate exact-source raster calculations (PR #44 review 7096062715).
+    #[test]
+    fn raw_wire_reply_disclosure_has_exact_raster_at_multiple_native_sizes() {
+        use crate::link::{Link, WOULD_WAIT};
+        use crate::talk::Service;
+        use crate::wire::{pack, Kind, Packed, Record};
+
+        fn deliver(link: &mut Link, ui: &mut Ui, record: &Packed) {
+            let payload = record.bytes();
+            let mut at = 0usize;
+            let changed = link.turn(ui, |dest| {
+                if at == payload.len() { return WOULD_WAIT; }
+                let n = dest.len().min(payload.len() - at);
+                dest[..n].copy_from_slice(&payload[at..at + n]);
+                at += n;
+                n as isize
+            }, |_| WOULD_WAIT);
+            assert!(changed, "the whole model-free wire record must be consumed");
+            assert_eq!(at, payload.len());
+        }
+
+        fn reply(raw: &[u8]) -> Ui {
+            let mut ui = Ui::new();
+            let mut link = Link::new(true, &mut ui);
+            let ready = pack(Record {
+                kind: Kind::Ready, history: false,
+                conversation: 0, reply: 0, body: b"",
+            }).unwrap();
+            deliver(&mut link, &mut ui, &ready);
+            assert_eq!(ui.talk.service, Service::Ready);
+            ui.talk_shown = true;
+            let said = ui.talk.say("hello", true).unwrap();
+            let chunk = pack(Record {
+                kind: Kind::Chunk, history: false,
+                conversation: said.conversation, reply: said.reply, body: raw,
+            }).unwrap();
+            deliver(&mut link, &mut ui, &chunk);
+            let done = pack(Record {
+                kind: Kind::Done, history: false,
+                conversation: said.conversation, reply: said.reply, body: b"",
+            }).unwrap();
+            deliver(&mut link, &mut ui, &done);
+            ui
+        }
+
+        fn render(ui: &Ui, width: usize, height: usize, compact: bool) -> Vec<u32> {
+            let mut pixels = vec![GROUND; width * height];
+            let mut frame = Frame::new(&mut pixels, width, height, width, GROUND, compact);
+            paint_frame(&mut frame, ui);
+            pixels
+        }
+
+        // Exercise both valid UTF-8 and a genuinely invalid byte through
+        // canonical Reader/Link frames. Their *retained* display matches
+        // literal ASCII, but the native warning must still differ.
+        for (raw, case) in [
+            (&b"go\xc3\xa9"[..], "valid UTF-8 non-ASCII"),
+            (&b"go\xff?"[..], "invalid UTF-8 byte"),
+        ] {
+            assert_eq!(core::str::from_utf8(raw).is_err(), case == "invalid UTF-8 byte");
+            let mut exact = reply(b"go??");
+            let mut replaced = reply(raw);
+            assert_eq!(exact.talk.turns().last().unwrap().text.as_str(), "go??");
+            assert_eq!(replaced.talk.turns().last().unwrap().text.as_str(), "go??");
+            assert!(!exact.talk.turns().last().unwrap().display_lossy);
+            assert!(replaced.talk.turns().last().unwrap().display_lossy);
+    
+            // Rectangle coordinates are half-open, in destination pixels, not
+            // logical 960x540 coordinates. The 1080 Fit count (2413) was
+            // independently calculated from the exact 76,000-byte 95-glyph
+            // font-2x.bin source (PCP OS blob 2c606e2b8954ad68afa46f76b01b764ab4c0b6ea):
+            // 37 glyphs, 12x24 destination cells, source 20x40 coverage,
+            // per-pixel integer area average and PANEL/AMBER RGB blending.
+            // This independently pins the separate 2x font, not native QEMU.
+            for (width, height, compact, bounds, count) in [
+                (640usize, 480usize, false, (262usize, 229usize, 410usize, 237usize), Some(467usize)),
+                (800, 600, false, (327, 286, 512, 296), Some(657)),
+                (1920, 1080, true, (873, 524, 1095, 536), Some(638)),
+                (1920, 1080, false, (786, 508, 1230, 532), Some(2413)),
+            ] {
+                exact.compact_view = compact;
+                replaced.compact_view = compact;
+                let before = render(&exact, width, height, compact);
+                let after = render(&replaced, width, height, compact);
+                let mut glyphs = vec![PANEL; width * height];
+                {
+                    let mut frame = Frame::new(&mut glyphs, width, height, width, PANEL, compact);
+                    label(&mut frame, 393, 254, "(some characters changed for display)", 1, AMBER);
+                }
+                let mut expected = before.clone();
+                let (left, top, right, bottom) = bounds;
+                let mut changes = 0usize;
+                for y in 0..height {
+                    for x in 0..width {
+                        let at = y * width + x;
+                        if before[at] != after[at] {
+                            assert!(x >= left && x < right && y >= top && y < bottom,
+                                "loss warning changed unrelated pixel ({x},{y}) at {width}x{height}");
+                            changes += 1;
+                        }
+                        if x >= left && x < right && y >= top && y < bottom {
+                            assert_eq!(before[at], PANEL, "warning needs flat substrate");
+                            expected[at] = glyphs[at];
+                        }
+                    }
+                }
+                assert!(after == expected,
+                    "wrong warning glyph, position, colour or unrelated pixels at {width}x{height}, compact={compact}, case={case}");
+                assert!(changes > 20, "warning glyphs absent at {width}x{height}");
+                if let Some(independent) = count {
+                    assert_eq!(changes, independent, "independent pinned-font ink count at {width}x{height}");
+                }
+            }
+        }
+    }
+
     #[test]
     fn reading_progress_is_drawn_where_the_answer_will_be_and_nowhere_else() {
         use crate::talk::{Incoming, Service};

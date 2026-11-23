@@ -118,27 +118,10 @@ impl Link {
                             }
                             Kind::NotStarted => ui.talk.service_is(Service::Failed),
                             Kind::Chunk => {
-                                // Bytes that are not text are shown as one question mark each, as
-                                // the conversation shows anything it cannot show exactly.
-                                let mut rest = record.body;
-                                // A piece with no text in it is still the answer beginning: it
-                                // ends the reading, and shows nothing.
-                                if rest.is_empty() {
-                                    ui.talk.receive(Incoming::Chunk { conversation, reply, text: "" });
-                                }
-                                while !rest.is_empty() {
-                                    let (text, skip) = match core::str::from_utf8(rest) {
-                                        Ok(text) => (text, 0),
-                                        Err(e) => (core::str::from_utf8(&rest[..e.valid_up_to()]).unwrap_or(""), 1),
-                                    };
-                                    if !text.is_empty() {
-                                        ui.talk.receive(Incoming::Chunk { conversation, reply, text });
-                                    }
-                                    if skip == 1 {
-                                        ui.talk.receive(Incoming::Chunk { conversation, reply, text: "?" });
-                                    }
-                                    rest = &rest[text.len() + skip..];
-                                }
+                                // Do not erase invalid-UTF-8 provenance before the Talk reducer
+                                // records the separate display-replacement warning. An empty
+                                // CHUNK still ends READING for the matching reply.
+                                ui.talk.receive(Incoming::ChunkBytes { conversation, reply, bytes: record.body });
                             }
                             Kind::Done => {
                                 ui.talk.receive(Incoming::Done { conversation, reply });
@@ -490,7 +473,9 @@ mod tests {
         while !channel.from_service.is_empty() {
             turn(&mut link, &mut ui, &mut channel);
         }
-        assert_eq!(ui.talk.turns().last().unwrap().text.as_str(), "a?b??c");
+        let reply = ui.talk.turns().last().unwrap();
+        assert_eq!(reply.text.as_str(), "a?b??c");
+        assert!(reply.display_lossy && !reply.cut, "invalid channel bytes cannot look exact");
     }
 
     #[test]
