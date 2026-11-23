@@ -524,7 +524,8 @@ def check(kernel, app, measurement, folder, small):
     }
     assert len(taylor_tiles) == 14 and all(len(row) == 16 for row in taylor_tiles)
     taylor_receipts = {"native_frames": 0, "erased_tile_negatives": 0,
-                       "old_colour_negatives": 0}
+                       "old_colour_negatives": 0, "panel_negative": 0,
+                       "outside_scope_control": 0}
 
     def expected_taylor_rgb(mode):
         left, top, right, bottom = box(mode, 339, 286, 64, 56)
@@ -572,6 +573,26 @@ def check(kernel, app, measurement, folder, small):
                 f"outdated native Taylor palette tile {symbol!r} was accepted"
             )
             taylor_receipts["old_colour_negatives"] += 1
+        # The exact area comparison includes transparent squares, not just
+        # sprite ink. Reject a wrong PANEL background on a disposable native
+        # frame: the first tile is transparent by the pinned source map.
+        assert taylor_tiles[0][0] == "."
+        wrong_panel = changed_taylor_square(rgb, mode, ".", GROUND)
+        assert wrong_panel != rgb and not taylor_ok(wrong_panel, mode), (
+            "altered transparent native Taylor panel square was accepted"
+        )
+        taylor_receipts["panel_negative"] += 1
+        # A changed pixel immediately outside the 64x56 logical rectangle
+        # must not count as a sprite failure. This fixes the exact crop scope.
+        x0, y0, _, _ = box(mode, 339, 286, 64, 56)
+        assert x0 > 0
+        outside = bytearray(rgb)
+        offset = (y0*w + x0 - 1)*3
+        outside[offset] ^= 1
+        assert outside != rgb and taylor_ok(bytes(outside), mode), (
+            "outside-of-sprite pixel incorrectly failed sprite acceptance"
+        )
+        taylor_receipts["outside_scope_control"] += 1
         taylor_receipts["native_frames"] += 1
 
     def erased_title_with_one_teal_pixel(rgb, mode):
@@ -1173,7 +1194,8 @@ def check(kernel, app, measurement, folder, small):
             )
             return_receipts["tampered_status_margin_negatives"] += 1
         assert taylor_receipts == {"native_frames": 4, "erased_tile_negatives": 24,
-                                   "old_colour_negatives": 16}, (
+                                   "old_colour_negatives": 16, "panel_negative": 4,
+                                   "outside_scope_control": 4}, (
             f"incomplete Taylor source-RGB acceptance: {taylor_receipts!r}"
         )
         report["taylor_brand_source_rgb"] = dict(taylor_receipts)
