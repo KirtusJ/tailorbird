@@ -711,20 +711,54 @@ mod tests {
         let before = shot(&exact);
         let after = shot(&changed);
         assert_ne!(before, after, "visually colliding words require a visible loss marker");
-        // The two screens have identical text, task state and footer. Only the
-        // warning row beneath Taylor's reply is allowed to differ.
-        let mut marker_pixels = 0usize;
-        for y in 0..540usize {
-            for x in 0..960usize {
-                let pos = y * 960 + x;
-                if before[pos] != after[pos] {
-                    assert!((393..=645).contains(&x) && (254..266).contains(&y),
-                        "display metadata must not overwrite other UI at ({x},{y})");
-                    marker_pixels += 1;
-                }
+        // Independently draw the exact prescribed source-font warning, rather than accepting
+        // an arbitrary number of changed pixels inside an approximate bounding rectangle.
+        // Frame::new clears its buffer; render separately on the flat transcript substrate,
+        // then composite only the warning's own character cells over the unmarked screen.
+        const WARNING: &str = "(some characters changed for display)";
+        const LEFT: usize = 393;
+        const TOP: usize = 254;
+        const CELL_WIDTH: usize = 6;
+        const CELL_HEIGHT: usize = 12;
+        let right = LEFT + WARNING.len() * CELL_WIDTH;
+        assert_eq!(right, 615, "unexpected warning cell geometry");
+
+        let mut glyphs = vec![PANEL; 960 * 540];
+        {
+            let mut independent = Frame::new(&mut glyphs, 960, 540, 960, PANEL, false);
+            label(&mut independent, LEFT as i32, TOP as i32, WARNING, 1, AMBER);
+        }
+        let mut expected = before.clone();
+        let mut ink_pixels = 0usize;
+        for y in TOP..TOP + CELL_HEIGHT {
+            for x in LEFT..right {
+                let at = y * 960 + x;
+                assert_eq!(before[at], PANEL, "oracle requires flat untouched substrate at ({x},{y})");
+                if glyphs[at] != PANEL { ink_pixels += 1; }
+                expected[at] = glyphs[at];
             }
         }
-        assert!(marker_pixels > 20, "visible source-font warning needs meaningful coverage");
+        assert!(ink_pixels > 20, "the prescribed source-font text must have nontrivial ink");
+        assert_eq!(after, expected, "the native frame must disclose every exact warning glyph and change nothing else");
+
+        // Adverse controls for the oracle itself. Removing or misspelling the text cannot
+        // pass; neither can 21 stray pixels beyond the final warning glyph (x >= 615),
+        // which the earlier threshold-only rectangular assertion mistakenly accepted.
+        assert_ne!(before, expected, "erased warning must be rejected");
+        let mut misspelled = vec![PANEL; 960 * 540];
+        {
+            let mut incorrect = Frame::new(&mut misspelled, 960, 540, 960, PANEL, false);
+            label(&mut incorrect, LEFT as i32, TOP as i32,
+                "(some characters change for display)", 1, AMBER);
+        }
+        let mut wrong_phrase = before.clone();
+        for y in TOP..TOP + CELL_HEIGHT {
+            for x in LEFT..right { wrong_phrase[y * 960 + x] = misspelled[y * 960 + x]; }
+        }
+        assert_ne!(wrong_phrase, expected, "misspelled warning must be rejected");
+        let mut unrelated_noise = before.clone();
+        for x in 625..646 { unrelated_noise[255 * 960 + x] ^= 0x00010101; }
+        assert_ne!(unrelated_noise, expected, "out-of-phrase 21-pixel noise must be rejected");
     }
 
     #[test]
