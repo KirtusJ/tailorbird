@@ -52,6 +52,8 @@ pub struct Turn {
     pub text: Text<TURN>,
     /// More was said than a turn keeps; the text is its beginning.
     pub cut: bool,
+    /// True when a retained character was substituted for display, distinct from truncation.
+    pub display_lossy: bool,
     /// Which reply of the conversation this is (0 for turns that are not replies).
     pub reply: u64,
     pub state: Reply,
@@ -75,6 +77,8 @@ pub struct Outgoing {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Incoming<'a> {
     Chunk { conversation: u64, reply: u64, text: &'a str },
+    /// Preserve raw channel bytes, including invalid UTF-8, until loss can be marked.
+    ChunkBytes { conversation: u64, reply: u64, bytes: &'a [u8] },
     Done { conversation: u64, reply: u64 },
     Failed { conversation: u64, reply: u64 },
     /// How far the service has got in reading the message this reply answers.
@@ -128,7 +132,7 @@ pub struct Talk {
     begun: bool,
 }
 
-const EMPTY: Turn = Turn { who: Who::System, text: Text::new(), cut: false, reply: 0, state: Reply::None, sent: false };
+const EMPTY: Turn = Turn { who: Who::System, text: Text::new(), cut: false, display_lossy: false, reply: 0, state: Reply::None, sent: false };
 
 impl Talk {
     pub const fn new() -> Self {
@@ -152,15 +156,18 @@ impl Talk {
         }
         let mut text = Text::<TURN>::new();
         let mut cut = false;
+        let mut display_lossy = false;
         for b in words.bytes() {
             // What cannot be shown exactly is shown as a question mark, never dropped silently.
             let shown = if (0x20..=0x7e).contains(&b) { b } else if b == b'\n' { b' ' } else { b'?' };
-            if !text.push_ascii(shown) {
+            if text.push_ascii(shown) {
+                if b != shown { display_lossy = true; }
+            } else {
                 cut = true;
                 break;
             }
         }
-        self.turns[self.count] = Turn { who, text, cut, reply, state, sent };
+        self.turns[self.count] = Turn { who, text, cut, display_lossy, reply, state, sent };
         self.count += 1;
     }
 
@@ -203,11 +210,24 @@ impl Talk {
         self.turns[..self.count].iter_mut().rev().find(|t| t.who == Who::Taylor && t.reply == reply && t.state == Reply::Streaming)
     }
 
+    fn append_display_bytes(turn: &mut Turn, raw: &[u8]) {
+        for &byte in raw {
+            let shown = if (0x20..=0x7e).contains(&byte) { byte } else if byte == b'\n' { b' ' } else { b'?' };
+            if turn.text.push_ascii(shown) {
+                if byte != shown { turn.display_lossy = true; }
+            } else {
+                turn.cut = true;
+                break;
+            }
+        }
+    }
+
     /// Something from the model service. Only what names this conversation and the reply being waited
     /// for is shown; anything else (late, after a stop, from an earlier chat) is counted and dropped.
     pub fn receive(&mut self, incoming: Incoming<'_>) -> Taken {
         let (conversation, reply) = match incoming {
-            Incoming::Chunk { conversation, reply, .. } | Incoming::Done { conversation, reply } | Incoming::Failed { conversation, reply }
+            Incoming::Chunk { conversation, reply, .. } | Incoming::ChunkBytes { conversation, reply, .. }
+            | Incoming::Done { conversation, reply } | Incoming::Failed { conversation, reply }
             | Incoming::Reading { conversation, reply, .. } => (conversation, reply),
         };
         // Reading is said before anything of the answer. Once some of it is here, or for another
@@ -236,15 +256,8 @@ impl Talk {
         let Some(turn) = self.pending_turn(conversation, reply) else { return Taken::Stray };
         match incoming {
             Incoming::Reading { .. } => {}
-            Incoming::Chunk { text, .. } => {
-                for b in text.bytes() {
-                    let shown = if (0x20..=0x7e).contains(&b) { b } else if b == b'\n' { b' ' } else { b'?' };
-                    if !turn.text.push_ascii(shown) {
-                        turn.cut = true;
-                        break;
-                    }
-                }
-            }
+            Incoming::Chunk { text, .. } => Self::append_display_bytes(turn, text.as_bytes()),
+            Incoming::ChunkBytes { bytes, .. } => Self::append_display_bytes(turn, bytes),
             Incoming::Done { .. } => {
                 turn.state = Reply::Complete;
                 self.pending = None;
@@ -471,6 +484,42 @@ mod tests {
         // Exactly the most is sent whole.
         let out = talk.say(core::str::from_utf8(&long[1..]).unwrap(), true).unwrap();
         assert_eq!(out.text.as_str().len(), crate::INPUT_LIMIT);
+    }
+
+    #[test]
+    fn talk_display_replacement_is_not_confused_with_truncation_or_exact_ascii() {
+        for (raw, shown, lossy) in [
+            (&b"go??"[..], "go??", false),
+            (&b"go\xc3\xa9"[..], "go??", true),
+            (&b"a\nb"[..], "a b", true),
+            (&b"a\xffb"[..], "a?b", true),
+            (&b"a b"[..], "a b", false),
+        ] {
+            let mut talk = Talk::new();
+            talk.service_is(Service::Ready);
+            talk.say("hello", true).unwrap();
+            assert_eq!(talk.receive(Incoming::ChunkBytes { conversation: 1, reply: 1, bytes: raw }), Taken::Shown);
+            assert_eq!(talk.receive(Incoming::Done { conversation: 1, reply: 1 }), Taken::Shown);
+            let turn = talk.turns().last().unwrap();
+            assert_eq!(turn.text.as_str(), shown);
+            assert_eq!(turn.display_lossy, lossy, "raw={raw:?}");
+            assert!(!turn.cut, "display replacement is not a byte-count truncation");
+        }
+        let mut direct = Talk::new();
+        direct.service_is(Service::Ready);
+        direct.say("hello", true).unwrap();
+        direct.receive(Incoming::Chunk { conversation: 1, reply: 1, text: "goé" });
+        let replacement = direct.turns().last().unwrap();
+        assert_eq!(replacement.text.as_str(), "go??");
+        assert!(replacement.display_lossy && !replacement.cut);
+
+        let mut long = Talk::new();
+        long.service_is(Service::Ready);
+        long.say("hello", true).unwrap();
+        let raw = [b'a'; TURN + 1];
+        long.receive(Incoming::ChunkBytes { conversation: 1, reply: 1, bytes: &raw });
+        let truncated = long.turns().last().unwrap();
+        assert!(truncated.cut && !truncated.display_lossy);
     }
 
     #[test]
