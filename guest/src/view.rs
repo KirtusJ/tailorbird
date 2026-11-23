@@ -833,13 +833,17 @@ mod tests {
             assert!(replaced.talk.turns().last().unwrap().display_lossy);
     
             // Rectangle coordinates are half-open, in destination pixels, not
-            // logical 960x540 coordinates. The 1080 Fit case uses its 2x font
-            // and has no independent count: require whole-frame matching only.
+            // logical 960x540 coordinates. The 1080 Fit count (2413) was
+            // independently calculated from the exact 76,000-byte 95-glyph
+            // font-2x.bin source (PCP OS blob 2c606e2b8954ad68afa46f76b01b764ab4c0b6ea):
+            // 37 glyphs, 12x24 destination cells, source 20x40 coverage,
+            // per-pixel integer area average and PANEL/AMBER RGB blending.
+            // This independently pins the separate 2x font, not native QEMU.
             for (width, height, compact, bounds, count) in [
                 (640usize, 480usize, false, (262usize, 229usize, 410usize, 237usize), Some(467usize)),
                 (800, 600, false, (327, 286, 512, 296), Some(657)),
                 (1920, 1080, true, (873, 524, 1095, 536), Some(638)),
-                (1920, 1080, false, (786, 508, 1230, 532), None),
+                (1920, 1080, false, (786, 508, 1230, 532), Some(2413)),
             ] {
                 exact.compact_view = compact;
                 replaced.compact_view = compact;
