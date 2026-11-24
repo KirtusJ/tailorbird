@@ -719,6 +719,103 @@ mod tests {
                 "the old misleading words must have different raster coverage");
     }
 
+    /// Real Link EOF -> reducer -> production renderer, with independently
+    /// calculated font-ink counts from Director 2's corrective-head review.
+    /// This is a hosted raster fixture, not a native /dev/talk capture.
+    #[test]
+    fn terminal_link_footer_and_failed_transcript_have_exact_rasters() {
+        use crate::link::{Link, WOULD_WAIT};
+        use crate::wire::{pack, Kind, Record};
+
+        for uncertain in [false, true] {
+            let mut ui = Ui::new();
+            let mut link = Link::new(true, &mut ui);
+            let ready = pack(Record { kind: Kind::Ready, history: false,
+                conversation: 0, reply: 0, body: b"" }).unwrap();
+            let mut consumed = false;
+            assert!(link.turn(&mut ui, |into| {
+                if consumed { return WOULD_WAIT; }
+                consumed = true;
+                let bytes = ready.bytes();
+                into[..bytes.len()].copy_from_slice(bytes);
+                bytes.len() as isize
+            }, |_| panic!("no outgoing request before Submit")));
+            ui.effect_uncertain = uncertain;
+            for b in b"hello" { assert!(ui.input.push_ascii(*b)); }
+            let _ = ui.intent(crate::Action::Submit);
+            // The write cannot proceed, then the peer closes before any reply.
+            assert!(link.turn(&mut ui, |_| 0, |_| WOULD_WAIT));
+            assert_eq!(ui.talk.service, crate::talk::Service::Stopped);
+            assert_eq!(ui.talk.turns().last().unwrap().state, crate::talk::Reply::Failed);
+            assert!(ui.for_service().is_some());
+            let notice = if uncertain {
+                "EFFECT UNKNOWN - CHANNEL ENDED - DELIVERY UNCONFIRMED"
+            } else { "CHANNEL ENDED - DELIVERY UNCONFIRMED" };
+            assert_eq!(ui.notice.as_str(), notice);
+
+            // width, height, compact, scale, divisor, left, top,
+            // independently calculated footer ink (ordinary / effect prefix).
+            for (w, h, compact, s, d, left, top, counts) in [
+                (640usize, 480usize, false, 2usize, 3usize, 0usize, 60usize, [435usize, 617usize]),
+                (800, 600, false, 5, 6, 0, 75, [604, 862]),
+                (1920, 1080, true, 1, 1, 480, 270, [780, 1114]),
+                (1920, 1080, false, 2, 1, 0, 0, [2382, 3407]),
+            ] {
+                ui.compact_view = compact;
+                let mut actual = vec![0u32; w * h];
+                paint_frame(&mut Frame::new(&mut actual, w, h, w, GROUND, compact), &ui);
+                let mut expected = vec![0u32; w * h];
+                let mut blank = vec![0u32; w * h];
+                {
+                    let mut f = Frame::new(&mut expected, w, h, w, GROUND, compact);
+                    f.panel(316, 94, 624, 352, PANEL);
+                    f.text(535, 513, notice, 1, AMBER);
+                    label(&mut f, 790, 196, "Model: stopped", 1, BAD);
+                    label(&mut f, 393, 242, "(no answer: it failed)", 1, SOFT);
+                }
+                Frame::new(&mut blank, w, h, w, GROUND, compact)
+                    .panel(316, 94, 624, 352, PANEL);
+                let x = |v: usize| left + v * s / d;
+                let y = |v: usize| top + v * s / d;
+                for (x0, y0, x1, y1) in [
+                    (535, 513, 955, 523), // whole maximum 70-cell footer
+                    (790, 196, 910, 208), // model status
+                    (393, 242, 573, 254), // terminal transcript
+                ] {
+                    let mut ink = 0usize;
+                    for row in y(y0)..y(y1) {
+                        for col in x(x0)..x(x1) {
+                            let i = row * w + col;
+                            assert_eq!(actual[i], expected[i],
+                                "terminal raster differs at {w}x{h}, compact={compact}, ({col},{row})");
+                            if actual[i] != blank[i] { ink += 1; }
+                        }
+                    }
+                    if y0 == 513 {
+                        assert_eq!(ink, counts[usize::from(uncertain)]);
+                    } else {
+                        assert!(ink > 0, "terminal transcript/model status must be visible");
+                    }
+                }
+                // The stale footer and missing warning must not share the accepted raster.
+                let mut stale = vec![0u32; w * h];
+                let mut f = Frame::new(&mut stale, w, h, w, GROUND, compact);
+                f.text(535, 513, if uncertain {
+                    "EFFECT UNKNOWN - QUEUED LOCALLY - DELIVERY UNCONFIRMED"
+                } else { "QUEUED LOCALLY - DELIVERY UNCONFIRMED" }, 1, AMBER);
+                assert!((y(513)..y(523)).any(|row|
+                    (x(535)..x(955)).any(|col| stale[row * w + col] != actual[row * w + col])));
+                if uncertain {
+                    let mut no_prefix = vec![0u32; w * h];
+                    Frame::new(&mut no_prefix, w, h, w, GROUND, compact)
+                        .text(535, 513, "CHANNEL ENDED - DELIVERY UNCONFIRMED", 1, AMBER);
+                    assert!((y(513)..y(523)).any(|row|
+                        (x(535)..x(955)).any(|col| no_prefix[row * w + col] != actual[row * w + col])));
+                }
+            }
+        }
+    }
+
     /// Pending means a locally admitted SAY, not a service-accepted or model-started reply.
     /// The Stop control remains reachable, but its caption and the empty transcript
     /// must not claim Taylor is already answering when the channel has written zero bytes.
