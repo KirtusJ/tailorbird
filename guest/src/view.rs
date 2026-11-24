@@ -754,12 +754,14 @@ mod tests {
             assert_eq!(ui.notice.as_str(), notice);
 
             // width, height, compact, scale, divisor, left, top,
-            // independently calculated footer ink (ordinary / effect prefix).
-            for (w, h, compact, s, d, left, top, counts) in [
-                (640usize, 480usize, false, 2usize, 3usize, 0usize, 60usize, [435usize, 617usize]),
-                (800, 600, false, 5, 6, 0, 75, [604, 862]),
-                (1920, 1080, true, 1, 1, 480, 270, [780, 1114]),
-                (1920, 1080, false, 2, 1, 0, 0, [2382, 3407]),
+            // Independently calculated footer ink (ordinary / effect prefix),
+            // stopped-model ink, failed-transcript ink, and transcript RGB
+            // differences against waiting and cancelled. Director 2, #36/7120034092.
+            for (w, h, compact, s, d, left, top, counts, status_ink, failed_ink, differences) in [
+                (640usize, 480usize, false, 2usize, 3usize, 0usize, 60usize, [435usize, 617usize], 187usize, 242usize, [300usize, 475usize]),
+                (800, 600, false, 5, 6, 0, 75, [604, 862], 278, 348, [427, 690]),
+                (1920, 1080, true, 1, 1, 480, 270, [780, 1114], 261, 343, [460, 683]),
+                (1920, 1080, false, 2, 1, 0, 0, [2382, 3407], 1025, 1257, [1685, 2555]),
             ] {
                 ui.compact_view = compact;
                 let mut actual = vec![0u32; w * h];
@@ -780,7 +782,7 @@ mod tests {
                 for (x0, y0, x1, y1) in [
                     (535, 513, 955, 523), // whole maximum 70-cell footer
                     (790, 196, 910, 208), // model status
-                    (393, 242, 573, 254), // terminal transcript
+                    (393, 242, 393 + 34 * 6, 254), // include the entire longer cancelled label
                 ] {
                     let mut ink = 0usize;
                     for row in y(y0)..y(y1) {
@@ -791,11 +793,35 @@ mod tests {
                             if actual[i] != blank[i] { ink += 1; }
                         }
                     }
-                    if y0 == 513 {
-                        assert_eq!(ink, counts[usize::from(uncertain)]);
-                    } else {
-                        assert!(ink > 0, "terminal transcript/model status must be visible");
+                    let oracle_ink = match y0 {
+                        513 => counts[usize::from(uncertain)],
+                        196 => status_ink,
+                        242 => failed_ink,
+                        _ => unreachable!(),
+                    };
+                    assert_eq!(ink, oracle_ink, "independent ink at {w}x{h}, compact={compact}, y={y0}");
+                }
+                // Compare the entire transcript region, including the tail of
+                // the longer cancelled text. These alternate-label controls
+                // are render-only; they do not simulate a service cancellation.
+                for (alternate, difference) in [
+                    ("(waiting for a reply)", differences[0]),
+                    ("(stopped before anything was said)", differences[1]),
+                ] {
+                    let mut control = vec![0u32; w * h];
+                    {
+                        let mut f = Frame::new(&mut control, w, h, w, GROUND, compact);
+                        f.panel(316, 94, 624, 352, PANEL);
+                        label(&mut f, 393, 242, alternate, 1, SOFT);
                     }
+                    let mut changed = 0usize;
+                    for row in y(242)..y(254) {
+                        for col in x(393)..x(393 + 34 * 6) {
+                            let i = row * w + col;
+                            if actual[i] != control[i] { changed += 1; }
+                        }
+                    }
+                    assert_eq!(changed, difference, "alternate {alternate} at {w}x{h}, compact={compact}");
                 }
                 // The stale footer and missing warning must not share the accepted raster.
                 let mut stale = vec![0u32; w * h];
