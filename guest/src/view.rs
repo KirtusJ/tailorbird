@@ -163,7 +163,7 @@ pub fn paint_frame(f: &mut Frame<'_>, ui: &Ui) {
         f.well(stop_rect.x, stop_rect.y, stop_rect.width, stop_rect.height, stop_fill);
     }
     label(f, 48, 329, "Stop", 3, stop_heading);
-    label(f, 48, 365, if answering { "Taylor is answering" } else { sentence(ui.task.state.label(), &mut name) }, 1, stop_caption);
+    label(f, 48, 365, if answering { "Waiting for a reply" } else { sentence(ui.task.state.label(), &mut name) }, 1, stop_caption);
     key(f, 40, 410, "Alt", "+");
     key(f, 78, 410, "S", if answering { "stops the answer" } else { "stops the task" });
 
@@ -428,7 +428,7 @@ fn transcript(f: &mut Frame<'_>, talk: &crate::talk::Talk) {
             y += 12;
         } else if text.is_empty() {
             let waiting = match turn.state {
-                Reply::Streaming => "(answering...)",
+                Reply::Streaming => "(waiting for a reply)",
                 Reply::Cancelled => "(stopped before anything was said)",
                 Reply::Failed => "(no answer: it failed)",
                 _ => "",
@@ -679,6 +679,224 @@ mod tests {
         let mut f = Frame::new(&mut pixels, 960, 540, 960, GROUND, false);
         paint_frame(&mut f, ui);
         pixels
+    }
+
+    /// The queued notice is a real raster assertion, not just a string in a reducer test.
+    /// It may not claim model delivery before any channel write or service acknowledgment.
+    #[test]
+    fn queued_talk_notice_renders_exactly_and_not_as_sent() {
+        let mut ui = Ui::new();
+        ui.talk.service_is(crate::talk::Service::Ready);
+        for b in b"hello" { assert!(ui.input.push_ascii(*b)); }
+        let _ = ui.intent(crate::Action::Submit);
+        let queued = "QUEUED LOCALLY - DELIVERY UNCONFIRMED";
+        assert_eq!(ui.notice.as_str(), queued);
+        assert!(ui.for_service().is_some(), "the frame has not been carried");
+        let shown = shot(&ui);
+
+        // Keep everything else in the frame identical and draw only the notice from the
+        // actual source font at its production coordinates.
+        ui.notice = crate::Text::new();
+        let blank = shot(&ui);
+        // Frame::new clears its buffer. Render independent source-font glyph *coverage*
+        // over black, then compare the changed-pixel mask to the real composed screen.
+        // The footer background is painted by the rest of the UI and must be preserved.
+        let mut exact = vec![0u32; shown.len()];
+        let mut frame = Frame::new(&mut exact, 960, 540, 960, 0, false);
+        frame.text(535, 513, queued, 1, AMBER);
+        let count = exact.iter().filter(|&&pixel| pixel != 0).count();
+        assert!(count > 50, "the exact queued label must have visible pixels");
+        let different = shown.iter().zip(&blank).zip(&exact)
+            .filter(|p| {
+                let ((actual, previous), glyph) = *p;
+                (*actual != *previous) != (*glyph != 0)
+            }).count();
+        assert_eq!(different, 0, "the real screen has {different} glyph-coverage errors");
+
+        let mut misleading = vec![0u32; shown.len()];
+        let mut frame = Frame::new(&mut misleading, 960, 540, 960, 0, false);
+        frame.text(535, 513, "SENT TO TAYLOR'S MODEL ON THIS COMPUTER", 1, AMBER);
+        assert!(misleading.iter().zip(&exact).any(|(old, new)| (old != &0) != (new != &0)),
+                "the old misleading words must have different raster coverage");
+    }
+
+    /// Real Link EOF -> reducer -> production renderer, with independently
+    /// calculated font-ink counts from Director 2's corrective-head review.
+    /// This is a hosted raster fixture, not a native /dev/talk capture.
+    #[test]
+    fn terminal_link_footer_and_failed_transcript_have_exact_rasters() {
+        use crate::link::{Link, WOULD_WAIT};
+        use crate::wire::{pack, Kind, Record};
+
+        for uncertain in [false, true] {
+            let mut ui = Ui::new();
+            let mut link = Link::new(true, &mut ui);
+            let ready = pack(Record { kind: Kind::Ready, history: false,
+                conversation: 0, reply: 0, body: b"" }).unwrap();
+            let mut consumed = false;
+            assert!(link.turn(&mut ui, |into| {
+                if consumed { return WOULD_WAIT; }
+                consumed = true;
+                let bytes = ready.bytes();
+                into[..bytes.len()].copy_from_slice(bytes);
+                bytes.len() as isize
+            }, |_| panic!("no outgoing request before Submit")));
+            ui.effect_uncertain = uncertain;
+            for b in b"hello" { assert!(ui.input.push_ascii(*b)); }
+            let _ = ui.intent(crate::Action::Submit);
+            // The write cannot proceed, then the peer closes before any reply.
+            assert!(link.turn(&mut ui, |_| 0, |_| WOULD_WAIT));
+            assert_eq!(ui.talk.service, crate::talk::Service::Stopped);
+            assert_eq!(ui.talk.turns().last().unwrap().state, crate::talk::Reply::Failed);
+            assert!(ui.for_service().is_some());
+            let notice = if uncertain {
+                "EFFECT UNKNOWN - CHANNEL ENDED - DELIVERY UNCONFIRMED"
+            } else { "CHANNEL ENDED - DELIVERY UNCONFIRMED" };
+            assert_eq!(ui.notice.as_str(), notice);
+
+            // width, height, compact, scale, divisor, left, top,
+            // Independently calculated footer ink (ordinary / effect prefix),
+            // stopped-model ink, failed-transcript ink, and transcript RGB
+            // differences against waiting and cancelled. Director 2, #36/7120034092.
+            for (w, h, compact, s, d, left, top, counts, status_ink, failed_ink, differences) in [
+                (640usize, 480usize, false, 2usize, 3usize, 0usize, 60usize, [435usize, 617usize], 187usize, 242usize, [300usize, 475usize]),
+                (800, 600, false, 5, 6, 0, 75, [604, 862], 278, 348, [427, 690]),
+                (1920, 1080, true, 1, 1, 480, 270, [780, 1114], 261, 343, [460, 683]),
+                (1920, 1080, false, 2, 1, 0, 0, [2382, 3407], 1025, 1257, [1685, 2555]),
+            ] {
+                ui.compact_view = compact;
+                let mut actual = vec![0u32; w * h];
+                paint_frame(&mut Frame::new(&mut actual, w, h, w, GROUND, compact), &ui);
+                let mut expected = vec![0u32; w * h];
+                let mut blank = vec![0u32; w * h];
+                {
+                    let mut f = Frame::new(&mut expected, w, h, w, GROUND, compact);
+                    f.panel(316, 94, 624, 352, PANEL);
+                    f.text(535, 513, notice, 1, AMBER);
+                    label(&mut f, 790, 196, "Model: stopped", 1, BAD);
+                    label(&mut f, 393, 242, "(no answer: it failed)", 1, SOFT);
+                }
+                Frame::new(&mut blank, w, h, w, GROUND, compact)
+                    .panel(316, 94, 624, 352, PANEL);
+                let x = |v: usize| left + v * s / d;
+                let y = |v: usize| top + v * s / d;
+                for (x0, y0, x1, y1) in [
+                    (535, 513, 955, 523), // whole maximum 70-cell footer
+                    (790, 196, 910, 208), // model status
+                    (393, 242, 393 + 34 * 6, 254), // include the entire longer cancelled label
+                ] {
+                    let mut ink = 0usize;
+                    for row in y(y0)..y(y1) {
+                        for col in x(x0)..x(x1) {
+                            let i = row * w + col;
+                            assert_eq!(actual[i], expected[i],
+                                "terminal raster differs at {w}x{h}, compact={compact}, ({col},{row})");
+                            if actual[i] != blank[i] { ink += 1; }
+                        }
+                    }
+                    let oracle_ink = match y0 {
+                        513 => counts[usize::from(uncertain)],
+                        196 => status_ink,
+                        242 => failed_ink,
+                        _ => unreachable!(),
+                    };
+                    assert_eq!(ink, oracle_ink, "independent ink at {w}x{h}, compact={compact}, y={y0}");
+                }
+                // Compare the entire transcript region, including the tail of
+                // the longer cancelled text. These alternate-label controls
+                // are render-only; they do not simulate a service cancellation.
+                for (alternate, difference) in [
+                    ("(waiting for a reply)", differences[0]),
+                    ("(stopped before anything was said)", differences[1]),
+                ] {
+                    let mut control = vec![0u32; w * h];
+                    {
+                        let mut f = Frame::new(&mut control, w, h, w, GROUND, compact);
+                        f.panel(316, 94, 624, 352, PANEL);
+                        label(&mut f, 393, 242, alternate, 1, SOFT);
+                    }
+                    let mut changed = 0usize;
+                    for row in y(242)..y(254) {
+                        for col in x(393)..x(393 + 34 * 6) {
+                            let i = row * w + col;
+                            if actual[i] != control[i] { changed += 1; }
+                        }
+                    }
+                    assert_eq!(changed, difference, "alternate {alternate} at {w}x{h}, compact={compact}");
+                }
+                // The stale footer and missing warning must not share the accepted raster.
+                let mut stale = vec![0u32; w * h];
+                let mut f = Frame::new(&mut stale, w, h, w, GROUND, compact);
+                f.text(535, 513, if uncertain {
+                    "EFFECT UNKNOWN - QUEUED LOCALLY - DELIVERY UNCONFIRMED"
+                } else { "QUEUED LOCALLY - DELIVERY UNCONFIRMED" }, 1, AMBER);
+                assert!((y(513)..y(523)).any(|row|
+                    (x(535)..x(955)).any(|col| stale[row * w + col] != actual[row * w + col])));
+                if uncertain {
+                    let mut no_prefix = vec![0u32; w * h];
+                    Frame::new(&mut no_prefix, w, h, w, GROUND, compact)
+                        .text(535, 513, "CHANNEL ENDED - DELIVERY UNCONFIRMED", 1, AMBER);
+                    assert!((y(513)..y(523)).any(|row|
+                        (x(535)..x(955)).any(|col| no_prefix[row * w + col] != actual[row * w + col])));
+                }
+            }
+        }
+    }
+
+    /// Pending means a locally admitted SAY, not a service-accepted or model-started reply.
+    /// The Stop control remains reachable, but its caption and the empty transcript
+    /// must not claim Taylor is already answering when the channel has written zero bytes.
+    #[test]
+    fn queued_reply_captions_are_exact_pixels_and_not_model_activity_claims() {
+        use crate::talk::{Incoming, Service, Taken};
+        let mut ui = Ui::new();
+        ui.talk.service_is(Service::Ready);
+        for b in b"hello" { assert!(ui.input.push_ascii(*b)); }
+        let _ = ui.intent(crate::Action::Submit);
+        assert_eq!(ui.notice.as_str(), "QUEUED LOCALLY - DELIVERY UNCONFIRMED");
+        assert!(matches!(ui.for_service(), Some(crate::talk::Request::Say(_))));
+        assert!(ui.talk.answering(), "pending tracks the local request, not confirmed delivery");
+        let screen = shot(&ui);
+
+        // Use the same panel substrates as the real renderer, since the production
+        // font alpha-blends into those backgrounds. Comparing pixels to the raw ink
+        // colour would wrongly accept two blank masks and miss every blended glyph.
+        let stop_rect = crate::pointer::STOP_RECT;
+        let (stop_fill, _, caption_color) = stop_colors(true);
+        let mut bare_panels = vec![0u32; screen.len()];
+        {
+            let mut base = Frame::new(&mut bare_panels, 960, 540, 960, GROUND, false);
+            base.panel(stop_rect.x, stop_rect.y, stop_rect.width, stop_rect.height, stop_fill);
+            base.panel(316, 94, 624, 352, PANEL);
+        }
+        let mut expected = vec![0u32; screen.len()];
+        let mut f = Frame::new(&mut expected, 960, 540, 960, GROUND, false);
+        f.panel(stop_rect.x, stop_rect.y, stop_rect.width, stop_rect.height, stop_fill);
+        f.panel(316, 94, 624, 352, PANEL);
+        let stop = "Waiting for a reply";
+        let transcript = "(waiting for a reply)";
+        label(&mut f, 48, 365, stop, 1, caption_color);
+        label(&mut f, 393, 242, transcript, 1, SOFT);
+        for (x, y, width) in [
+            (48usize, 365usize, 6 * stop.len().max("Taylor is answering".len())),
+            (393, 242, 6 * transcript.len().max("(answering...)".len())),
+        ] {
+            let mut visible = 0;
+            for row in y..y + 12 {
+                for col in x..x + width {
+                    let at = row * 960 + col;
+                    assert_eq!(screen[at], expected[at],
+                        "wrong blended caption pixel at ({col},{row}), including possible old wording");
+                    if expected[at] != bare_panels[at] { visible += 1; }
+                }
+            }
+            assert!(visible > 15, "the source glyph must change real panel pixels");
+        }
+
+        // A mismatched reply must not make the screen claim work has begun.
+        assert_eq!(ui.talk.receive(Incoming::Chunk { conversation: 1, reply: 2, text: "wrong" }), Taken::Stray);
+        assert_eq!(shot(&ui), screen);
+        assert!(matches!(ui.for_service(), Some(crate::talk::Request::Say(_))));
     }
 
     /// A reply that was stopped or failed says so without one pixel of the reply being painted over,

@@ -44,7 +44,7 @@ pub const STILL_LOADING: &str = "Taylor's model is still loading. Your message w
 pub const NOT_STARTED: &str = "Taylor's model could not be started, so Taylor cannot answer.";
 pub const HAS_STOPPED: &str = "Taylor's model has stopped, so Taylor cannot answer. Leaving and opening Tailorbird starts it again.";
 pub const TOO_LONG: &str = "That message is longer than can be sent at once, so none of it was sent.";
-pub const BUSY: &str = "Taylor is still answering. Stop that answer first, or wait.";
+pub const BUSY: &str = "A reply is pending. Stop it first, or wait.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Turn {

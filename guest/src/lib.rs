@@ -372,6 +372,25 @@ impl Ui {
         if self.count == 0 { None }
         else { Some((self.lines[0].seq, self.lines[self.count - 1].seq)) }
     }
+    /// One correlated talk-channel frame was actually observed. Correlation
+    /// clears the now-misleading local-queue label, not the uncertainty of
+    /// delivery, model identity or service authentication. Production Link
+    /// and the pixel oracle must both take this single reducer path.
+    pub fn observed_talk(&mut self, incoming: talk::Incoming<'_>) -> talk::Taken {
+        let taken = self.talk.receive(incoming);
+        // The sticky effect-uncertainty banner is an independent warning
+        // prefixed by notice(); do not let it mask the queue label's own
+        // transition on a matching record. The warning must survive intact.
+        let notice = self.notice.as_str();
+        let delivery = notice.strip_prefix("EFFECT UNKNOWN - ").unwrap_or(notice);
+        if taken == talk::Taken::Shown
+            && delivery == "QUEUED LOCALLY - DELIVERY UNCONFIRMED"
+        {
+            self.notice("MATCHING REPLY RECORD - MODEL UNVERIFIED");
+        }
+        taken
+    }
+
     /// The model service has said it is ready. A notice that said a message was not sent because
     /// the model was still loading is no longer true the moment it is ready, so it is replaced by
     /// what is true now. (A3 saw the old words stay on the Ready screen until the next key.) No
@@ -592,10 +611,11 @@ impl Ui {
                     if !repeated {
                         if let Some(message) = self.talk.say(self.input.as_str(), true) {
                             self.ask_service(talk::Request::Say(message));
-                            // Sent: the field is free for the next message. What was sent is in the
-                            // conversation, as the person's turn.
+                            // Queued locally, not acknowledged by the service. Free the field:
+                            // the person's turn is retained in the conversation, but the channel
+                            // may still be blocked, short-write, or fail before delivery.
                             self.input = Text::new();
-                            self.notice("SENT TO TAYLOR'S MODEL ON THIS COMPUTER");
+                            self.notice("QUEUED LOCALLY - DELIVERY UNCONFIRMED");
                             return None;
                         }
                     }
@@ -606,7 +626,7 @@ impl Ui {
                     talk::Service::Failed => "MODEL DID NOT START - NOT SENT",
                     talk::Service::Stopped => "MODEL HAS STOPPED - NOT SENT",
                     talk::Service::Ready if self.input.is_empty() => "NOTHING TYPED - NOTHING SENT",
-                    talk::Service::Ready => "TAYLOR IS STILL ANSWERING - NOT SENT",
+                    talk::Service::Ready => "REPLY PENDING - NOT SENT",
                 });
                 None
             }
@@ -1045,7 +1065,7 @@ mod tests {
         let Some(talk::Request::Say(message)) = u.for_service() else { panic!("no message queued") };
         assert_eq!((message.text.as_str(), message.conversation, message.reply, message.history), ("hello", 1, 1, true));
         assert!(u.input.is_empty() && u.talk_shown && u.talk.answering());
-        assert_eq!(u.notice.as_str(), "SENT TO TAYLOR'S MODEL ON THIS COMPUTER");
+        assert_eq!(u.notice.as_str(), "QUEUED LOCALLY - DELIVERY UNCONFIRMED");
         // Enter with nothing typed while the answer is under way adds nothing and queues nothing.
         let turns = u.talk.turns().len();
         assert!(u.intent(Action::Submit).is_none());
@@ -1057,7 +1077,33 @@ mod tests {
         assert!(u.intent(Action::Submit).is_none());
         assert!(u.for_service().is_none());
         assert_eq!(u.input.as_str(), "and another");
-        assert_eq!(u.notice.as_str(), "TAYLOR IS STILL ANSWERING - NOT SENT");
+        assert_eq!(u.notice.as_str(), "REPLY PENDING - NOT SENT");
+    }
+    #[test]
+    fn matching_talk_record_retires_queued_label_without_erasing_effect_warning() {
+        // Independently reachable work-effect uncertainty and local talk
+        // backpressure must remain distinguishable on the same screen.
+        // A correlated reply frame is not a trusted model receipt.
+        let mut u = Ui::new();
+        u.effect_uncertain = true;
+        u.talk.service_is(talk::Service::Ready);
+        typed(&mut u, "hello");
+        assert_eq!(u.intent(Action::Submit), None);
+        let queued = "EFFECT UNKNOWN - QUEUED LOCALLY - DELIVERY UNCONFIRMED";
+        assert_eq!(u.notice.as_str(), queued);
+        assert!(matches!(u.for_service(), Some(talk::Request::Say(_))));
+        assert_eq!(u.observed_talk(talk::Incoming::Reading {
+            conversation: 1, reply: 99, read: 0, of: 3,
+        }), talk::Taken::Stray);
+        assert_eq!(u.notice.as_str(), queued, "unmatched reply must not alter queue label");
+        assert_eq!(u.observed_talk(talk::Incoming::Reading {
+            conversation: 1, reply: 1, read: 0, of: 3,
+        }), talk::Taken::Shown);
+        assert_eq!(u.notice.as_str(),
+            "EFFECT UNKNOWN - MATCHING REPLY RECORD - MODEL UNVERIFIED");
+        assert!(u.effect_uncertain, "uncertain file effect survives model-channel correlation");
+        assert!(matches!(u.for_service(), Some(talk::Request::Say(_))),
+            "a matching wire record is not service admission of an unwritten SAY");
     }
     #[test]
     fn stop_stops_an_answer_under_way_and_tells_the_service_which() {
@@ -1109,17 +1155,17 @@ mod tests {
         u.talk.service_is(talk::Service::Ready);
         assert_eq!(u.input.as_str(), "hello");
         assert!(u.intent(Action::Submit).is_none());
-        assert_eq!(u.notice.as_str(), "SENT TO TAYLOR'S MODEL ON THIS COMPUTER");
+        assert_eq!(u.notice.as_str(), "QUEUED LOCALLY - DELIVERY UNCONFIRMED");
         assert!(matches!(u.for_service(), Some(talk::Request::Say(m)) if m.text.as_str() == "hello"));
         assert_eq!(u.input.as_str(), "");
         // The same after an answer that was under way has ended.
         u.service_took();
         typed(&mut u, "again");
         assert!(u.intent(Action::Submit).is_none());
-        assert_eq!(u.notice.as_str(), "TAYLOR IS STILL ANSWERING - NOT SENT");
+        assert_eq!(u.notice.as_str(), "REPLY PENDING - NOT SENT");
         assert_eq!(u.talk.receive(talk::Incoming::Done { conversation: 1, reply: 1 }), talk::Taken::Shown);
         assert!(u.intent(Action::Submit).is_none());
-        assert_eq!(u.notice.as_str(), "SENT TO TAYLOR'S MODEL ON THIS COMPUTER");
+        assert_eq!(u.notice.as_str(), "QUEUED LOCALLY - DELIVERY UNCONFIRMED");
     }
     #[test]
     fn a_notice_that_the_model_was_loading_does_not_outlive_the_loading() {

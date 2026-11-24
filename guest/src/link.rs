@@ -41,6 +41,16 @@ impl Link {
         // A service that was answering and is gone has stopped; one that never said it was ready
         // did not start.
         ui.talk.service_is(if self.was_ready { Service::Stopped } else { Service::Failed });
+        // The channel is terminal, so an unconfirmed SAY is no longer
+        // queued for possible delivery on this Link. Even a fully written
+        // record is not proof of admission. Keep the independent effect
+        // warning and leave queue disposition to the service contract.
+        let notice = ui.notice.as_str();
+        if notice.strip_prefix("EFFECT UNKNOWN - ").unwrap_or(notice)
+            == "QUEUED LOCALLY - DELIVERY UNCONFIRMED"
+        {
+            ui.notice("CHANNEL ENDED - DELIVERY UNCONFIRMED");
+        }
     }
 
     /// One turn: write what is waiting as far as the channel takes it, read what has arrived.
@@ -124,7 +134,7 @@ impl Link {
                                 // A piece with no text in it is still the answer beginning: it
                                 // ends the reading, and shows nothing.
                                 if rest.is_empty() {
-                                    ui.talk.receive(Incoming::Chunk { conversation, reply, text: "" });
+                                    ui.observed_talk(Incoming::Chunk { conversation, reply, text: "" });
                                 }
                                 while !rest.is_empty() {
                                     let (text, skip) = match core::str::from_utf8(rest) {
@@ -132,25 +142,25 @@ impl Link {
                                         Err(e) => (core::str::from_utf8(&rest[..e.valid_up_to()]).unwrap_or(""), 1),
                                     };
                                     if !text.is_empty() {
-                                        ui.talk.receive(Incoming::Chunk { conversation, reply, text });
+                                        ui.observed_talk(Incoming::Chunk { conversation, reply, text });
                                     }
                                     if skip == 1 {
-                                        ui.talk.receive(Incoming::Chunk { conversation, reply, text: "?" });
+                                        ui.observed_talk(Incoming::Chunk { conversation, reply, text: "?" });
                                     }
                                     rest = &rest[text.len() + skip..];
                                 }
                             }
                             Kind::Done => {
-                                ui.talk.receive(Incoming::Done { conversation, reply });
+                                ui.observed_talk(Incoming::Done { conversation, reply });
                             }
                             Kind::Reading => {
                                 // The reader has already refused a body that does not add up.
                                 if let Some((read, of)) = wire::progress(record.body) {
-                                    ui.talk.receive(Incoming::Reading { conversation, reply, read, of });
+                                    ui.observed_talk(Incoming::Reading { conversation, reply, read, of });
                                 }
                             }
                             Kind::Failed => {
-                                ui.talk.receive(Incoming::Failed { conversation, reply });
+                                ui.observed_talk(Incoming::Failed { conversation, reply });
                             }
                             // Only this program says these. A service that sends one is not
                             // speaking the agreed records; it is counted, and nothing is shown.
@@ -307,6 +317,189 @@ mod tests {
         let last = ui.talk.turns().last().unwrap();
         assert_eq!((last.who, last.text.as_str(), last.state), (Who::Taylor, "I can keep notes.", Reply::Complete));
         assert!(!ui.talk.answering());
+    }
+
+    /// Transport success is not a model-acceptance receipt. Never show "sent" merely because
+    /// the local UI admitted a Say request, including when zero bytes could leave the channel.
+    #[test]
+    fn queued_say_never_claims_delivery_under_zero_write_partial_write_or_completed_write() {
+        let mut ui = Ui::new();
+        let mut link = Link::new(true, &mut ui);
+        let mut channel = Channel::new();
+        channel.says(Kind::Ready, 0, 0, b"");
+        turn(&mut link, &mut ui, &mut channel);
+        typed(&mut ui, "hello");
+        let _ = ui.intent(Action::Submit);
+        const QUEUED: &str = "QUEUED LOCALLY - DELIVERY UNCONFIRMED";
+        assert_eq!(ui.notice.as_str(), QUEUED);
+        assert!(matches!(ui.for_service(), Some(Request::Say(_))));
+        channel.room = 0;
+        turn(&mut link, &mut ui, &mut channel);
+        assert!(channel.to_service.is_empty(), "EAGAIN did not write any Say bytes");
+        assert!(ui.for_service().is_some());
+        assert_eq!(ui.notice.as_str(), QUEUED);
+
+        channel.room = 5;
+        turn(&mut link, &mut ui, &mut channel);
+        assert_eq!(channel.to_service.len(), 5, "only a partial frame was written");
+        assert!(ui.for_service().is_some());
+        assert_eq!(ui.notice.as_str(), QUEUED);
+
+        channel.room = 65_536;
+        turn(&mut link, &mut ui, &mut channel);
+        assert!(ui.for_service().is_none(), "complete frame leaves the local queue");
+        assert_eq!(ui.notice.as_str(), QUEUED, "channel write is not service acceptance");
+        // No model reply or correlated acceptance has arrived in this test.
+        assert!(ui.talk.answering());
+    }
+
+
+    /// EOF and fatal I/O must retire the local queue wording without
+    /// inventing either delivery or non-delivery or retrying an abandoned SAY.
+    #[test]
+    fn terminal_link_retires_unconfirmed_queue_notice_at_each_write_extent() {
+        for uncertain in [false, true] {
+            for room in [0, 5, 65_536] {
+                // Fatal write only applies while an outgoing record remains.
+                for failure in [0, -5, -32] {
+                    if failure == -32 && room == 65_536 { continue; }
+                    let mut ui = Ui::new();
+                    let mut link = Link::new(true, &mut ui);
+                    let mut channel = Channel::new();
+                    channel.says(Kind::Ready, 0, 0, b"");
+                    turn(&mut link, &mut ui, &mut channel);
+                    ui.effect_uncertain = uncertain;
+                    typed(&mut ui, "hello");
+                    let _ = ui.intent(Action::Submit);
+                    channel.room = room;
+                    turn(&mut link, &mut ui, &mut channel);
+                    assert_eq!(ui.for_service().is_some(), room != 65_536);
+                    let sent = channel.to_service.len();
+                    if room != 65_536 { assert_eq!(sent, room); }
+                    else { assert!(sent > 5); }
+
+                    // Neither a wrong conversation nor a wrong reply confirms delivery.
+                    channel.says(Kind::Done, 99, 1, b"");
+                    channel.says(Kind::Chunk, 1, 99, b"wrong");
+                    while !channel.from_service.is_empty() {
+                        turn(&mut link, &mut ui, &mut channel);
+                    }
+                    let prefix = if uncertain { "EFFECT UNKNOWN - " } else { "" };
+                    assert_eq!(ui.notice.as_str(), std::format!("{prefix}QUEUED LOCALLY - DELIVERY UNCONFIRMED"));
+                    let queue_before = ui.for_service().is_some();
+                    assert!(link.turn(&mut ui,
+                        |_| if failure == -32 { panic!("fatal write must end before reading") } else { failure },
+                        |_| if failure == -32 { failure } else { WOULD_WAIT }));
+                    assert_eq!(ui.notice.as_str(), std::format!("{prefix}CHANNEL ENDED - DELIVERY UNCONFIRMED"));
+                    assert_eq!(ui.effect_uncertain, uncertain);
+                    assert_eq!(ui.talk.service, Service::Stopped);
+                    assert!(!ui.talk.answering());
+                    assert_eq!(ui.talk.turns().last().unwrap().state, Reply::Failed);
+                    // This UI disclosure does not alter retained queue contents
+                    // or imply a durable cancellation receipt.
+                    assert_eq!(ui.for_service().is_some(), queue_before);
+                    assert!(!link.turn(&mut ui, |_| panic!("ended read"), |_| panic!("ended write")));
+                    assert_eq!(channel.to_service.len(), sent);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn terminal_link_does_not_erase_a_matching_completed_reply_record() {
+        let mut ui = Ui::new();
+        let mut link = Link::new(true, &mut ui);
+        let mut channel = Channel::new();
+        channel.says(Kind::Ready, 0, 0, b"");
+        turn(&mut link, &mut ui, &mut channel);
+        typed(&mut ui, "hello");
+        let _ = ui.intent(Action::Submit);
+        turn(&mut link, &mut ui, &mut channel);
+        channel.says(Kind::Chunk, 1, 1, b"reply");
+        channel.says(Kind::Done, 1, 1, b"");
+        while !channel.from_service.is_empty() {
+            turn(&mut link, &mut ui, &mut channel);
+        }
+        channel.service_gone = true;
+        assert!(turn(&mut link, &mut ui, &mut channel));
+        assert_eq!(ui.notice.as_str(), "MATCHING REPLY RECORD - MODEL UNVERIFIED");
+        assert_eq!(ui.talk.turns().last().unwrap().state, Reply::Complete);
+        assert!(ui.for_service().is_none());
+    }
+
+    /// A channel reply with the same conversation/reply ID may justify retiring
+    /// the stale "queued" wording, but is not model identity or delivery proof.
+    /// Wrong IDs, even if well-formed, must leave the locally queued warning.
+    #[test]
+    fn only_a_matching_reply_record_retires_the_queued_notice() {
+        const QUEUED: &str = "QUEUED LOCALLY - DELIVERY UNCONFIRMED";
+        const SEEN: &str = "MATCHING REPLY RECORD - MODEL UNVERIFIED";
+        for kind in [Kind::Reading, Kind::Chunk, Kind::Done, Kind::Failed] {
+            let mut ui = Ui::new();
+            let mut link = Link::new(true, &mut ui);
+            let mut channel = Channel::new();
+            channel.says(Kind::Ready, 0, 0, b"");
+            turn(&mut link, &mut ui, &mut channel);
+            typed(&mut ui, "hello");
+            let _ = ui.intent(Action::Submit);
+            assert_eq!(ui.notice.as_str(), QUEUED);
+            channel.room = 0;
+            turn(&mut link, &mut ui, &mut channel);
+            assert!(channel.to_service.is_empty());
+            assert!(matches!(ui.for_service(), Some(Request::Say(_))));
+
+            channel.says(Kind::Chunk, 1, 99, b"wrong reply");
+            channel.says(Kind::Done, 99, 1, b"");
+            while !channel.from_service.is_empty() {
+                turn(&mut link, &mut ui, &mut channel);
+            }
+            assert_eq!(ui.notice.as_str(), QUEUED);
+            // A bare READY frame has no reply correlation.
+            channel.says(Kind::Ready, 0, 0, b"");
+            turn(&mut link, &mut ui, &mut channel);
+            assert_eq!(ui.notice.as_str(), QUEUED);
+            match kind {
+                Kind::Reading => channel.from_service.extend(wire::reading(1, 1, 1, 3).unwrap().bytes()),
+                Kind::Chunk => channel.says(Kind::Chunk, 1, 1, b"reply"),
+                Kind::Done => channel.says(Kind::Done, 1, 1, b""),
+                Kind::Failed => channel.says(Kind::Failed, 1, 1, b""),
+                _ => unreachable!(),
+            }
+            while !channel.from_service.is_empty() {
+                turn(&mut link, &mut ui, &mut channel);
+            }
+            assert_eq!(ui.notice.as_str(), SEEN);
+            assert!(channel.to_service.is_empty(), "a test frame is not an actual model admission");
+            assert!(matches!(ui.for_service(), Some(Request::Say(_))),
+                "the local SAY is still unwritten; do not call this delivery");
+        }
+    }
+
+    #[test]
+    fn old_chat_reply_does_not_retire_new_chat_queued_warning() {
+        const QUEUED: &str = "QUEUED LOCALLY - DELIVERY UNCONFIRMED";
+        let mut ui = Ui::new();
+        let mut link = Link::new(true, &mut ui);
+        let mut channel = Channel::new();
+        channel.says(Kind::Ready, 0, 0, b"");
+        turn(&mut link, &mut ui, &mut channel);
+        channel.room = 0;
+        typed(&mut ui, "old");
+        let _ = ui.intent(Action::Submit);
+        assert!(ui.new_conversation());
+        typed(&mut ui, "new");
+        let _ = ui.intent(Action::Submit);
+        assert_eq!(ui.notice.as_str(), QUEUED);
+        channel.says(Kind::Chunk, 1, 1, b"late");
+        while !channel.from_service.is_empty() {
+            turn(&mut link, &mut ui, &mut channel);
+        }
+        assert_eq!(ui.notice.as_str(), QUEUED);
+        channel.says(Kind::Chunk, 2, 2, b"current");
+        while !channel.from_service.is_empty() {
+            turn(&mut link, &mut ui, &mut channel);
+        }
+        assert_eq!(ui.notice.as_str(), "MATCHING REPLY RECORD - MODEL UNVERIFIED");
     }
 
     #[test]
